@@ -30,44 +30,14 @@ export interface Song {
 }
 
 const App: React.FC = () => {
-    console.log('App component rendering...');
     const [songs, setSongs] = useState<Song[]>([]);
     const [selectedSong, setSelectedSong] = useState<Song | null>(null);
-    const [apiPort, setApiPort] = useState(0); // Start with 0 as per boilerplate
-    const [apiSigningKey, setApiSigningKey] = useState(""); // Start with empty as per boilerplate
+    const [apiPort, setApiPort] = useState(5001); // Default to our running backend
+    const [apiSigningKey, setApiSigningKey] = useState("devkey"); // Default signing key
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [currentView, setCurrentView] = useState<'library' | 'upload' | 'wheel'>('upload'); // Start with upload view
-    const [isElectronMode, setIsElectronMode] = useState(false);
 
     const appGlobalClient = useMemo(() => {
-        // Follow electron-python boilerplate pattern
-        if (apiPort === 0 || apiSigningKey === "") {
-            // API not initialized yet, request details from main process
-            if (ipcRenderer) {
-                console.log('Requesting API details from main process...');
-                ipcRenderer.on("apiDetails", (_event: any, argString: string) => {
-                    console.log('Received API details:', argString);
-                    const arg: { port: number, signingKey: string } = JSON.parse(argString);
-                    setApiPort(arg.port);
-                    setApiSigningKey(arg.signingKey);
-                    setIsElectronMode(true);
-                });
-                ipcRenderer.on("apiDetailsError", (_event: any, error: string) => {
-                    console.error('API initialization error:', error);
-                    alert('Failed to initialize API: ' + error);
-                });
-                ipcRenderer.send("getApiDetails");
-            } else {
-                // Not in Electron, use dev defaults
-                console.log('Not in Electron, using dev defaults');
-                setApiPort(5001);
-                setApiSigningKey("devkey");
-                setIsElectronMode(false);
-            }
-            return null;
-        }
-        
-        // API is ready, create Apollo client
         return new ApolloClient({
             cache: new InMemoryCache(),
             link: new HttpLink({
@@ -75,7 +45,7 @@ const App: React.FC = () => {
                 uri: "http://127.0.0.1:" + apiPort + "/graphql/",
             }),
         });
-    }, [apiPort, apiSigningKey]);
+    }, [apiPort]);
 
     const handleFileUpload = useCallback(async (file: File) => {
         if (!apiSigningKey || apiPort === 0) {
@@ -156,8 +126,6 @@ const App: React.FC = () => {
             );
         });
     }, [songs]);
-
-    console.log('App render - apiPort:', apiPort, 'currentView:', currentView);
 
     return (
         <div className="App">

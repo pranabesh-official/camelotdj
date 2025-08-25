@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron"; // tslint:disable-line
+import { app, BrowserWindow, dialog } from "electron"; // tslint:disable-line
 import * as path from "path";
 import "./with-python";
 
@@ -19,10 +19,20 @@ app.on("ready", () => {
 });
 
 function createWindow() {
-    const win = new BrowserWindow();
-    win.webContents.openDevTools();
+    const win = new BrowserWindow({
+        width: 1200,
+        height: 800,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+    
     if (isDev) {
-        win.loadURL("http://localhost:3000/index.html");
+        // DevTools disabled on startup for cleaner user experience
+        // Developers can still access DevTools manually with Cmd+Opt+I (macOS) or Ctrl+Shift+I (Windows/Linux)
+        // win.webContents.openDevTools();
+        win.loadURL("http://localhost:3000/");
     } else {
         win.loadURL(`file://${path.join(__dirname, "/../build/index.html")}`);
     }

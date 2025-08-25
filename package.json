@@ -1,6 +1,6 @@
 {
-    "name": "electron-python",
-    "version": "0.1.0",
+    "name": "mixed-in-key",
+    "version": "1.0.0",
     "private": true,
     "homepage": "./",
     "main": "buildMain/index.js",
@@ -14,10 +14,10 @@
         "main-watch": "tsc -w -p tsconfig.electronMain.json",
         "main-build": "tsc -p tsconfig.electronMain.json && electron-builder",
         "react-lint": "tslint -c tslint.json -p tsconfig.json",
-        "react-start": "craco start",
+        "react-start": "NODE_OPTIONS=--openssl-legacy-provider craco start",
         "react-watch": "tsc -w -p tsconfig.json",
         "react-build": "craco build",
-        "python-build": "shx rm -rf pythondist && pyinstaller python/api.py --distpath pythondist --workpath build-py-temp --onefile && shx rm -rf build-py-temp && shx rm api.spec"
+        "python-build": "shx rm -rf pythondist && python3 -m PyInstaller python/api.py --distpath pythondist --workpath build-py-temp --onefile && shx rm -rf build-py-temp && shx rm api.spec"
     },
     "dependencies": {
         "@craco/craco": "^3.5.0",
@@ -47,7 +47,7 @@
     "devDependencies": {
         "concurrently": "^4.1.0",
         "cross-env": "^5.2.0",
-        "electron": "4.1.0",
+        "electron": "^13.0.0",
         "electron-builder": "^20.39.0",
         "source-map-support": "^0.5.11",
         "tslint": "^5.9.1",
@@ -66,9 +66,10 @@
         "not op_mini all"
     ],
     "build": {
-        "appId": "com.example.electron-python",
-        "productName": "My Electron Python App",
+        "appId": "com.mixedinkey.musicanalyzer",
+        "productName": "Mixed In Key - Music Analyzer",
         "forceCodeSigning": false,
+        "asar": false,
         "directories": {
             "buildResources": "build",
             "output": "dist"
@@ -79,12 +80,13 @@
         "files": [
             "node_modules/**",
             "buildMain/**",
-            "pythondist/**"
+            "pythondist/**",
+            "build/**"
         ],
         "extraResources": [],
         "extraFiles": [],
         "mac": {
-            "target": "dmg"
+            "target": "dir"
         },
         "mas": {},
         "dmg": {},

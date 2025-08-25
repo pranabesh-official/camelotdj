@@ -1,33 +1,400 @@
+/* Mixed In Key - Music Analyzer Styles */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  color: #333;
+  overflow-x: hidden;
+}
+
 .App {
-  text-align: center;
-}
-
-.App-logo {
-  animation: App-logo-spin infinite 20s linear;
-  height: 40vmin;
-  pointer-events: none;
-}
-
-.App-header {
-  background-color: #282c34;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header Styles */
+.App-header {
+  background: rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.App-header h1 {
+  color: white;
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 1rem;
+}
+
+.nav-tabs button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+}
+
+.nav-tabs button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.nav-tabs button.active {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Main Content */
+.App-main {
+  flex: 1;
+  display: flex;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+  gap: 2rem;
+  padding: 2rem;
+}
+
+.main-content {
+  flex: 1;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 350px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  padding: 1.5rem;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+/* Loading State */
+.loading-container {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
+  min-height: 50vh;
   color: white;
+  text-align: center;
 }
 
-.App-link {
-  color: #61dafb;
+/* File Upload Styles */
+.file-upload-container {
+  padding: 2rem;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.file-upload-container h2 {
+  margin-top: 0;
+  color: #333;
+  text-align: center;
 }
+
+.drop-zone {
+  border: 3px dashed #ddd;
+  border-radius: 12px;
+  padding: 3rem;
+  text-align: center;
+  transition: all 0.3s ease;
+  margin: 2rem 0;
+  background: #fafafa;
+}
+
+.drop-zone.drag-over {
+  border-color: #2196F3;
+  background: #e3f2fd;
+}
+
+.drop-zone.analyzing {
+  border-color: #FF9800;
+  background: #fff3e0;
+}
+
+.upload-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.file-input-label {
+  display: inline-block;
+  background: #2196F3;
+  color: white;
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+  margin: 1rem 0;
+}
+
+.file-input-label:hover {
+  background: #1976D2;
+}
+
+.file-input-label input {
+  display: none;
+}
+
+.supported-formats {
+  margin-top: 1rem;
+  color: #666;
+}
+
+.analyzing-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #FF9800;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.upload-tips {
+  background: #f5f5f5;
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-top: 2rem;
+}
+
+.upload-tips h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.upload-tips ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.upload-tips li {
+  margin-bottom: 0.5rem;
+  color: #666;
+}
+
+/* Music Library Styles */
+.music-library {
+  padding: 2rem;
+}
+
+.library-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #eee;
+}
+
+.library-header h2 {
+  margin: 0;
+  color: #333;
+}
+
+.library-stats {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.library-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.search-box input {
+  padding: 0.75rem;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  width: 300px;
+  max-width: 100%;
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: #2196F3;
+}
+
+.filters {
+  display: flex;
+  gap: 1rem;
+}
+
+.filters select {
+  padding: 0.75rem;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: white;
+  cursor: pointer;
+}
+
+.filters select:focus {
+  outline: none;
+  border-color: #2196F3;
+}
+
+/* Songs Table */
+.songs-table {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #ddd;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 0.8fr 0.8fr 1fr 0.8fr;
+  background: #f5f5f5;
+  border-bottom: 2px solid #ddd;
+}
+
+.header-cell {
+  padding: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  user-select: none;
+}
+
+.header-cell:hover {
+  background: #e0e0e0;
+}
+
+.table-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.song-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 0.8fr 0.8fr 1fr 0.8fr;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.song-row:hover {
+  background: #f8f9fa;
+}
+
+.song-row.selected {
+  background: #e3f2fd;
+  border-left: 4px solid #2196F3;
+}
+
+.cell {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.filename-main {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.filename-sub {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.camelot-key {
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+}
+
+.musical-key {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.energy-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: white;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.energy-indicator.large {
+  width: 50px;
+  height: 50px;
+  font-size: 1.5rem;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.delete-btn:hover {
+  background: rgba(244, 67, 54, 0.1);
+}
+
+.empty-library {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: #666;
+}
+
+.empty-library h3 {
+  margin-bottom: 1rem;
+  color: #999;
+}
+
+/* Analysis Results and other remaining styles will be added in next iteration... */

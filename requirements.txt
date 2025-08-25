@@ -1,0 +1,13 @@
+flask
+flask-cors
+flask-graphql
+graphene
+pyinstaller
+librosa
+mutagen
+pydub
+scipy
+numpy
+pandas
+essentia
+mirdata

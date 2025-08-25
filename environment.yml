@@ -1,5 +1,6 @@
-name: electron-python-sample
+name: mixed-in-key
 channels:
+  - conda-forge
   - fastai
   - peterjc123
   - pytorch
@@ -31,3 +32,10 @@ dependencies:
     - graphene
     - pyinstaller
     - pypiwin32
+    - librosa
+    - essentia-tensorflow
+    - mutagen
+    - pydub
+    - scipy
+    - numpy
+    - pandas

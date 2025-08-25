@@ -1,6 +1,6 @@
 import childProcess from "child_process";
 import crossSpawn from "cross-spawn";
-import Electron, { app, dialog, ipcMain } from "electron"; // tslint:disable-line
+import { app, dialog, ipcMain, IpcMainEvent } from "electron"; // tslint:disable-line
 import fs from "fs";
 import getPort from "get-port";
 import * as path from "path";
@@ -23,16 +23,16 @@ const apiDetails = {
 const initializeApi = async () => {
     // dialog.showErrorBox("success", "initializeApi");
     const availablePort = await getPort();
-    apiDetails.port = isDev ? 5000 : availablePort;
+    apiDetails.port = isDev ? 5001 : availablePort;
     const key = isDev ? "devkey" : uuid.v4();
     apiDetails.signingKey = key;
     const srcPath = path.join(__dirname, "..", PY_FOLDER, PY_MODULE + ".py");
-    const exePath = (process.platform === "win32") ? path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE + ".exe") : path.join(__dirname, PY_DIST_FOLDER, PY_MODULE);
+    const exePath = (process.platform === "win32") ? path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE + ".exe") : path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE);
     if (__dirname.indexOf("app.asar") > 0) {
         // dialog.showErrorBox("info", "packaged");
         if (fs.existsSync(exePath)) {
             pyProc = childProcess.execFile(exePath, ["--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey], {}, (error, stdout, stderr) => {
-                if (error) {
+                if (error && isDev) {
                     console.log(error);
                     console.log(stderr);
                 }
@@ -50,20 +50,22 @@ const initializeApi = async () => {
     } else {
         // dialog.showErrorBox("info", "unpackaged");
         if (fs.existsSync(srcPath)) {
-            pyProc = crossSpawn("python", [srcPath, "--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey]);
+            pyProc = crossSpawn("python3", [srcPath, "--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey]);
         } else {
             dialog.showErrorBox("Error", "Unpackaged python source not found");
         }
     }
     if (pyProc === null || pyProc === undefined) {
         dialog.showErrorBox("Error", "unable to start python server");
-    } else {
+    } else if (isDev) {
         console.log("Server running at http://127.0.0.1:" + apiDetails.port);
     }
-    console.log("leaving initializeApi()");
+    if (isDev) {
+        console.log("leaving initializeApi()");
+    }
 };
 
-ipcMain.on("getApiDetails", (event:Electron.Event) => {
+ipcMain.on("getApiDetails", (event: IpcMainEvent) => {
     if (apiDetails.signingKey !== "") {
         event.sender.send("apiDetails", JSON.stringify(apiDetails));
     } else {

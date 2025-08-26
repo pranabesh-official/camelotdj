@@ -1,82 +1,113 @@
-# Electron + Python
+# Mixed In Key - Professional Music Analysis Desktop Application
 
-This sample shows how to build Python Flask apps that run in Electron. I'm using it to combine Python backends with React frontends but if you prefer to use handle your frontend entirely from Flask that should be simple to do. The Electron main (backend) process spawns a Python Flask webserver and provides a randomly generated authentication token to both the webserver and the Electron renderer (frontend) process for use in authenticating messages sent between the frontend and the webserver. 
+A professional desktop music analysis application built with Electron + Python + React, following the [electron-python boilerplate](https://github.com/yoDon/electron-python) pattern.
 
-The webserver currently exposes a GraphQL endpoint for the frontend to interact with but the backend is just a plain old Flask webserver so you can tweak it to host whatever sort of REST or other Flask web services as might be needed by your application. The React frontend part of the sample is similarly based on a stock create-react-app site, so it should be easy to customize as needed. The only significant embelishments to the stock cra app are (1) the bare minimal amount of https://github.com/sharegate/craco to support hooking into electron without needing to eject the create react app and (2) typescript support, which you don't have to use but I personally can't imagine building a serious javascript project without it so it's there if you need it.
+## 🚀 Quick Start
 
-This example builds a stand-alone Electron + Create-React-App + Python application and installer. On Windows it builds the app into `./dist/win-unpacked/My Electron Python App.exe` and the installer into `./dist/My Electron Python App Setup 1.0.0.exe` (OSX and Linux destinations are similar). You can change the name of the application by changing the `name` property in `package.json`.
-
-# Installation
-
-Tested with Anaconda Python v3, should work fine with Anaconda Python v2 (should also work fine with whatever python environment you use if you have the correct packages installed).
-
-NOTE: On windows you will need to [install anaconda](https://www.anaconda.com/download/) (which installs python and pip) and potentially configure environment variables to add python and/or pip to the path if you don't have it installed already.
-
+### One-Click Launch (Electron Desktop App)
 ```bash
-# start with the obvious step you always need to do with node projects
-npm install
-
-# Depending on the packages you install, with Electron projects you may need to do 
-# an npm rebuild to rebuild any included binaries for the current OS. It's probably
-# not needed here but I do it out of habit because its fast and the issues can be
-# a pain to track down if they come up and you dont realize a rebuild is needed
-npm rebuild
+npm start
 ```
+This automatically:
+- Starts React frontend on port 3000
+- Spawns Python backend on port 5002 via Electron
+- Opens desktop application window
+- Handles all IPC communication between components
 
-**VERY IMPORTANT:** Windows users, if you use VS Code or use Powershell as your shell, you need to type `cmd` inside the VS Code terminal or inside your Powershell window before running the conda commands because conda's environment switcher will not work under Powershell (much of it works, but the critical parts that don't work, like activating evironments, fail silently while appearing to work),
-
+### Alternative: Web Development Mode
 ```bash
-# install Anaconda if not already installed
+npm run dev
+```
+This starts both services independently for web browser testing.
 
-cmd # Only needed if you're coding on Windows in VS Code or Powershell, as discussed above
-conda env create -f environment.yml
-conda activate electron-python-sample
-conda env list 
-# in the list, make sure the electron-python-sample has a * in front
-# indicating it is activated (under Powershell on Windows the activate
-# command fails silently which is why you needed to run the conda commands
-# in a cmd prompt)
+## ✨ Features
 
-# run the unpackaged python scripts from a dev build of electron
-npm run start # must be run in the same shell you just conda activated
+### 🎵 Real Music Analysis
+- **Key Detection**: Accurate musical key analysis using Librosa + Essentia
+- **BPM Analysis**: Precise tempo detection for DJ mixing
+- **Energy Calculation**: Track energy levels for set planning
+- **Cue Point Detection**: Automatic intro/outro identification
+
+### 🎡 Camelot Wheel Harmonic Mixing
+- **Visual Key Mapping**: Interactive Camelot Wheel with 24 keys
+- **Harmonic Highlighting**: 
+  - 🔥 **Selected track key** - Bright orange with glow
+  - 💙 **Compatible keys** - Bright blue highlighting
+  - ⚪ **Dimmed non-compatible** - Reduced opacity
+- **Smart Compatibility**: Adjacent keys (±1) + relative major/minor
+- **Click to Select**: Click any key to select songs in that key
+
+### 🎛️ Professional UI
+- **Dark Mode Design**: Professional Mixed In Key aesthetic
+- **Real-time Analysis**: No demo tracks - analyze your actual music
+- **Drag & Drop Upload**: Easy file and folder upload
+- **Playlist Management**: Create and organize your music library
+- **Audio Playback**: Built-in player with waveform visualization
+
+### 🏷️ ID3 Tag Integration
+- **Automatic Writing**: Saves analysis results to your music files
+- **Key & BPM Tags**: Stores Camelot key, musical key, and BPM
+- **Cue Points**: Embeds intro/outro points for DJ software
+- **Compatible Formats**: MP3, WAV, FLAC, AAC, OGG, M4A
+
+## 🏗️ Architecture
+
+Following the proven [electron-python boilerplate](https://github.com/yoDon/electron-python):
+
+- **Electron Main Process**: Spawns Python backend, manages IPC
+- **React Frontend**: Professional UI with TypeScript
+- **Python Backend**: Flask server with music analysis engines
+- **Automatic Process Management**: Python exits gracefully with Electron
+
+## 🛠️ Development
+
+### Requirements
+- Node.js & npm
+- Python 3 with pip
+- All dependencies auto-installed via npm
+
+### Project Structure
+```
+mixed_in_key/
+├── main/                   # Electron main process
+│   ├── index.ts           # Main window creation
+│   └── with-python.ts     # Python process management
+├── src/                   # React frontend
+│   ├── components/        # UI components
+│   └── App.tsx           # Main application
+├── python/               # Python backend
+│   ├── api.py           # Flask server + GraphQL
+│   ├── music_analyzer.py # Analysis engine
+│   └── requirements.txt  # Python dependencies
+└── package.json         # Node.js dependencies + scripts
 ```
 
-**NOTE** if you see the following error message when trying to `npm run start` it means you did not successfully `conda activate electron-python-sample` in the shell from which you are trying to `npm run start`. On Windows under VS Code that could be because you forgot to go into a `cmd` shell as discussed above before trying to conda activate.
+### Available Scripts
+- `npm start` - Launch full Electron desktop app
+- `npm run dev` - Development mode (web browser)
+- `npm run build` - Build for production distribution
 
-```
-Traceback (most recent call last):
-  File "python/api.py", line 3, in <module>
-    from graphene import ObjectType, String, Schema
-ModuleNotFoundError: No module named 'graphene'
-```
+## 🎯 Usage
 
-```bash
-# use pyinstaller to convert the source code in python/ into an 
-# executable in pythondist/, build the electron app into a subdirectory 
-# of dist/, and run electron-packager to package the electron app as a 
-# platform-specific installer in dist/
-npm run build # must be run in the same shell you just conda activated
+1. **Launch Application**: `npm start`
+2. **Upload Music**: Drag files to Playlist Manager or click "Add Music Files"
+3. **View Analysis**: See key, BPM, energy in track table
+4. **Select Track**: Click any song to see its key highlighted on Camelot Wheel
+5. **Find Compatible**: Blue highlighted keys show harmonic mixing options
+6. **Create Playlists**: Organize compatible tracks for seamless mixing
 
-# double-click to run the either the platform-specific app that is built 
-# into a subdirectory of dist/ or the platform-specific installer that is 
-# built and placed in the dist/ folder
-```
+## 🎚️ Harmonic Mixing Guide
 
-# Debugging the Python process
+The Camelot Wheel shows compatible keys for smooth DJ transitions:
+- **Same Key**: Perfect match (e.g., 8A → 8A)
+- **Adjacent Keys**: ±1 position (e.g., 8A → 7A or 9A)
+- **Relative Major/Minor**: Same number, opposite letter (e.g., 8A → 8B)
 
-To test the Python GraphQL server, in a conda activated terminal window run `npm run python-build`, cd into the newly generated `pythondist` folder, and run `api.exe --apiport 5000 --signingkey devkey` then browse to `http://127.0.0.1:5000/graphiql/` to access a GraphiQL view of the server. For a more detailed example, try `http://127.0.0.1:5000/graphiql/?query={calc(math:"1/2",signingkey:"devkey")}` which works great if you copy and paste into the browser but which is a complex enough URL that it will confuse chrome if you try to click directly on it.
+## 🔧 Troubleshooting
 
-# Notes
+If you see connection errors:
+1. Ensure Python 3 is installed
+2. Check that port 5002 is available
+3. Restart with `npm start`
 
-The electron main process both spawns the Python child process and creates the window. The electron renderer process communicates with the python backend via GraphQL web service calls.
-
-The Python script `python/calc.py` provides a function: `calc(text)` that can take text like `1 + 1` and return the result like `2.0`. The calc functionality is exposed as a GraphQL api by `python/api.py`.
-
-The details of how the electron app launches the Python executable is tricky because of differences between packaged and unpackaged scenarios. This complexity is handled by `main/with-python.ts`. If the Electron app is not packaged, the code needs to `spawn` the Python source script. If the Electron app is packaged, it needs to `execFile` the packaged Python executable found in the app.asar. To decide whether the Electron app itself has been packaged for distribution or not, `main/with-python.ts` checks whether the `__dirname` looks like an asar folder or not.
-
-# Important
-
-Killing spawned processes under Electron can be tricky so the electron main process sends a message to the Python server telling it to exit when Electron is shutting down (and yes, that does mean that if you are debugging and control-c to kill the npm process hosting the app you can leave a zombie python process, so it's better to close the app normally by closing the window before killing your npm process).
-
-# source boilerplate
-https://github.com/yoDon/electron-python
+The application automatically handles Python backend startup and shutdown.

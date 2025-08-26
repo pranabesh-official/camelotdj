@@ -103,7 +103,7 @@ const CamelotWheel: React.FC<CamelotWheelProps> = ({ songs, selectedSong, onSong
     
     return (
         <div className="camelot-wheel-container">
-            <h3>Camelot Wheel</h3>
+           
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px', textAlign: 'center' }}>
                 Harmonic Mixing Guide
             </p>
@@ -261,41 +261,7 @@ const CamelotWheel: React.FC<CamelotWheelProps> = ({ songs, selectedSong, onSong
                 </svg>
             </div>
             
-            {/* Legend and current selection info */}
-            {selectedSong && selectedSong.camelot_key && (
-                <div className="wheel-info">
-                    <div className="selected-key">
-                        <span className="key-display" style={{ 
-                            backgroundColor: '#FF5722',
-                            color: 'white',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            fontWeight: 'bold',
-                            marginRight: '8px'
-                        }}>
-                            {selectedSong.camelot_key}
-                        </span>
-                        <span className="song-name" style={{ fontSize: '12px' }}>{selectedSong.filename}</span>
-                    </div>
-                    <div className="compatible-keys" style={{ marginTop: '8px', fontSize: '11px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
-                            <span style={{ 
-                                backgroundColor: '#2196F3', 
-                                color: 'white', 
-                                padding: '2px 6px', 
-                                borderRadius: '3px', 
-                                marginRight: '6px',
-                                fontSize: '10px'
-                            }}>●</span>
-                            <small>Harmonic Mix: {compatibleKeys.filter(k => k !== selectedSong.camelot_key).join(', ')}</small>
-                        </div>
-                        <div style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-                            <span style={{ marginRight: '12px' }}>🟠 Current Track</span>
-                            <span>🔵 Compatible Keys</span>
-                        </div>
-                    </div>
-                </div>
-            )}
+          
             
             {/* Instructions when no track is selected */}
             {!selectedSong && (

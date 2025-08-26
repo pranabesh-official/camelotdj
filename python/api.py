@@ -4,6 +4,7 @@ from graphene import ObjectType, String, Schema, Field, List, Mutation
 from flask_graphql import GraphQLView
 from calc import calc as real_calc
 from music_analyzer import MusicAnalyzer, analyze_music_file
+from database_manager import DatabaseManager
 import argparse
 import os
 import json
@@ -115,6 +116,9 @@ args = parser.parse_args()
 
 apiSigningKey = args.signingkey
 
+# Initialize database manager
+db_manager = DatabaseManager()
+
 app = Flask(__name__)
 app.add_url_rule("/graphql/", view_func=view_func)
 app.add_url_rule("/graphiql/", view_func=view_func) # for compatibility with other samples
@@ -164,6 +168,29 @@ def upload_and_analyze():
             # Add file path to result for audio serving
             analysis_result['file_path'] = permanent_path
             analysis_result['filename'] = file.filename
+            
+            # Save to database
+            try:
+                file_data = {
+                    'filename': file.filename,
+                    'file_path': permanent_path,
+                    'file_size': analysis_result.get('file_size', 0),
+                    'key': analysis_result.get('key', ''),
+                    'scale': analysis_result.get('scale', ''),
+                    'key_name': analysis_result.get('key_name', ''),
+                    'camelot_key': analysis_result.get('camelot_key', ''),
+                    'bpm': analysis_result.get('bpm', 0.0),
+                    'energy_level': analysis_result.get('energy_level', 0.0),
+                    'duration': analysis_result.get('duration', 0.0),
+                    'cue_points': analysis_result.get('cue_points', []),
+                    'status': 'found'
+                }
+                db_id = db_manager.add_music_file(file_data)
+                analysis_result['db_id'] = db_id
+                print(f"Saved file to database with ID: {db_id}")
+            except Exception as e:
+                print(f"Failed to save to database: {str(e)}")
+                # Continue without database save
             
             return jsonify(analysis_result)
             
@@ -239,6 +266,154 @@ def get_compatible_keys_rest():
 
 # Store uploaded files for audio serving
 uploaded_files = {}
+
+# Database REST endpoints
+@app.route('/library', methods=['GET'])
+def get_library():
+    """Get all music files from the database library."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        status_filter = request.args.get('status')  # Optional filter by status
+        files = db_manager.get_all_music_files(status_filter)
+        
+        # Convert database records to frontend format
+        songs = []
+        for file_record in files:
+            song = {
+                'id': str(file_record['id']),
+                'filename': file_record['filename'],
+                'file_path': file_record['file_path'],
+                'key': file_record['key_signature'],
+                'scale': file_record['scale'],
+                'key_name': file_record['key_name'],
+                'camelot_key': file_record['camelot_key'],
+                'bpm': file_record['bpm'],
+                'energy_level': file_record['energy_level'],
+                'duration': file_record['duration'],
+                'file_size': file_record['file_size'],
+                'status': file_record['status'],
+                'analysis_date': file_record['analysis_date'],
+                'cue_points': json.loads(file_record['cue_points']) if file_record['cue_points'] else []
+            }
+            songs.append(song)
+        
+        return jsonify({
+            'songs': songs,
+            'total': len(songs),
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to get library: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/stats', methods=['GET'])
+def get_library_stats():
+    """Get library statistics."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        stats = db_manager.get_library_stats()
+        return jsonify({
+            'stats': stats,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to get stats: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/verify', methods=['POST'])
+def verify_library():
+    """Verify that all files in the library still exist."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        found_count, missing_count = db_manager.verify_file_locations()
+        
+        return jsonify({
+            'found': found_count,
+            'missing': missing_count,
+            'total': found_count + missing_count,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to verify library: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/scan-locations', methods=['GET'])
+def get_scan_locations():
+    """Get remembered scan locations."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        locations = db_manager.get_scan_locations()
+        return jsonify({
+            'locations': locations,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to get scan locations: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/scan-locations', methods=['POST'])
+def add_scan_location():
+    """Add a new scan location to remember."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        path = data.get('path')
+        name = data.get('name')
+        
+        if not path:
+            return jsonify({"error": "No path provided"}), 400
+        
+        location_id = db_manager.add_scan_location(path, name)
+        
+        return jsonify({
+            'location_id': location_id,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to add scan location: {str(e)}",
+            "status": "error"
+        }), 500
 
 @app.route('/audio/<filename>', methods=['GET'])
 def serve_audio(filename):

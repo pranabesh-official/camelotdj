@@ -6,6 +6,8 @@ import AnalysisResults from './components/AnalysisResults';
 import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
+// import LibraryStatus from './components/LibraryStatus';
+import DatabaseService from './services/DatabaseService';
 
 export interface Song {
     id: string;
@@ -19,6 +21,7 @@ export interface Song {
     energy_level?: number;
     duration?: number;
     file_size?: number;
+    bitrate?: number; // In kbps
     status?: string;
     analysis_date?: string;
     cue_points?: number[];
@@ -34,9 +37,11 @@ const App: React.FC = () => {
     const [apiPort, setApiPort] = useState(5002); // Default fallback
     const [apiSigningKey, setApiSigningKey] = useState("devkey"); // Default fallback
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [currentView, setCurrentView] = useState<'library' | 'upload' | 'wheel'>('library');
+    const [currentView, setCurrentView] = useState<'library' | 'upload' | 'wheel' | 'settings'>('library');
     const [isElectronMode, setIsElectronMode] = useState(false);
     const [showCompatibleOnly, setShowCompatibleOnly] = useState(false);
+    const [databaseService, setDatabaseService] = useState<DatabaseService | null>(null);
+    const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
 
     // Check if running in Electron and get API details
     React.useEffect(() => {
@@ -54,30 +59,164 @@ const App: React.FC = () => {
                 ipcRenderer.on('apiDetails', (event: any, details: string) => {
                     try {
                         const apiInfo = JSON.parse(details);
-                        console.log('Received API details from Electron:', apiInfo);
+                        console.log('✅ Received API details from Electron:', apiInfo);
                         setApiPort(apiInfo.port);
                         setApiSigningKey(apiInfo.signingKey);
+                        
+                        // Initialize database service with API details
+                        const dbService = new DatabaseService(apiInfo.port, apiInfo.signingKey);
+                        setDatabaseService(dbService);
+                        
+                        // Load library from database with longer delay for Electron
+                        loadLibraryFromDatabase(dbService, 2000);
                     } catch (error) {
-                        console.error('Error parsing API details:', error);
+                        console.error('❌ Error parsing API details:', error);
+                        // Fallback to default values
+                        initializeDatabaseService();
                     }
                 });
                 
                 // Listen for API details error
                 ipcRenderer.on('apiDetailsError', (event: any, error: string) => {
-                    console.error('Error getting API details:', error);
-                    // Keep using default values in case of error
+                    console.error('❌ Error getting API details:', error);
+                    // Initialize database service with default values as fallback
+                    initializeDatabaseService();
                 });
                 
-                // Cleanup listeners
+                // Timeout fallback in case IPC doesn't respond
+                const ipcTimeout = setTimeout(() => {
+                    console.warn('⚠️ IPC timeout, falling back to default database service');
+                    initializeDatabaseService();
+                }, 3000);
+                
+                // Cleanup listeners and timeout
                 return () => {
+                    clearTimeout(ipcTimeout);
                     ipcRenderer.removeAllListeners('apiDetails');
                     ipcRenderer.removeAllListeners('apiDetailsError');
                 };
             } catch (error) {
-                console.error('Error setting up Electron IPC:', error);
+                console.error('❌ Error setting up Electron IPC:', error);
+                // Fallback to default initialization
+                initializeDatabaseService();
             }
+        } else {
+            // Running in web mode, use default values
+            initializeDatabaseService();
         }
     }, []);
+
+    // Helper function to initialize database service with defaults
+    const initializeDatabaseService = () => {
+        console.log('🔧 Initializing database service with defaults...');
+        const dbService = new DatabaseService(5002, 'devkey');
+        setDatabaseService(dbService);
+        loadLibraryFromDatabase(dbService, 1500);
+    };
+
+    // Load library from database
+    const loadLibraryFromDatabase = useCallback(async (dbService: DatabaseService, delay: number = 1000) => {
+        try {
+            console.log('🔄 Loading music library from database...');
+            
+            // Wait for backend to be fully ready
+            console.log(`⏱️ Waiting ${delay}ms for backend to be ready...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+            // Test backend connectivity first
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                const testResponse = await fetch(`http://127.0.0.1:${apiPort}/graphql/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({query: '{ awake }'}),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (!testResponse.ok) {
+                    throw new Error(`Backend not ready: ${testResponse.status}`);
+                }
+                
+                console.log('✅ Backend connectivity confirmed');
+            } catch (connectError) {
+                console.warn('⚠️ Backend connectivity issue:', connectError);
+                // Try again with longer delay
+                if (delay < 5000) {
+                    console.log('🔄 Retrying database load with longer delay...');
+                    setTimeout(() => loadLibraryFromDatabase(dbService, delay + 1500), 2000);
+                    return;
+                }
+                throw connectError;
+            }
+            
+            // Load library songs
+            const librarySongs = await dbService.loadLibraryFromDatabase();
+            
+            if (librarySongs && librarySongs.length > 0) {
+                // Transform database songs to match Song interface
+                const transformedSongs = librarySongs.map((song: any) => {
+                    // Calculate estimated bitrate if not provided
+                    let estimatedBitrate = song.bitrate;
+                    if (!estimatedBitrate && song.file_size && song.duration) {
+                        estimatedBitrate = Math.round((song.file_size * 8) / (song.duration * 1000));
+                    }
+                    if (!estimatedBitrate) {
+                        estimatedBitrate = 320; // Default to high quality
+                    }
+                    
+                    return {
+                        id: song.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                        filename: song.filename,
+                        file_path: song.file_path,
+                        key: song.key,
+                        scale: song.scale,
+                        key_name: song.key_name,
+                        camelot_key: song.camelot_key,
+                        bpm: song.bpm,
+                        energy_level: song.energy_level,
+                        duration: song.duration,
+                        file_size: song.file_size,
+                        bitrate: estimatedBitrate,
+                        status: song.status || 'found',
+                        analysis_date: song.analysis_date,
+                        cue_points: song.cue_points || []
+                    };
+                });
+                
+                setSongs(transformedSongs);
+                console.log(`🎵 Successfully loaded ${transformedSongs.length} songs from database:`);
+                transformedSongs.forEach((song, i) => {
+                    console.log(`   ${i+1}. ${song.filename} (${song.camelot_key})`);
+                });
+                
+                // Load scan locations
+                try {
+                    const locations = await dbService.getScanLocations();
+                    if (locations.length > 0) {
+                        console.log(`📁 Found ${locations.length} remembered scan locations`);
+                    }
+                } catch (locError) {
+                    console.warn('⚠️ Could not load scan locations:', locError);
+                }
+            } else {
+                console.log('📭 No songs found in database - starting with empty library');
+            }
+            
+            setIsLibraryLoaded(true);
+        } catch (error) {
+            console.error('❌ Failed to load library from database:', error);
+            console.error('Error details:', {
+                message: error instanceof Error ? error.message : String(error),
+                apiPort: apiPort,
+                hasDBService: !!dbService
+            });
+            setIsLibraryLoaded(true); // Continue with empty library
+        }
+    }, [apiPort]);
 
     // Backend connectivity monitoring
     React.useEffect(() => {
@@ -190,6 +329,15 @@ const App: React.FC = () => {
                 console.log('Analysis result:', result);
                 
                 if (result.status === 'success') {
+                    // Calculate estimated bitrate from file size and duration
+                    let estimatedBitrate = result.bitrate;
+                    if (!estimatedBitrate && result.file_size && result.duration) {
+                        estimatedBitrate = Math.round((result.file_size * 8) / (result.duration * 1000));
+                    }
+                    if (!estimatedBitrate) {
+                        estimatedBitrate = 320; // Default to high quality
+                    }
+                    
                     const newSong: Song = {
                         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: result.filename,
@@ -202,6 +350,7 @@ const App: React.FC = () => {
                         energy_level: result.energy_level,
                         duration: result.duration,
                         file_size: result.file_size,
+                        bitrate: estimatedBitrate,
                         status: 'analyzed',
                         analysis_date: new Date().toISOString(),
                         cue_points: result.cue_points || []
@@ -285,6 +434,15 @@ const App: React.FC = () => {
                 const result = await response.json();
                 
                 if (result.status === 'success') {
+                    // Calculate estimated bitrate from file size and duration
+                    let estimatedBitrate = result.bitrate;
+                    if (!estimatedBitrate && result.file_size && result.duration) {
+                        estimatedBitrate = Math.round((result.file_size * 8) / (result.duration * 1000));
+                    }
+                    if (!estimatedBitrate) {
+                        estimatedBitrate = 320; // Default to high quality
+                    }
+                    
                     const newSong: Song = {
                         id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
                         filename: result.filename,
@@ -297,6 +455,7 @@ const App: React.FC = () => {
                         energy_level: result.energy_level,
                         duration: result.duration,
                         file_size: result.file_size,
+                        bitrate: estimatedBitrate,
                         status: 'analyzed',
                         analysis_date: new Date().toISOString()
                     };
@@ -445,7 +604,12 @@ const App: React.FC = () => {
                         >
                             My collection
                         </button>
-                        <button>⚙️  Settings</button>
+                        <button 
+                            className={currentView === 'settings' ? 'active' : ''}
+                            onClick={() => setCurrentView('settings')}
+                        >
+                            ⚙️  Settings
+                        </button>
                     </nav>
                     <div className="search-box-header">
                         <input type="text" placeholder="Search" />
@@ -547,6 +711,63 @@ const App: React.FC = () => {
                                         />
                                     </div>
                                 )}
+                            </div>
+                        </div>
+                    )}
+
+                    {currentView === 'settings' && (
+                        <div className="settings-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
+                            <div className="settings-container">
+                                <h2 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-lg)' }}>⚙️ Settings & Database</h2>
+                                
+                                <div className="settings-section">
+                                    {/* <LibraryStatus 
+                                        databaseService={databaseService}
+                                        isVisible={true}
+                                    /> */}
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>📊 Library Status</h3>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Database service is {databaseService ? '✅ Connected' : '❌ Not Connected'}</p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Library loaded: {isLibraryLoaded ? '✅ Yes' : '⏳ Loading...'}</p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Songs in memory: {songs.length}</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="settings-section" style={{ marginTop: 'var(--space-xl)' }}>
+                                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-md)' }}>💾 Database Information</h3>
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            📁 <strong>Database Location:</strong> ~/.mixed_in_key/music_library.db
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            🎵 <strong>Features:</strong> File location tracking, analysis caching, playlist storage
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            🔄 <strong>Auto-sync:</strong> Music files and analysis results are automatically saved
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            ⚡ <strong>Performance:</strong> Faster loading and offline access to your music library
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <div className="settings-section" style={{ marginTop: 'var(--space-xl)' }}>
+                                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-md)' }}>🎛️ Application Info</h3>
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            🖥️ <strong>Mode:</strong> {isElectronMode ? 'Desktop Application (Electron)' : 'Web Browser'}
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            🔌 <strong>API Port:</strong> {apiPort}
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            📚 <strong>Library Loaded:</strong> {isLibraryLoaded ? '✅ Yes' : '⏳ Loading...'}
+                                        </p>
+                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                            💽 <strong>Database Service:</strong> {databaseService ? '✅ Connected' : '❌ Not Connected'}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}

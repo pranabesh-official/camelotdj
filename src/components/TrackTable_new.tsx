@@ -12,7 +12,7 @@ interface TrackTableProps {
   showCompatibleOnly?: boolean;
 }
 
-type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
+type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre';
 type SortDirection = 'asc' | 'desc';
 
 const TrackTable: React.FC<TrackTableProps> = ({
@@ -35,32 +35,18 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
   // Enhanced song interface for display
   const enhancedSongs = useMemo(() => {
-    return songs.map(song => {
-      // Calculate estimated bitrate if not provided
-      let estimatedBitrate = song.bitrate;
-      if (!estimatedBitrate && song.file_size && song.duration) {
-        // Estimate bitrate from file size and duration
-        // Formula: (file_size_bytes * 8) / (duration_seconds * 1000) = kbps
-        estimatedBitrate = Math.round((song.file_size * 8) / (song.duration * 1000));
-      }
-      // Default to common bitrates if estimation fails
-      if (!estimatedBitrate) {
-        estimatedBitrate = 320; // Default to high quality
-      }
-      
-      return {
-        ...song,
-        tempo: song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown',
-        genre: song.energy_level && song.bpm ? 
-          (song.energy_level > 7 ? 'Tech House' :
-           song.energy_level > 5 ? 'House' :
-           song.bpm && song.bpm > 140 ? 'Techno' :
-           'Minimal / Deep Tech') : 'Unknown',
-        sharp: song.key && song.key.includes('#') ? '#' : song.key && song.key.includes('m') ? 'm' : '',
-        bitrate_display: estimatedBitrate,
-        comment: `${song.camelot_key} - Energy ${song.energy_level}`
-      };
-    });
+    return songs.map(song => ({
+      ...song,
+      tempo: song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown',
+      genre: song.energy_level && song.bpm ? 
+        (song.energy_level > 7 ? 'Tech House' :
+         song.energy_level > 5 ? 'House' :
+         song.bpm && song.bpm > 140 ? 'Techno' :
+         'Minimal / Deep Tech') : 'Unknown',
+      sharp: song.key && song.key.includes('#') ? '#' : song.key && song.key.includes('m') ? 'm' : '',
+      cue_points_count: Array.isArray(song.cue_points) ? song.cue_points.length : 0,
+      comment: `${song.camelot_key} - Energy ${song.energy_level}`
+    }));
   }, [songs]);
 
   const sortedAndFilteredSongs = useMemo(() => {
@@ -103,7 +89,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
       if (aValue === undefined) aValue = '';
       if (bValue === undefined) bValue = '';
 
-      if (sortField === 'bpm' || sortField === 'energy_level' || sortField === 'duration' || sortField === 'bitrate_display') {
+      if (sortField === 'bpm' || sortField === 'energy_level' || sortField === 'duration') {
         aValue = Number(aValue) || 0;
         bValue = Number(bValue) || 0;
       }
@@ -195,36 +181,26 @@ const TrackTable: React.FC<TrackTableProps> = ({
             </select>
 
             <select value={filterEnergy} onChange={(e) => setFilterEnergy(e.target.value)}>
-              <option value=""> Energy</option>
+              <option value="">Energy</option>
               {[1,2,3,4,5,6,7,8,9,10].map(level => (
                 <option key={level} value={level}>{level}</option>
               ))}
             </select>
 
             <select value={filterGenre} onChange={(e) => setFilterGenre(e.target.value)}>
-              <option value="">Genres</option>
+              <option value=""> Genres</option>
               {uniqueGenres.map(genre => (
                 <option key={genre} value={genre}>{genre}</option>
               ))}
             </select>
             
-            <button 
-              className="reset-btn"
-              onClick={() => {
-                setFilterKey('');
-                setFilterTempo('');
-                setFilterEnergy('');
-                setFilterGenre('');
-                setSearchTerm('');
-                setSortField('filename');
-                setSortDirection('asc');
-              }}
-              title="Clear all filters and reset sorting"
-              disabled={!searchTerm && !filterKey && !filterTempo && !filterEnergy && !filterGenre}
-            >
-             
-              Reset All
-            </button>
+            <button className="reset-btn" onClick={() => {
+              setFilterKey('');
+              setFilterTempo('');
+              setFilterEnergy('');
+              setFilterGenre('');
+              setSearchTerm('');
+            }}>Reset</button>
           </div>
         </div>
       </div>
@@ -275,14 +251,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th className="sortable" onClick={() => handleSort('bitrate_display')}>
-                kbps
-                {sortField === 'bitrate_display' && (
-                  <span className={`sort-indicator ${sortDirection}`}>
-                    {sortDirection === 'asc' ? '↑' : '↓'}
-                  </span>
-                )}
-              </th>
+              <th>Cue Points</th>
               <th>Comment</th>
               <th>Rating</th>
             </tr>
@@ -346,8 +315,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     </span>
                   )}
                 </td>
-                <td className="bitrate-cell">
-                  <span className="bitrate-value">{song.bitrate_display}</span>
+                <td className="cue-points-cell">
+                  <span className="cue-count">{song.cue_points_count || 8}</span>
                 </td>
                 <td className="comment-cell">
                   <span className="comment-text">
@@ -369,7 +338,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
       
       {sortedAndFilteredSongs.length === 0 && (
         <div className="empty-state">
-          
+          <p>No tracks found matching your criteria</p>
         </div>
       )}
     </div>

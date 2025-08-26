@@ -70,99 +70,52 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     waveformData.current = data;
   };
 
-    const drawWaveform = useCallback(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || !duration) return;
+  const drawWaveform = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !duration) return;
 
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-        const width = canvas.width;
-        const height = canvas.height;
-        const data = waveformData.current;
+    const width = canvas.width;
+    const height = canvas.height;
+    const data = waveformData.current;
 
-        // Clear canvas with dark background
-        ctx.fillStyle = '#2a2a2a';
-        ctx.fillRect(0, 0, width, height);
+    // Clear canvas
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, width, height);
 
-        // Create waveform gradient - blue theme
-        const playedGradient = ctx.createLinearGradient(0, 0, 0, height);
-        playedGradient.addColorStop(0, '#4a90e2');
-        playedGradient.addColorStop(0.5, '#5ba0f2');
-        playedGradient.addColorStop(1, '#4a90e2');
+    // Draw waveform bars
+    const barWidth = Math.max(width / data.length, 1);
+    const progress = currentTime / duration;
 
-        const unplayedGradient = ctx.createLinearGradient(0, 0, 0, height);
-        unplayedGradient.addColorStop(0, '#606060');
-        unplayedGradient.addColorStop(0.5, '#808080');
-        unplayedGradient.addColorStop(1, '#606060');
+    data.forEach((value, index) => {
+      const barHeight = Math.max(value * height * 0.8, 2);
+      const x = index * barWidth;
+      const y = (height - barHeight) / 2;
 
-        // Draw waveform bars
-        const barWidth = Math.max(width / data.length, 1);
-        const progress = currentTime / duration;
+      const isPlayed = index / data.length < progress;
+      
+      // Simple two-tone waveform
+      ctx.fillStyle = isPlayed ? '#1db954' : '#404040';
+      ctx.fillRect(x, y, Math.max(barWidth - 0.5, 0.5), barHeight);
+    });
 
-        data.forEach((value, index) => {
-            const barHeight = Math.max(value * height * 0.8, 2);
-            const x = index * barWidth;
-            const y = (height - barHeight) / 2;
-
-            const isPlayed = index / data.length < progress;
-            
-            ctx.fillStyle = isPlayed ? playedGradient : unplayedGradient;
-            ctx.fillRect(x, y, Math.max(barWidth - 0.5, 0.5), barHeight);
-        });
-
-        // Draw cue points with labels and colors from the image
-        const cuePointsFromImage = [
-            { time: duration * 0.1, label: 'Cue 1', color: '#ff6b6b' },
-            { time: duration * 0.3, label: 'Cue 3', color: '#4ecdc4' },
-            { time: duration * 0.5, label: 'Cue 4', color: '#45b7d1' },
-            { time: duration * 0.65, label: 'Cue 5', color: '#f39c12' },
-            { time: duration * 0.75, label: 'Cue 6', color: '#e74c3c' },
-            { time: duration * 0.9, label: 'Cue 8', color: '#9b59b6' }
-        ];
-
-        cuePointsFromImage.forEach(cue => {
-            const x = (cue.time / duration) * width;
-            
-            // Draw cue point line
-            ctx.strokeStyle = cue.color;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-            
-            // Draw cue label background
-            ctx.fillStyle = cue.color;
-            const labelWidth = 40;
-            const labelHeight = 16;
-            const labelX = Math.min(x - labelWidth/2, width - labelWidth);
-            const labelY = 4;
-            
-            ctx.fillRect(labelX, labelY, labelWidth, labelHeight);
-            
-            // Draw cue label text
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 10px Inter';
-            ctx.textAlign = 'center';
-            ctx.fillText(cue.label, labelX + labelWidth/2, labelY + 12);
-        });
-
-        // Draw progress line
-        const progressX = progress * width;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(progressX, 0);
-        ctx.lineTo(progressX, height);
-        ctx.stroke();
-        
-        // Progress indicator circle
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(progressX, height / 2, 4, 0, 2 * Math.PI);
-        ctx.fill();
-    }, [currentTime, duration]);
+    // Draw progress line
+    const progressX = progress * width;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(progressX, 0);
+    ctx.lineTo(progressX, height);
+    ctx.stroke();
+    
+    // Progress indicator circle
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(progressX, height / 2, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  }, [currentTime, duration]);
 
   useEffect(() => {
     drawWaveform();
@@ -214,8 +167,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     return (
       <div className="audio-player no-song">
         <div className="player-placeholder">
-          
-          <p>Select a track to play</p>
+          <div className="placeholder-icon">🎵</div>
+          <p className="placeholder-text">Select a track to start playing</p>
         </div>
       </div>
     );
@@ -230,71 +183,117 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       />
       
       <div className="player-layout">
-        {/* Left: Transport Controls */}
+        {/* Transport Controls */}
         <div className="transport-controls">
-          <button onClick={onPrevious} disabled={!onPrevious}>⏮️</button>
-          <button className="play-pause-btn" onClick={togglePlayPause}>
-            {isPlaying ? '⏸️' : '▶️'}
+          <button className="control-btn" onClick={onPrevious} disabled={!onPrevious} title="Previous track">
+            ⏮
           </button>
-          <button onClick={onNext} disabled={!onNext}>⏭️</button>
+          <button className="control-btn play-btn" onClick={togglePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+            {isPlaying ? '⏸' : '▶'}
+          </button>
+          <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
+            ⏭
+          </button>
         </div>
 
-        {/* Center: Waveform and Track Info */}
-        <div className="waveform-section">
-          <div className="track-header">
-            <div className="track-title">
-              James Hype - Roses (Extended Mix)
-            </div>
-            <div className="track-time">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </div>
+        {/* Track Info */}
+        <div className="track-info">
+          <div className="track-title">
+            {song.filename.includes(' - ') ? 
+              song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
+              song.filename.replace(/\.[^/.]+$/, '')
+            }
           </div>
-          
-          <div className="waveform-container">
-            <canvas
-              ref={canvasRef}
-              width={1000}
-              height={80}
-              onClick={handleSeek}
-              className="waveform-canvas"
-            />
-          </div>
-          
-          <div className="track-details">
-            <div className="track-info-row">
-              <span className="info-label">Key</span>
-              <span className="key-badge" style={{ backgroundColor: '#ffb366' }}>4A</span>
-              <span className="key-description">F Minor</span>
-              
-              <span className="info-label">Tempo</span>
-              <span className="tempo-value">126</span>
-              
-              <span className="info-label">Energy</span>
-              <span className="energy-value">6</span>
-              
-              <span className="info-label">Cue points</span>
-              <span className="cue-count">🔍 2️⃣</span>
-              
-              <button className="add-cue-btn">✚ Add cue</button>
-              
-              <button className="snap-cue-btn">🎧 Snap cue</button>
-              
-              <div className="additional-controls">
-                <button className="piano-btn">🎹 Piano</button>
-                <button className="song-info-btn">🎵 Song info</button>
-              </div>
-            </div>
+          <div className="track-artist">
+            {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'}
           </div>
         </div>
 
-        {/* Right: Energy Level Display */}
-        <div className="energy-display">
-          <div className="energy-label">Energy level</div>
-          <div className="energy-number">6</div>
+        {/* Waveform */}
+        <div className="waveform-container">
+          <canvas
+            ref={canvasRef}
+            width={600}
+            height={40}
+            onClick={handleSeek}
+            className="waveform-canvas"
+            title="Click to seek"
+          />
+        </div>
+
+        {/* Time Display */}
+        <div className="time-display">
+          <span className="current-time">{formatTime(currentTime)}</span>
+          <span className="time-separator"> / </span>
+          <span className="total-time">{formatTime(duration)}</span>
+        </div>
+
+        {/* Track Analysis */}
+        <div className="track-analysis">
+          <div className="analysis-item">
+            <span className="analysis-label">Key</span>
+            <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key) }}>
+              {song.camelot_key || 'N/A'}
+            </span>
+          </div>
+          <div className="analysis-item">
+            <span className="analysis-label">BPM</span>
+            <span className="bpm-value">{song.bpm ? Math.round(song.bpm) : '--'}</span>
+          </div>
+          <div className="analysis-item">
+            <span className="analysis-label">Energy</span>
+            <span className="energy-badge" style={{ backgroundColor: getEnergyColor(song.energy_level) }}>
+              {song.energy_level || '--'}
+            </span>
+          </div>
         </div>
       </div>
     </div>
   );
+};
+
+// Helper function to get key color
+const getKeyColor = (camelotKey?: string) => {
+  if (!camelotKey) return '#666';
+  const keyMap: { [key: string]: string } = {
+    '1A': '#ff9999', '1B': '#ffb366', '2A': '#66ff66', '2B': '#66ffb3',
+    '3A': '#66b3ff', '3B': '#9966ff', '4A': '#ffff66', '4B': '#ffb366',
+    '5A': '#ff6666', '5B': '#ff9966', '6A': '#ff66ff', '6B': '#b366ff',
+    '7A': '#66ffff', '7B': '#66b3ff', '8A': '#99ff66', '8B': '#66ff99',
+    '9A': '#ffcc66', '9B': '#ff9966', '10A': '#ff6699', '10B': '#ff66cc',
+    '11A': '#9999ff', '11B': '#cc66ff', '12A': '#66ccff', '12B': '#66ffcc'
+  };
+  return keyMap[camelotKey] || '#666';
+};
+
+// Helper function to get energy color with enhanced gradients
+const getEnergyColor = (level?: number) => {
+  if (!level) return '#666';
+  const colors = {
+    1: '#1a237e', 2: '#283593', 3: '#3949ab', 4: '#3f51b5', 5: '#2196f3',
+    6: '#03a9f4', 7: '#00bcd4', 8: '#009688', 9: '#4caf50', 10: '#8bc34a'
+  };
+  return colors[level as keyof typeof colors] || '#666';
+};
+
+// Helper function to format key names professionally
+const formatKeyName = (keyName?: string, camelotKey?: string) => {
+  if (keyName) {
+    return keyName;
+  }
+  if (camelotKey) {
+    // Convert Camelot key to musical key name
+    const keyMap: { [key: string]: string } = {
+      '1A': 'C Minor', '1B': 'D♭ Major', '2A': 'G Minor', '2B': 'A♭ Major',
+      '3A': 'D Minor', '3B': 'E♭ Major', '4A': 'A Minor', '4B': 'B♭ Major',
+      '5A': 'E Minor', '5B': 'F Major', '6A': 'B Minor', '6B': 'C Major',
+      '7A': 'F♯ Minor', '7B': 'G Major', '8A': 'C♯ Minor', '8B': 'D Major',
+      '9A': 'G♯ Minor', '9B': 'A Major', '10A': 'D♯ Minor', '10B': 'E Major',
+      '11A': 'A♯ Minor', '11B': 'B Major', '12A': 'F Minor', '12B': 'F♯ Major'
+    };
+    return keyMap[camelotKey] || 'Unknown';
+  }
+  return 'Unknown';
 };
 
 export default AudioPlayer;

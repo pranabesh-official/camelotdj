@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import logging
@@ -326,6 +327,31 @@ class DatabaseManager:
                 'key_distribution': key_distribution,
                 'total_duration_hours': total_duration / 3600 if total_duration else 0
             }
+    
+    def set_setting(self, key: str, value: str):
+        """Set an application setting."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', (key, value, datetime.now().isoformat()))
+            conn.commit()
+    
+    def get_setting(self, key: str) -> Optional[str]:
+        """Get an application setting."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT value FROM app_settings WHERE key = ?', (key,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+    
+    def delete_setting(self, key: str):
+        """Delete an application setting."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM app_settings WHERE key = ?', (key,))
+            conn.commit()
     
     def close(self):
         """Close database connection."""

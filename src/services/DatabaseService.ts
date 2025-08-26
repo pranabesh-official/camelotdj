@@ -210,6 +210,68 @@ export class DatabaseService {
             };
         }
     }
+
+    /**
+     * Save download path setting
+     */
+    async saveDownloadPath(path: string): Promise<void> {
+        try {
+            const result = await this.makeRequest('/settings/download-path', {
+                method: 'POST',
+                body: JSON.stringify({
+                    path,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to save download path');
+            }
+        } catch (error) {
+            console.error('Error saving download path:', error);
+            // Don't throw error as this is not critical for app functionality
+        }
+    }
+
+    /**
+     * Get download path setting
+     */
+    async getDownloadPath(): Promise<string | null> {
+        try {
+            const params = new URLSearchParams({ signingkey: this.apiSigningKey });
+            const result = await this.makeRequest(`/settings/download-path?${params}`);
+            
+            if (result.status === 'success') {
+                return result.path || null;
+            } else {
+                return null;
+            }
+        } catch (error) {
+            console.error('Error getting download path:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Clear download path setting
+     */
+    async clearDownloadPath(): Promise<void> {
+        try {
+            const result = await this.makeRequest('/settings/download-path', {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to clear download path');
+            }
+        } catch (error) {
+            console.error('Error clearing download path:', error);
+            // Don't throw error as this is not critical for app functionality
+        }
+    }
 }
 
 export default DatabaseService;

@@ -177,7 +177,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 />
                  Add tracks
               </label>
-              {onFolderUpload && (
+              {/* {onFolderUpload && (
                 <label className="add-folder-btn">
                   <input 
                     type="file" 
@@ -195,7 +195,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   />
                   📁 Add folder
                 </label>
-              )}
+              )} */}
             </>
           )}
         </div>

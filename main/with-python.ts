@@ -79,6 +79,25 @@ ipcMain.on("getApiDetails", (event: IpcMainEvent) => {
     }
 });
 
+// Handle folder dialog for download path selection
+ipcMain.on("show-folder-dialog", async (event: IpcMainEvent) => {
+    try {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+            title: 'Select Download Folder for YouTube Music'
+        });
+        
+        if (!result.canceled && result.filePaths.length > 0) {
+            event.sender.send("folder-dialog-response", result.filePaths[0]);
+        } else {
+            event.sender.send("folder-dialog-response", null);
+        }
+    } catch (error) {
+        console.error('Error showing folder dialog:', error);
+        event.sender.send("folder-dialog-response", null);
+    }
+});
+
 const exitPyProc = () => {
     //
     // NOTE: killing processes in node is surprisingly tricky and a simple

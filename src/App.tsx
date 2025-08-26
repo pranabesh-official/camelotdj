@@ -1,4 +1,3 @@
-import React, { useState, useCallback, useMemo } from 'react';
 import './App.css';
 import FileUpload from './components/FileUpload';
 import CamelotWheel from './components/CamelotWheel';
@@ -6,8 +5,10 @@ import AnalysisResults from './components/AnalysisResults';
 import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
+import YouTubeMusic from './components/YouTubeMusic';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 export interface Song {
     id: string;
@@ -37,14 +38,18 @@ const App: React.FC = () => {
     const [apiPort, setApiPort] = useState(5002); // Default fallback
     const [apiSigningKey, setApiSigningKey] = useState("devkey"); // Default fallback
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [currentView, setCurrentView] = useState<'library' | 'upload' | 'wheel' | 'settings'>('library');
+    const [currentView, setCurrentView] = useState<'library' | 'upload' | 'wheel' | 'settings' | 'youtube'>('library');
     const [isElectronMode, setIsElectronMode] = useState(false);
     const [showCompatibleOnly, setShowCompatibleOnly] = useState(false);
     const [databaseService, setDatabaseService] = useState<DatabaseService | null>(null);
     const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
+    
+    // YouTube Music Settings
+    const [downloadPath, setDownloadPath] = useState<string>('');
+    const [isDownloadPathSet, setIsDownloadPathSet] = useState(false);
 
     // Check if running in Electron and get API details
-    React.useEffect(() => {
+    useEffect(() => {
         const isElectron = !!(window as any).require;
         setIsElectronMode(isElectron);
         
@@ -588,6 +593,124 @@ const App: React.FC = () => {
         return selectedPlaylist ? selectedPlaylist.songs : songs;
     }, [selectedPlaylist, songs]);
 
+    // Load download settings from localStorage
+    useEffect(() => {
+        const savedDownloadPath = localStorage.getItem('youtube_download_path');
+        if (savedDownloadPath) {
+            setDownloadPath(savedDownloadPath);
+            setIsDownloadPathSet(true);
+        }
+    }, []);
+
+    // Handle download path selection
+    const handleDownloadPathSelect = useCallback(async () => {
+        if (isElectronMode) {
+            try {
+                const { ipcRenderer } = (window as any).require('electron');
+                
+                // Use IPC to communicate with main process for file dialog
+                const result = await new Promise((resolve) => {
+                    ipcRenderer.send('show-folder-dialog');
+                    ipcRenderer.once('folder-dialog-response', (event: any, selectedPath: string | null) => {
+                        resolve(selectedPath);
+                    });
+                });
+                
+                if (result) {
+                    const selectedPath = result as string;
+                    setDownloadPath(selectedPath);
+                    setIsDownloadPathSet(true);
+                    localStorage.setItem('youtube_download_path', selectedPath);
+                    
+                    // Also save to backend settings
+                    if (databaseService) {
+                        try {
+                            await databaseService.saveDownloadPath(selectedPath);
+                        } catch (error) {
+                            console.warn('Failed to save download path to backend:', error);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error selecting download path:', error);
+                // Fallback for web or if dialog fails
+                const path = prompt('Enter download path:');
+                if (path) {
+                    setDownloadPath(path);
+                    setIsDownloadPathSet(true);
+                    localStorage.setItem('youtube_download_path', path);
+                    
+                    // Also save to backend settings
+                    if (databaseService) {
+                        try {
+                            await databaseService.saveDownloadPath(path);
+                        } catch (error) {
+                            console.warn('Failed to save download path to backend:', error);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Web mode - use text input
+            const path = prompt('Enter download path:');
+            if (path) {
+                setDownloadPath(path);
+                setIsDownloadPathSet(true);
+                localStorage.setItem('youtube_download_path', path);
+                
+                // Also save to backend settings
+                if (databaseService) {
+                    try {
+                        await databaseService.saveDownloadPath(path);
+                    } catch (error) {
+                        console.warn('Failed to save download path to backend:', error);
+                    }
+                }
+            }
+        }
+    }, [isElectronMode, databaseService]);
+
+    // Clear download path
+    const handleClearDownloadPath = useCallback(() => {
+        setDownloadPath('');
+        setIsDownloadPathSet(false);
+        localStorage.removeItem('youtube_download_path');
+        if (databaseService) {
+            databaseService.clearDownloadPath();
+        }
+    }, [databaseService]);
+
+    // Handle YouTube download completion
+    const handleYouTubeDownloadComplete = useCallback((downloadedSong: any) => {
+        console.log('YouTube download completed:', downloadedSong);
+        
+        // Transform the downloaded song to match our Song interface
+        const newSong: Song = {
+            id: downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            filename: downloadedSong.filename,
+            file_path: downloadedSong.file_path,
+            key: downloadedSong.key,
+            scale: downloadedSong.scale,
+            key_name: downloadedSong.key_name,
+            camelot_key: downloadedSong.camelot_key,
+            bpm: downloadedSong.bpm,
+            energy_level: downloadedSong.energy_level,
+            duration: downloadedSong.duration,
+            file_size: downloadedSong.file_size,
+            bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
+            status: 'analyzed',
+            analysis_date: new Date().toISOString(),
+            cue_points: downloadedSong.cue_points || []
+        };
+        
+        // Add to songs list
+        setSongs(prevSongs => [...prevSongs, newSong]);
+        setSelectedSong(newSong);
+        
+        // Switch to library view to show the new song
+        setCurrentView('library');
+    }, []);
+
     console.log('App render - apiPort:', apiPort, 'currentView:', currentView);
 
     return (
@@ -604,15 +727,27 @@ const App: React.FC = () => {
                         >
                             My collection
                         </button>
+                        {/* <button 
+                            className={currentView === 'youtube' ? 'active' : ''}
+                            onClick={() => setCurrentView('youtube')}
+                        >
+                            🎵 YouTube Music
+                        </button> */}
                         <button 
                             className={currentView === 'settings' ? 'active' : ''}
                             onClick={() => setCurrentView('settings')}
                         >
-                            ⚙️  Settings
+                             Settings
                         </button>
                     </nav>
                     <div className="search-box-header">
-                        <input type="text" placeholder="Search" />
+                        <input 
+                            type="text" 
+                            placeholder="Search Music online..." 
+                            onClick={() => setCurrentView('youtube')}
+                            readOnly
+                            style={{ cursor: 'pointer' }}
+                        />
                     </div>
                 </div>
             </header>
@@ -681,6 +816,48 @@ const App: React.FC = () => {
                         </>
                     )}
 
+                    {currentView === 'youtube' && (
+                        <div className="youtube-view" style={{ height: '100%', overflow: 'auto' }}>
+                            {!isDownloadPathSet && (
+                                <div style={{
+                                    padding: 'var(--space-lg)',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '8px',
+                                    margin: 'var(--space-lg)'
+                                }}>
+                                    <h3 style={{ color: 'rgb(239, 68, 68)', margin: '0 0 8px 0' }}>⚠️ Setup Required</h3>
+                                    <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
+                                        Please configure a download path in Settings before using YouTube Music downloads.
+                                    </p>
+                                    <button 
+                                        onClick={() => setCurrentView('settings')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            background: 'var(--accent-color)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '14px',
+                                            fontWeight: '500'
+                                        }}
+                                    >
+                                        Go to Settings
+                                    </button>
+                                </div>
+                            )}
+                            
+                            <YouTubeMusic
+                                apiPort={apiPort}
+                                apiSigningKey={apiSigningKey}
+                                downloadPath={downloadPath}
+                                isDownloadPathSet={isDownloadPathSet}
+                                onDownloadComplete={handleYouTubeDownloadComplete}
+                            />
+                        </div>
+                    )}
+
                     {currentView === 'upload' && (
                         <div className="upload-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
                             <FileUpload 
@@ -720,52 +897,86 @@ const App: React.FC = () => {
                             <div className="settings-container">
                                 <h2 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-lg)' }}>⚙️ Settings & Database</h2>
                                 
+                                {/* YouTube Music Download Settings */}
                                 <div className="settings-section">
-                                    {/* <LibraryStatus 
-                                        databaseService={databaseService}
-                                        isVisible={true}
-                                    /> */}
                                     <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>📊 Library Status</h3>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Database service is {databaseService ? '✅ Connected' : '❌ Not Connected'}</p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Library loaded: {isLibraryLoaded ? '✅ Yes' : '⏳ Loading...'}</p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0' }}>Songs in memory: {songs.length}</p>
-                                    </div>
-                                </div>
-                                
-                                <div className="settings-section" style={{ marginTop: 'var(--space-xl)' }}>
-                                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-md)' }}>💾 Database Information</h3>
-                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            📁 <strong>Database Location:</strong> ~/.mixed_in_key/music_library.db
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            🎵 <strong>Features:</strong> File location tracking, analysis caching, playlist storage
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            🔄 <strong>Auto-sync:</strong> Music files and analysis results are automatically saved
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            ⚡ <strong>Performance:</strong> Faster loading and offline access to your music library
-                                        </p>
-                                    </div>
-                                </div>
-                                
-                                <div className="settings-section" style={{ marginTop: 'var(--space-xl)' }}>
-                                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-md)' }}>🎛️ Application Info</h3>
-                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            🖥️ <strong>Mode:</strong> {isElectronMode ? 'Desktop Application (Electron)' : 'Web Browser'}
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            🔌 <strong>API Port:</strong> {apiPort}
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            📚 <strong>Library Loaded:</strong> {isLibraryLoaded ? '✅ Yes' : '⏳ Loading...'}
-                                        </p>
-                                        <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                            💽 <strong>Database Service:</strong> {databaseService ? '✅ Connected' : '❌ Not Connected'}
-                                        </p>
+                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>Music Downloads or collection </h3>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                                Configure where Music downloads will be saved. Downloads will be in 320kbps MP3 format.
+                                            </p>
+                                        </div>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <label style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', display: 'block', marginBottom: '8px' }}>
+                                                Download / collection Path:
+                                            </label>
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                <input 
+                                                    type="text" 
+                                                    value={downloadPath}
+                                                    readOnly
+                                                    placeholder="No download path selected"
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px 12px',
+                                                        background: 'var(--surface-bg)',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '14px'
+                                                    }}
+                                                />
+                                                <button 
+                                                    onClick={handleDownloadPathSelect}
+                                                    style={{
+                                                        padding: '8px 16px',
+                                                        background: 'var(--accent-color)',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        cursor: 'pointer',
+                                                        fontSize: '14px',
+                                                        fontWeight: '500'
+                                                    }}
+                                                >
+                                                    {downloadPath ? 'Change' : 'Select'}
+                                                </button>
+                                                {downloadPath && (
+                                                    <button 
+                                                        onClick={handleClearDownloadPath}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: 'var(--error-color)',
+                                                            color: 'white',
+                                                            border: 'none',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '14px'
+                                                        }}
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: isDownloadPathSet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
+                                            border: `1px solid ${isDownloadPathSet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                                            borderRadius: '4px'
+                                        }}>
+                                            <p style={{ 
+                                                color: isDownloadPathSet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)', 
+                                                margin: 0, 
+                                                fontSize: '14px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {isDownloadPathSet ? 'Download path configured' : ' Download path required for YouTube Music downloads'}
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

@@ -20,7 +20,7 @@ app.on("ready", () => {
 
 function createWindow() {
     const win = new BrowserWindow({
-        width: 1200,
+        width: 1280,
         height: 800,
         webPreferences: {
             nodeIntegration: true,

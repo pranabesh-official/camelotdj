@@ -6,6 +6,7 @@
     "main": "buildMain/index.js",
     "scripts": {
         "lint": "npm run main-lint && npm run react-lint",
+        "dev": "concurrently \"npm run python-start\" \"npm run react-start\"",
         "start": "concurrently \"npm run react-start\" \"npm run main-start\"",
         "watch": "concurrently \"npm run main-watch\" \"npm run react-watch\"",
         "build": "npm run python-build && npm run react-build && npm run main-build",
@@ -17,6 +18,7 @@
         "react-start": "NODE_OPTIONS=--openssl-legacy-provider craco start",
         "react-watch": "tsc -w -p tsconfig.json",
         "react-build": "craco build",
+        "python-start": "cd python && python3 api.py --apiport 5002 --signingkey devkey",
         "python-build": "shx rm -rf pythondist && python3 -m PyInstaller python/api.py --distpath pythondist --workpath build-py-temp --onefile && shx rm -rf build-py-temp && shx rm api.spec"
     },
     "dependencies": {
@@ -41,10 +43,10 @@
         "react-scripts": "3.0.1",
         "shx": "^0.3.2",
         "superagent": "^5.0.2",
-        "typescript": "^3.3.3333",
         "uuid": "^3.3.2"
     },
     "devDependencies": {
+        "@types/babel__traverse": "^7.0.15",
         "concurrently": "^4.1.0",
         "cross-env": "^5.2.0",
         "electron": "^13.0.0",
@@ -54,6 +56,7 @@
         "tslint-config-standard": "^7.0.0",
         "tslint-loader": "^3.5.3",
         "tslint-react": "^3.4.0",
+        "typescript": "^4.1.6",
         "wait-on": "^3.2.0"
     },
     "eslintConfig": {

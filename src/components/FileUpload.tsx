@@ -2,10 +2,11 @@ import React, { useCallback, useState } from 'react';
 
 interface FileUploadProps {
     onFileUpload: (file: File) => void;
+    onFolderUpload?: (files: FileList) => void;
     isAnalyzing: boolean;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onFolderUpload, isAnalyzing }) => {
     const [dragOver, setDragOver] = useState(false);
     
     const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -44,6 +45,15 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) =>
         e.target.value = '';
     }, [onFileUpload]);
     
+    const handleFolderSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (files && files.length > 0 && onFolderUpload) {
+            onFolderUpload(files);
+        }
+        // Reset input value
+        e.target.value = '';
+    }, [onFolderUpload]);
+    
     return (
         <div className="file-upload-container">
             <h2>Add Music to Your Library</h2>
@@ -75,6 +85,19 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) =>
                             />
                             Choose Files
                         </label>
+                        {onFolderUpload && (
+                            <label className="folder-upload-btn">
+                                <input 
+                                    type="file" 
+                                    {...({ webkitdirectory: "", directory: "" } as any)}
+                                    multiple
+                                    accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
+                                    onChange={handleFolderSelect}
+                                    disabled={isAnalyzing}
+                                />
+                                📁 Choose Folder
+                            </label>
+                        )}
                         <div className="supported-formats">
                             <small>Supported formats: MP3, WAV, FLAC, AAC, OGG, M4A</small>
                         </div>

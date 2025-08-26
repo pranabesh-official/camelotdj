@@ -23,7 +23,7 @@ const apiDetails = {
 const initializeApi = async () => {
     // dialog.showErrorBox("success", "initializeApi");
     const availablePort = await getPort();
-    apiDetails.port = isDev ? 5001 : availablePort;
+    apiDetails.port = isDev ? 5002 : availablePort;
     const key = isDev ? "devkey" : uuid.v4();
     apiDetails.signingKey = key;
     const srcPath = path.join(__dirname, "..", PY_FOLDER, PY_MODULE + ".py");

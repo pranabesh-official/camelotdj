@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from graphene import ObjectType, String, Schema, Field, List, Mutation
 from flask_graphql import GraphQLView
@@ -9,6 +9,7 @@ import os
 import json
 import tempfile
 import base64
+from urllib.parse import unquote
 
 #
 # Notes on setting up a flask GraphQL server
@@ -135,28 +136,46 @@ def upload_and_analyze():
             return jsonify({"error": "No file uploaded"}), 400
         
         file = request.files['file']
-        if file.filename == '':
+        if not file.filename or file.filename == '':
             return jsonify({"error": "No file selected"}), 400
         
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
-            file.save(tmp_file.name)
-            temp_path = tmp_file.name
+        # Save uploaded file permanently for audio serving
+        upload_dir = os.path.join(tempfile.gettempdir(), 'mixed_in_key_uploads')
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+        
+        permanent_path = os.path.join(upload_dir, file.filename)
+        file.save(permanent_path)
+        
+        # Store file path for audio serving
+        uploaded_files[file.filename] = permanent_path
         
         try:
             # Analyze the uploaded file
-            analysis_result = analyze_music_file(temp_path)
+            analysis_result = analyze_music_file(permanent_path)
+            # Write tags and cue points to ID3
+            try:
+                analyzer = MusicAnalyzer()
+                tag_result = analyzer.write_id3_tags(permanent_path, analysis_result)
+                analysis_result['tag_write'] = tag_result
+            except Exception as _e:
+                pass
             
-            # Clean up temporary file
-            os.unlink(temp_path)
+            # Add file path to result for audio serving
+            analysis_result['file_path'] = permanent_path
+            analysis_result['filename'] = file.filename
             
             return jsonify(analysis_result)
             
         except Exception as e:
-            # Clean up temporary file on error
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise e
+            # Keep file for potential retry but log the error
+            print(f"Analysis failed for {file.filename}: {str(e)}")
+            return jsonify({
+                "error": f"Analysis failed: {str(e)}",
+                "status": "error",
+                "filename": file.filename,
+                "file_path": permanent_path
+            }), 500
             
     except Exception as e:
         return jsonify({
@@ -169,12 +188,13 @@ def analyze_existing_file():
     """REST endpoint for analyzing existing music files by path."""
     
     # Check signing key
-    signing_key = request.headers.get('X-Signing-Key') or request.json.get('signingkey')
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
     try:
-        data = request.get_json()
+        data = request_json
         file_path = data.get('file_path')
         
         if not file_path:
@@ -215,6 +235,54 @@ def get_compatible_keys_rest():
     except Exception as e:
         return jsonify({
             "error": f"Failed to get compatible keys: {str(e)}"
+        }), 500
+
+# Store uploaded files for audio serving
+uploaded_files = {}
+
+@app.route('/audio/<filename>', methods=['GET'])
+def serve_audio(filename):
+    """Serve audio files for playback."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        # Decode the filename
+        decoded_filename = unquote(filename)
+        
+        # Check if file exists in uploaded files or try to find it
+        file_path = uploaded_files.get(decoded_filename)
+        
+        if not file_path or not os.path.exists(file_path):
+            # Try to find the file in common music directories
+            possible_paths = [
+                os.path.join(os.path.expanduser('~'), 'Music', decoded_filename),
+                os.path.join(os.path.expanduser('~'), 'Downloads', decoded_filename),
+                os.path.join(tempfile.gettempdir(), decoded_filename),
+                decoded_filename  # Try as absolute path
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    file_path = path
+                    break
+            
+            if not file_path or not os.path.exists(file_path):
+                return jsonify({"error": "Audio file not found"}), 404
+        
+        # Serve the audio file
+        return send_file(
+            file_path,
+            as_attachment=False,
+            mimetype='audio/mpeg'  # Default to MP3, could be enhanced to detect actual type
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to serve audio: {str(e)}"
         }), 500
 
 if __name__ == "__main__":

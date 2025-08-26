@@ -1,7 +1,9 @@
 import librosa
 import numpy as np
 import essentia.standard as es
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
+from mutagen.easyid3 import EasyID3  # type: ignore
+from mutagen.id3 import ID3, COMM, ID3NoHeaderError  # type: ignore
 import os
 
 class MusicAnalyzer:
@@ -48,6 +50,7 @@ class MusicAnalyzer:
             key_info = self._analyze_key(audio, sr)
             bpm_info = self._analyze_bpm(audio, sr)
             energy_info = self._analyze_energy(audio, sr)
+            cue_points = self._detect_cue_points(audio, sr)
             
             # Get file info
             file_info = self._get_file_info(file_path)
@@ -57,6 +60,7 @@ class MusicAnalyzer:
                 **key_info,
                 **bpm_info,
                 **energy_info,
+                'cue_points': cue_points,
                 'status': 'success'
             }
             
@@ -279,6 +283,58 @@ class MusicAnalyzer:
             
         except Exception as e:
             return {'error': f'Error calculating compatible keys: {str(e)}'}
+
+    def _detect_cue_points(self, audio: np.ndarray, sr: int) -> List[float]:
+        """Detect cue points using onsets and beats; return up to 8 seconds values."""
+        try:
+            onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
+            onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
+            onset_times = librosa.frames_to_time(onsets, sr=sr)
+            tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
+            beat_times = librosa.frames_to_time(beats, sr=sr)
+            candidates = np.unique(np.concatenate([onset_times, beat_times]))
+            filtered = [t for t in candidates if t > 3.0]
+            if len(filtered) > 8:
+                step = max(1, int(len(filtered) / 8))
+                filtered = filtered[::step][:8]
+            return [float(round(t, 2)) for t in filtered[:8]]
+        except Exception:
+            return []
+
+    def write_id3_tags(self, file_path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Write key, BPM, energy, and cue points to ID3 tags (cleaned)."""
+        try:
+            try:
+                tags = EasyID3(file_path)
+            except ID3NoHeaderError:
+                tags = EasyID3()
+                tags.save(file_path)
+                tags = EasyID3(file_path)
+
+            if analysis.get('key_name'):
+                tags['initialkey'] = analysis['key_name']
+            if analysis.get('bpm') is not None:
+                tags['bpm'] = str(int(round(float(analysis['bpm']))))
+            if analysis.get('energy_level') is not None:
+                tags['comment'] = [f"Energy {analysis['energy_level']}"]
+            # Remove common junk
+            for junk in ['encodedby', 'lyricist', 'composer']:
+                if junk in tags:
+                    del tags[junk]
+            tags.save(file_path)
+
+            # Write cue points to COMM frame with desc CUE
+            cue_points = analysis.get('cue_points') or []
+            try:
+                id3 = ID3(file_path)
+            except ID3NoHeaderError:
+                id3 = ID3()
+            cue_str = ','.join([str(round(float(t), 2)) for t in cue_points])
+            id3.add(COMM(encoding=3, lang='eng', desc='CUE', text=cue_str))
+            id3.save(file_path)
+            return { 'updated': True, 'cue_points': cue_points }
+        except Exception as e:
+            return { 'updated': False, 'error': str(e) }
 
 
 # Convenience function for single file analysis

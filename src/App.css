@@ -829,6 +829,86 @@ body {
   background: var(--hover-bg);
 }
 
+/* Settings Page Styles */
+.settings-view {
+  background: var(--app-bg);
+}
+
+.settings-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.settings-section {
+  margin-bottom: var(--space-xl);
+}
+
+.settings-section h3 {
+  color: var(--text-primary);
+  margin-bottom: var(--space-lg);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.settings-section p {
+  color: var(--text-secondary);
+  margin: var(--space-sm) 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.settings-section label {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  display: block;
+  margin-bottom: var(--space-sm);
+}
+
+.settings-section input[type="text"] {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: border-color var(--transition-normal);
+}
+
+.settings-section input[type="text"]:focus {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.settings-section button {
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all var(--transition-normal);
+}
+
+.settings-section button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.status-indicator {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-md);
+}
+
+.status-indicator p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
 /* Responsive Design */
 @media (max-width: 1200px) {
   .app-body {

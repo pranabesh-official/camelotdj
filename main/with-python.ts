@@ -27,16 +27,27 @@ const initializeApi = async () => {
     const key = isDev ? "devkey" : uuid.v4();
     apiDetails.signingKey = key;
     const srcPath = path.join(__dirname, "..", PY_FOLDER, PY_MODULE + ".py");
-    const exePath = (process.platform === "win32") ? path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE + ".exe") : path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE);
-    if (__dirname.indexOf("app.asar") > 0) {
+    // Support both onefile (api) and onedir (api/api) PyInstaller outputs on macOS
+    const exePath = (process.platform === "win32")
+        ? path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE + ".exe")
+        : (() => {
+            const oneFile = path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE);
+            const oneDir = path.join(__dirname, "..", PY_DIST_FOLDER, PY_MODULE, PY_MODULE);
+            return fs.existsSync(oneDir) ? oneDir : oneFile;
+        })();
+    // In packaged apps, asar may be disabled, so use Electron's app.isPackaged
+    if (app.isPackaged) {
         // dialog.showErrorBox("info", "packaged");
         if (fs.existsSync(exePath)) {
-            pyProc = childProcess.execFile(exePath, ["--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey], {}, (error, stdout, stderr) => {
-                if (error && isDev) {
-                    console.log(error);
-                    console.log(stderr);
-                }
-            });
+            const logDir = app.getPath("userData");
+            try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* noop */ }
+            const logPath = path.join(logDir, "python.log");
+            const logStream = fs.createWriteStream(logPath, { flags: "a" });
+            logStream.write(`\n==== Starting Python backend @ ${new Date().toISOString()} port=${apiDetails.port} ====\n`);
+            pyProc = childProcess.spawn(exePath, ["--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey], { env: { ...process.env } });
+            (pyProc as any).stdout && (pyProc as any).stdout.on("data", (data: Buffer) => logStream.write(data));
+            (pyProc as any).stderr && (pyProc as any).stderr.on("data", (data: Buffer) => logStream.write(data));
+            (pyProc as any).on && (pyProc as any).on("error", (err: Error) => logStream.write(`\n[error] ${err.stack || String(err)}\n`));
             if (pyProc === undefined) {
                 dialog.showErrorBox("Error", "pyProc is undefined");
                 dialog.showErrorBox("Error", exePath);
@@ -50,7 +61,14 @@ const initializeApi = async () => {
     } else {
         // dialog.showErrorBox("info", "unpackaged");
         if (fs.existsSync(srcPath)) {
+            const logDir = app.getPath("userData");
+            try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* noop */ }
+            const logPath = path.join(logDir, "python-dev.log");
+            const logStream = fs.createWriteStream(logPath, { flags: "a" });
+            logStream.write(`\n==== Starting Python backend (dev) @ ${new Date().toISOString()} port=${apiDetails.port} ====\n`);
             pyProc = crossSpawn("python3", [srcPath, "--apiport", String(apiDetails.port), "--signingkey", apiDetails.signingKey]);
+            (pyProc as any).stdout && (pyProc as any).stdout.on("data", (data: Buffer) => logStream.write(data));
+            (pyProc as any).stderr && (pyProc as any).stderr.on("data", (data: Buffer) => logStream.write(data));
         } else {
             dialog.showErrorBox("Error", "Unpackaged python source not found");
         }

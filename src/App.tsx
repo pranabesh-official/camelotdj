@@ -47,6 +47,8 @@ const App: React.FC = () => {
     // YouTube Music Settings
     const [downloadPath, setDownloadPath] = useState<string>('');
     const [isDownloadPathSet, setIsDownloadPathSet] = useState(false);
+    const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+    const [showSaveSuccess, setShowSaveSuccess] = useState(false);
 
     // Check if running in Electron and get API details
     useEffect(() => {
@@ -593,14 +595,41 @@ const App: React.FC = () => {
         return selectedPlaylist ? selectedPlaylist.songs : songs;
     }, [selectedPlaylist, songs]);
 
-    // Load download settings from localStorage
+    // Load download settings from localStorage and database
     useEffect(() => {
-        const savedDownloadPath = localStorage.getItem('youtube_download_path');
-        if (savedDownloadPath) {
-            setDownloadPath(savedDownloadPath);
-            setIsDownloadPathSet(true);
-        }
-    }, []);
+        const loadDownloadPath = async () => {
+            setIsLoadingSettings(true);
+            
+            try {
+                // First try to load from localStorage for immediate display
+                const savedDownloadPath = localStorage.getItem('youtube_download_path');
+                if (savedDownloadPath) {
+                    setDownloadPath(savedDownloadPath);
+                    setIsDownloadPathSet(true);
+                }
+                
+                // Then try to load from database (this will override localStorage if different)
+                if (databaseService) {
+                    try {
+                        const dbDownloadPath = await databaseService.getDownloadPath();
+                        if (dbDownloadPath) {
+                            setDownloadPath(dbDownloadPath);
+                            setIsDownloadPathSet(true);
+                            // Update localStorage to match database
+                            localStorage.setItem('youtube_download_path', dbDownloadPath);
+                        }
+                    } catch (error) {
+                        console.warn('Failed to load download path from database:', error);
+                        // Keep localStorage value if database fails
+                    }
+                }
+            } finally {
+                setIsLoadingSettings(false);
+            }
+        };
+        
+        loadDownloadPath();
+    }, [databaseService]);
 
     // Handle download path selection
     const handleDownloadPathSelect = useCallback(async () => {
@@ -626,6 +655,8 @@ const App: React.FC = () => {
                     if (databaseService) {
                         try {
                             await databaseService.saveDownloadPath(selectedPath);
+                            setShowSaveSuccess(true);
+                            setTimeout(() => setShowSaveSuccess(false), 3000);
                         } catch (error) {
                             console.warn('Failed to save download path to backend:', error);
                         }
@@ -644,6 +675,8 @@ const App: React.FC = () => {
                     if (databaseService) {
                         try {
                             await databaseService.saveDownloadPath(path);
+                            setShowSaveSuccess(true);
+                            setTimeout(() => setShowSaveSuccess(false), 3000);
                         } catch (error) {
                             console.warn('Failed to save download path to backend:', error);
                         }
@@ -671,12 +704,19 @@ const App: React.FC = () => {
     }, [isElectronMode, databaseService]);
 
     // Clear download path
-    const handleClearDownloadPath = useCallback(() => {
+    const handleClearDownloadPath = useCallback(async () => {
         setDownloadPath('');
         setIsDownloadPathSet(false);
         localStorage.removeItem('youtube_download_path');
+        
         if (databaseService) {
-            databaseService.clearDownloadPath();
+            try {
+                await databaseService.clearDownloadPath();
+                setShowSaveSuccess(true);
+                setTimeout(() => setShowSaveSuccess(false), 3000);
+            } catch (error) {
+                console.warn('Failed to clear download path from database:', error);
+            }
         }
     }, [databaseService]);
 
@@ -897,22 +937,22 @@ const App: React.FC = () => {
                     {currentView === 'settings' && (
                         <div className="settings-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
                             <div className="settings-container">
-                                <h2 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-lg)' }}>⚙️ Settings & Database</h2>
+                                <h2 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-xl)' }}>⚙️ Settings & Configuration</h2>
                                 
                                 {/* YouTube Music Download Settings */}
-                                <div className="settings-section">
+                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
                                     <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>Music Downloads or collection </h3>
+                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>🎵 Music Downloads & Collection</h3>
                                         
                                         <div style={{ marginBottom: '16px' }}>
                                             <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                                Configure where Music downloads will be saved. Downloads will be in 320kbps MP3 format.
+                                                Configure where music downloads will be saved. Downloads will be in 320kbps MP3 format.
                                             </p>
                                         </div>
                                         
                                         <div style={{ marginBottom: '16px' }}>
                                             <label style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', display: 'block', marginBottom: '8px' }}>
-                                                Download / collection Path:
+                                                Download / Collection Path:
                                             </label>
                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                                 <input 
@@ -966,17 +1006,120 @@ const App: React.FC = () => {
                                         
                                         <div style={{ 
                                             padding: '12px', 
-                                            background: isDownloadPathSet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
-                                            border: `1px solid ${isDownloadPathSet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                                            borderRadius: '4px'
+                                            background: isLoadingSettings ? 'rgba(255, 193, 7, 0.1)' : (isDownloadPathSet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'), 
+                                            border: `1px solid ${isLoadingSettings ? 'rgba(255, 193, 7, 0.3)' : (isDownloadPathSet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`, 
+                                            borderRadius: '4px',
+                                            marginBottom: '16px'
                                         }}>
                                             <p style={{ 
-                                                color: isDownloadPathSet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)', 
+                                                color: isLoadingSettings ? 'rgb(255, 193, 7)' : (isDownloadPathSet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)'), 
                                                 margin: 0, 
                                                 fontSize: '14px',
                                                 fontWeight: '500'
                                             }}>
-                                                {isDownloadPathSet ? 'Download path configured' : ' Download path required for YouTube Music downloads'}
+                                                {isLoadingSettings ? '⏳ Loading settings...' : (isDownloadPathSet ? '✅ Download path configured' : '⚠️ Download path required for YouTube Music downloads')}
+                                            </p>
+                                        </div>
+
+                                        {showSaveSuccess && (
+                                            <div style={{ 
+                                                padding: '12px', 
+                                                background: 'rgba(34, 197, 94, 0.1)', 
+                                                border: '1px solid rgba(34, 197, 94, 0.3)', 
+                                                borderRadius: '4px'
+                                            }}>
+                                                <p style={{ 
+                                                    color: 'rgb(34, 197, 94)', 
+                                                    margin: 0, 
+                                                    fontSize: '14px',
+                                                    fontWeight: '500'
+                                                }}>
+                                                    ✅ Settings saved successfully!
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Database Information */}
+                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>🗄️ Database & Storage</h3>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                                Database connection status and storage information.
+                                            </p>
+                                        </div>
+                                        
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: databaseService ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
+                                            border: `1px solid ${databaseService ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                                            borderRadius: '4px',
+                                            marginBottom: '16px'
+                                        }}>
+                                            <p style={{ 
+                                                color: databaseService ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)', 
+                                                margin: 0, 
+                                                fontSize: '14px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {databaseService ? '✅ Database connected' : '❌ Database not connected'}
+                                            </p>
+                                        </div>
+
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: isLoadingSettings ? 'rgba(255, 193, 7, 0.1)' : 'rgba(34, 197, 94, 0.1)', 
+                                            border: `1px solid ${isLoadingSettings ? 'rgba(255, 193, 7, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`,
+                                            borderRadius: '4px'
+                                        }}>
+                                            <p style={{ 
+                                                color: isLoadingSettings ? 'rgb(255, 193, 7)' : 'rgb(34, 197, 94)', 
+                                                margin: 0, 
+                                                fontSize: '14px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {isLoadingSettings ? '⏳ Loading settings...' : '✅ Settings loaded'}
+                                            </p>
+                                        </div>
+
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: isLibraryLoaded ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 193, 7, 0.1)', 
+                                            border: `1px solid ${isLibraryLoaded ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255, 193, 7, 0.3)'}`,
+                                            borderRadius: '4px'
+                                        }}>
+                                            <p style={{ 
+                                                color: isLibraryLoaded ? 'rgb(34, 197, 94)' : 'rgb(255, 193, 7)', 
+                                                margin: '0', 
+                                                fontSize: '14px',
+                                                fontWeight: '500'
+                                            }}>
+                                                {isLibraryLoaded ? `✅ Library loaded (${songs.length} tracks)` : '⏳ Loading library...'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Application Information */}
+                                <div className="settings-section">
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <h3 style={{ color: 'var(--text-primary)', margin: '0 0 16px 0' }}>ℹ️ Application Info</h3>
+                                        
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                                            <p style={{ margin: '8px 0' }}>
+                                                <strong>Version:</strong> 1.0.0
+                                            </p>
+                                            <p style={{ margin: '8px 0' }}>
+                                                <strong>Mode:</strong> {isElectronMode ? 'Desktop App' : 'Web Browser'}
+                                            </p>
+                                            <p style={{ margin: '8px 0' }}>
+                                                <strong>API Port:</strong> {apiPort}
+                                            </p>
+                                            <p style={{ margin: '8px 0' }}>
+                                                <strong>Database Service:</strong> {databaseService ? 'Active' : 'Inactive'}
                                             </p>
                                         </div>
                                     </div>

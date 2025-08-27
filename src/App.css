@@ -1,8 +1,8 @@
-/* Professional Mixed In Key Dark Theme - Desktop Application Design */
+/* Professional CAMELOTDJ Dark Theme - Desktop Application Design */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Roboto:wght@300;400;500;600;700&display=swap');
 
 :root {
-  /* Professional Dark Theme Colors - Matching Mixed In Key Design */
+  /* Professional Dark Theme Colors - Matching CAMELOTDJ Design */
   --app-bg: #1a1a1a;
   --header-bg: #2a2a2a;
   --sidebar-bg: #252525;
@@ -127,24 +127,16 @@ body {
   gap: var(--space-sm);
 }
 
-.brand .logo::before {
-  content: '';
-  width: 24px;
-  height: 24px;
-  background: var(--brand-blue);
-  border-radius: 50%;
+.brand .logo .logo-image {
+  height: 160px;
+  width: auto;
+  max-width: 800px;
+  object-fit: contain;
+  filter: brightness(1.3) contrast(1.2);
+  transform: scale(1.1);
 }
 
-.brand .logo::after {
-  content: 'PRO';
-  background: var(--accent-orange);
-  color: white;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  margin-left: var(--space-sm);
-}
+
 
 /* Navigation */
 .nav-tabs {
@@ -439,6 +431,38 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.loading-indicator {
+  font-size: 12px;
+  color: #ffcc00;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.loading-indicator::before {
+  content: '⏳';
+  animation: pulse 1.5s infinite;
+}
+
+.error-indicator {
+  font-size: 12px;
+  color: #ff4444;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.error-indicator::before {
+  content: '❌';
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 /* Waveform */

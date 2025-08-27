@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
 
 interface YouTubeTrack {
     id: string;
@@ -20,20 +21,19 @@ interface YouTubeMusicProps {
 
 interface SearchSuggestion {
     text: string;
-    type: 'recent' | 'popular';
+    type: 'recent' | 'popular' | 'song' | 'title' | 'artist' | 'history' | 'trending';
+    title?: string;
+    artist?: string;
+    source?: string;
 }
 
-// Popular search suggestions (moved outside component to avoid dependency warning)
-const POPULAR_SUGGESTIONS = [
-    'trending music 2024',
-    'hip hop beats',
-    'electronic dance music',
-    'acoustic covers',
-    'jazz instrumentals',
-    'lo-fi chill beats',
-    'rock classics',
-    'pop hits 2024'
-];
+interface AutocompleteResponse {
+    suggestions: SearchSuggestion[];
+    status: string;
+    query?: string;
+    error?: string;
+}
+
 
 const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     apiPort,
@@ -47,15 +47,19 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [isSearching, setIsSearching] = useState(false);
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [downloadProgress, setDownloadProgress] = useState<{[key: string]: number}>({});
+    const [realTimeProgress, setRealTimeProgress] = useState<{[key: string]: any}>({});
+    const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
     const [error, setError] = useState<string | null>(null);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
-    const [isStreaming, setIsStreaming] = useState<string | null>(null);
-    const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
+    const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+    const [autocompleteError, setAutocompleteError] = useState<string | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const socketRef = useRef<Socket | null>(null);
     
-    // Load recent searches from localStorage
+    // Load recent searches from localStorage and initialize WebSocket
     useEffect(() => {
         const saved = localStorage.getItem('youtube_recent_searches');
         if (saved) {
@@ -65,33 +69,220 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 console.error('Failed to load recent searches:', e);
             }
         }
-    }, []);
+        
+        // Initialize WebSocket connection for real-time progress
+        const initializeWebSocket = () => {
+            try {
+                console.log('🔌 Initializing WebSocket connection for download progress...');
+                const socket = io(`http://127.0.0.1:${apiPort}`, {
+                    transports: ['websocket', 'polling'],
+                    timeout: 10000,
+                    autoConnect: true
+                });
+                
+                socket.on('connect', () => {
+                    console.log('✅ WebSocket connected for real-time download progress');
+                });
+                
+                socket.on('disconnect', () => {
+                    console.log('❌ WebSocket disconnected');
+                });
+                
+                socket.on('connected', (data) => {
+                    console.log('📡 WebSocket server confirmed:', data.status);
+                });
+                
+                socket.on('download_progress', (data) => {
+                    console.log('📥 Download progress update:', data);
+                    
+                    if (data.download_id) {
+                        setRealTimeProgress(prev => ({
+                            ...prev,
+                            [data.download_id]: data
+                        }));
+                        
+                        // Update legacy progress for compatibility
+                        if (data.progress !== undefined) {
+                            setDownloadProgress(prev => ({
+                                ...prev,
+                                [data.download_id]: data.progress
+                            }));
+                        }
+                        
+                        // Mark as downloaded when complete
+                        if (data.stage === 'complete' && data.progress === 100) {
+                            setDownloadedTracks(prev => new Set([...prev, data.download_id]));
+                            setIsDownloading(null);
+                            
+                            // Trigger collection refresh if callback provided
+                            if (onDownloadComplete && data.filename) {
+                                onDownloadComplete({
+                                    filename: data.filename,
+                                    file_path: data.file_path,
+                                    download_id: data.download_id
+                                });
+                            }
+                            
+                            // Clear progress after delay
+                            setTimeout(() => {
+                                setRealTimeProgress(prev => {
+                                    const newProgress = { ...prev };
+                                    delete newProgress[data.download_id];
+                                    return newProgress;
+                                });
+                                setDownloadProgress(prev => {
+                                    const newProgress = { ...prev };
+                                    delete newProgress[data.download_id];
+                                    return newProgress;
+                                });
+                            }, 5000);
+                        }
+                        
+                        // Handle errors
+                        if (data.stage === 'error') {
+                            setError(data.message || 'Download failed');
+                            setIsDownloading(null);
+                        }
+                    }
+                });
+                
+                socketRef.current = socket;
+                
+            } catch (error) {
+                console.error('❌ Failed to initialize WebSocket:', error);
+            }
+        };
+        
+        // Initialize WebSocket after a short delay to ensure API is ready
+        setTimeout(initializeWebSocket, 1000);
+        
+        // Load initial trending suggestions
+        const loadTrending = async () => {
+            try {
+                const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/trending`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Signing-Key': apiSigningKey
+                    }
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        setSuggestions(result.suggestions || []);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch trending suggestions:', error);
+            }
+        };
+        
+        loadTrending();
+        
+        // Cleanup WebSocket on unmount
+        return () => {
+            if (socketRef.current) {
+                console.log('🔌 Disconnecting WebSocket...');
+                socketRef.current.disconnect();
+                socketRef.current = null;
+            }
+        };
+    }, [apiPort, apiSigningKey, onDownloadComplete]);
     
-    // Update suggestions based on input
-    useEffect(() => {
-        if (searchQuery.trim()) {
-            const filteredRecent = recentSearches
-                .filter(search => search.toLowerCase().includes(searchQuery.toLowerCase()))
-                .slice(0, 3)
-                .map(text => ({ text, type: 'recent' as const }));
+    // Fetch trending suggestions
+    const fetchTrendingSuggestions = useCallback(async () => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/trending`, {
+                method: 'GET',
+                headers: {
+                    'X-Signing-Key': apiSigningKey
+                }
+            });
             
-            const filteredPopular = POPULAR_SUGGESTIONS
-                .filter(search => search.toLowerCase().includes(searchQuery.toLowerCase()))
-                .slice(0, 4)
-                .map(text => ({ text, type: 'popular' as const }));
-            
-            setSuggestions([...filteredRecent, ...filteredPopular]);
-        } else {
-            // Show recent searches and popular suggestions when empty
-            const recentSuggestions = recentSearches
-                .slice(0, 3)
-                .map(text => ({ text, type: 'recent' as const }));
-            const popularList = POPULAR_SUGGESTIONS
-                .slice(0, 5)
-                .map(text => ({ text, type: 'popular' as const }));
-            setSuggestions([...recentSuggestions, ...popularList]);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.status === 'success') {
+                    setSuggestions(result.suggestions || []);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch trending suggestions:', error);
         }
-    }, [searchQuery, recentSearches]);
+    }, [apiPort, apiSigningKey]);
+    
+    // Fetch autocomplete suggestions from API
+    const fetchAutocompleteSuggestions = useCallback(async (query: string) => {
+        if (!query || query.length < 2) {
+            fetchTrendingSuggestions();
+            return;
+        }
+        
+        setIsLoadingSuggestions(true);
+        setAutocompleteError(null);
+        
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+            
+            const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/autocomplete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({
+                    query: query,
+                    limit: 8,
+                    signingkey: apiSigningKey
+                }),
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (response.ok) {
+                const result: AutocompleteResponse = await response.json();
+                if (result.status === 'success') {
+                    setSuggestions(result.suggestions || []);
+                } else {
+                    setAutocompleteError(result.error || 'Autocomplete failed');
+                }
+            } else {
+                throw new Error(`HTTP ${response.status}`);
+            }
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error('Autocomplete error:', error);
+                setAutocompleteError('Failed to fetch suggestions');
+            }
+        } finally {
+            setIsLoadingSuggestions(false);
+        }
+    }, [apiPort, apiSigningKey, fetchTrendingSuggestions]);
+    
+    // Debounced autocomplete
+    const debouncedAutocomplete = useCallback((query: string) => {
+        if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+        }
+        
+        debounceTimeoutRef.current = setTimeout(() => {
+            fetchAutocompleteSuggestions(query);
+        }, 300); // 300ms debounce
+    }, [fetchAutocompleteSuggestions]);
+    
+    // Update suggestions based on input with debouncing
+    useEffect(() => {
+        debouncedAutocomplete(searchQuery);
+        
+        // Cleanup timeout on unmount
+        return () => {
+            if (debounceTimeoutRef.current) {
+                clearTimeout(debounceTimeoutRef.current);
+            }
+        };
+    }, [searchQuery, debouncedAutocomplete]);
+
     
     // Save search to recent searches
     const saveRecentSearch = useCallback((query: string) => {
@@ -164,261 +355,195 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, [searchQuery, apiPort, apiSigningKey, saveRecentSearch]);
 
-    // Download track with improved error handling
+    // Enhanced download track with real-time progress and automatic collection integration
     const handleDownload = useCallback(async (track: YouTubeTrack) => {
         if (!isDownloadPathSet) {
             alert('Please set a download path in Settings first.');
             return;
         }
 
+        const downloadId = `${track.id}_${Date.now()}`;
         setIsDownloading(track.id);
-        setDownloadProgress(prev => ({ ...prev, [track.id]: 0 }));
+        setDownloadProgress(prev => ({ ...prev, [downloadId]: 0 }));
+        setRealTimeProgress(prev => ({ ...prev, [downloadId]: { stage: 'starting', progress: 0, message: 'Preparing download...' } }));
         setError(null);
-
-        let retryCount = 0;
-        const maxRetries = 2;
         
-        // Convert YouTube Music URL to regular YouTube URL with better validation
+        // Join download room for WebSocket updates
+        if (socketRef.current) {
+            socketRef.current.emit('join_download', { download_id: downloadId });
+        }
+        
+        // Convert YouTube Music URL to regular YouTube URL
         const convertToYouTubeUrl = (url: string, videoId: string) => {
-            // Always use the video ID to create a clean YouTube URL
             if (videoId && videoId.trim()) {
                 return `https://www.youtube.com/watch?v=${videoId.trim()}`;
             }
-            // Fallback: if URL is already a youtube.com URL, use it
             if (url && url.includes('youtube.com/watch')) {
                 return url;
             }
-            // Last resort: convert music.youtube.com to youtube.com
             if (url && url.includes('music.youtube.com')) {
                 return url.replace('music.youtube.com', 'youtube.com');
             }
             return url;
         };
         
-        const attemptDownload = async (): Promise<any> => {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
-            
-            try {
-                setDownloadProgress(prev => ({ ...prev, [track.id]: 10 }));
-                
-                // Convert URL to proper YouTube format and validate
-                const downloadUrl = convertToYouTubeUrl(track.url, track.id);
-                
-                // Validate the URL format
-                if (!downloadUrl || (!downloadUrl.includes('youtube.com/watch?v=') && !downloadUrl.includes('youtu.be/'))) {
-                    throw new Error('Invalid YouTube URL format. Unable to generate proper download URL.');
-                }
-                
-                console.log('Attempting download:', {
-                    title: track.title,
-                    artist: track.artist,
-                    videoId: track.id,
-                    originalUrl: track.url,
-                    downloadUrl: downloadUrl,
-                    downloadPath: downloadPath
-                });
-                
-                // Clean and validate the data before sending
-                const cleanTitle = (track.title?.trim() || 'Unknown Title').replace(/[<>:"/\\|?*]/g, '_');
-                const cleanArtist = (track.artist?.trim() || 'Unknown Artist').replace(/[<>:"/\\|?*]/g, '_');
-                
-                const requestBody = {
-                    url: downloadUrl,
-                    title: cleanTitle,
-                    artist: cleanArtist,
-                    download_path: downloadPath,
-                    signingkey: apiSigningKey
-                };
-                
-                console.log('Sending download request:', requestBody);
-                
-                const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/download`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Signing-Key': apiSigningKey
-                    },
-                    body: JSON.stringify(requestBody),
-                    signal: controller.signal
-                });
-                
-                clearTimeout(timeoutId);
-                setDownloadProgress(prev => ({ ...prev, [track.id]: 90 }));
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    let errorMessage;
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        errorMessage = errorJson.error || `Server Error: ${response.status} ${response.statusText}`;
-                    } catch {
-                        errorMessage = `Network Error: ${response.status} ${response.statusText}`;
-                    }
-                    
-                    // Add specific handling for common HTTP errors
-                    if (response.status === 400) {
-                        errorMessage = `Bad Request: ${errorMessage}. Please check if the video URL is valid and accessible.`;
-                    } else if (response.status === 401) {
-                        errorMessage = 'Authentication failed. Please restart the application.';
-                    } else if (response.status === 404) {
-                        errorMessage = 'Video not found or unavailable for download.';
-                    } else if (response.status >= 500) {
-                        errorMessage = 'Server error. Please try again later.';
-                    }
-                    
-                    console.error('Download failed with status:', response.status, 'Error:', errorMessage);
-                    throw new Error(errorMessage);
-                }
-                
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    setDownloadProgress(prev => ({ ...prev, [track.id]: 100 }));
-                    
-                    // Notify parent component about successful download
-                    if (onDownloadComplete && result.song) {
-                        onDownloadComplete(result.song);
-                    }
-                    
-                    // Clear download state after 3 seconds
-                    setTimeout(() => {
-                        setDownloadProgress(prev => {
-                            const newProgress = { ...prev };
-                            delete newProgress[track.id];
-                            return newProgress;
-                        });
-                    }, 3000);
-                    
-                    // Show success message without emoji to avoid issues
-                    alert(`Downloaded: ${track.title} by ${track.artist}`);
-                    return result;
-                } else {
-                    throw new Error(result.error || 'Download failed - no success status');
-                }
-            } catch (error: any) {
-                clearTimeout(timeoutId);
-                
-                if (error.name === 'AbortError') {
-                    throw new Error('Download timeout. The file might be too large or connection is slow.');
-                }
-                
-                // Log detailed error for debugging
-                console.error('Download attempt failed:', {
-                    error: error.message,
-                    track: track.title,
-                    attempt: retryCount + 1
-                });
-                
-                throw error;
-            }
-        };
-        
         try {
-            await attemptDownload();
-        } catch (error: any) {
-            console.error('Download error:', error);
+            const downloadUrl = convertToYouTubeUrl(track.url, track.id);
             
-            if (retryCount < maxRetries) {
-                retryCount++;
-                console.log(`Retrying download (attempt ${retryCount}/${maxRetries + 1})...`);
-                setDownloadProgress(prev => ({ ...prev, [track.id]: 5 }));
-                
+            // Validate the URL format
+            if (!downloadUrl || (!downloadUrl.includes('youtube.com/watch?v=') && !downloadUrl.includes('youtu.be/'))) {
+                throw new Error('Invalid YouTube URL format. Unable to generate proper download URL.');
+            }
+            
+            console.log('📥 Starting enhanced download:', {
+                title: track.title,
+                artist: track.artist,
+                videoId: track.id,
+                downloadUrl: downloadUrl,
+                downloadPath: downloadPath,
+                downloadId: downloadId
+            });
+            
+            const cleanTitle = (track.title?.trim() || 'Unknown Title').replace(/[<>:"/\\|?*]/g, '_');
+            const cleanArtist = (track.artist?.trim() || 'Unknown Artist').replace(/[<>:"/\\|?*]/g, '_');
+            
+            const requestBody = {
+                url: downloadUrl,
+                title: cleanTitle,
+                artist: cleanArtist,
+                download_path: downloadPath,
+                download_id: downloadId,
+                signingkey: apiSigningKey
+            };
+            
+            console.log('📡 Sending enhanced download request:', requestBody);
+            
+            // Use enhanced download endpoint
+            const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/download-enhanced`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify(requestBody)
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                let errorMessage;
                 try {
-                    // Wait longer between retries
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                    await attemptDownload();
-                } catch (retryError: any) {
-                    console.error('Retry failed:', retryError);
-                    const finalError = `Download failed after ${maxRetries + 1} attempts: ${retryError.message}`;
-                    setError(finalError);
-                    
-                    // Clear download progress on final failure
+                    const errorJson = JSON.parse(errorText);
+                    errorMessage = errorJson.error || `Server Error: ${response.status} ${response.statusText}`;
+                } catch {
+                    errorMessage = `Network Error: ${response.status} ${response.statusText}`;
+                }
+                
+                // Add specific handling for common HTTP errors
+                if (response.status === 400) {
+                    errorMessage = `Bad Request: ${errorMessage}. Please check if the video URL is valid and accessible.`;
+                } else if (response.status === 401) {
+                    errorMessage = 'Authentication failed. Please restart the application.';
+                } else if (response.status === 404) {
+                    errorMessage = 'Video not found or unavailable for download.';
+                } else if (response.status >= 500) {
+                    errorMessage = 'Server error. Please try again later.';
+                }
+                
+                throw new Error(errorMessage);
+            }
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                console.log('✅ Enhanced download completed successfully:', result);
+                
+                // Mark track as downloaded
+                setDownloadedTracks(prev => new Set([...prev, track.id]));
+                
+                // Update progress to 100% if not already done by WebSocket
+                setDownloadProgress(prev => ({ ...prev, [downloadId]: 100 }));
+                setRealTimeProgress(prev => ({
+                    ...prev,
+                    [downloadId]: {
+                        stage: 'complete',
+                        progress: 100,
+                        message: 'Download complete! Added to collection.',
+                        enhanced_features: result.enhanced_features
+                    }
+                }));
+                
+                // Notify parent component
+                if (onDownloadComplete && result.song) {
+                    onDownloadComplete(result.song);
+                }
+                
+                // Show success message
+                const features = result.enhanced_features || {};
+                let successMsg = `✅ Downloaded: ${track.title} by ${track.artist}`;
+                if (features.quality_guarantee) {
+                    successMsg += ` (${features.quality_guarantee})`;
+                }
+                if (features.artwork_embedded) {
+                    successMsg += ' with artwork';
+                }
+                if (features.collection_integration) {
+                    successMsg += ' - Added to collection';
+                }
+                
+                alert(successMsg);
+                
+                // Clear progress after delay
+                setTimeout(() => {
                     setDownloadProgress(prev => {
                         const newProgress = { ...prev };
-                        delete newProgress[track.id];
+                        delete newProgress[downloadId];
                         return newProgress;
                     });
-                }
-            } else {
-                const finalError = `Download failed: ${error.message}`;
-                setError(finalError);
+                    setRealTimeProgress(prev => {
+                        const newProgress = { ...prev };
+                        delete newProgress[downloadId];
+                        return newProgress;
+                    });
+                }, 5000);
                 
-                // Clear download progress on failure
+            } else {
+                throw new Error(result.error || 'Download failed - no success status');
+            }
+            
+        } catch (error: any) {
+            console.error('❌ Enhanced download error:', error);
+            
+            const finalError = `Download failed: ${error.message}`;
+            setError(finalError);
+            
+            // Update progress to show error
+            setRealTimeProgress(prev => ({
+                ...prev,
+                [downloadId]: {
+                    stage: 'error',
+                    progress: 0,
+                    message: error.message
+                }
+            }));
+            
+            // Clear download progress on failure
+            setTimeout(() => {
                 setDownloadProgress(prev => {
                     const newProgress = { ...prev };
-                    delete newProgress[track.id];
+                    delete newProgress[downloadId];
                     return newProgress;
                 });
-            }
+                setRealTimeProgress(prev => {
+                    const newProgress = { ...prev };
+                    delete newProgress[downloadId];
+                    return newProgress;
+                });
+            }, 3000);
         } finally {
             setIsDownloading(null);
         }
     }, [apiPort, apiSigningKey, downloadPath, isDownloadPathSet, onDownloadComplete]);
 
-    // Stream preview track
-    const handleStreamPreview = useCallback(async (track: YouTubeTrack) => {
-        try {
-            // Stop any current streaming
-            if (audioElement) {
-                audioElement.pause();
-                audioElement.src = '';
-            }
-            
-            setIsStreaming(track.id);
-            setError(null);
-            
-            const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/stream/${track.id}`, {
-                method: 'GET',
-                headers: {
-                    'X-Signing-Key': apiSigningKey
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Streaming failed: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            
-            if (result.status === 'success' && result.stream_url) {
-                // Create audio element for streaming
-                const audio = new Audio(result.stream_url);
-                audio.crossOrigin = 'anonymous';
-                
-                audio.addEventListener('canplay', () => {
-                    audio.play().catch(console.error);
-                });
-                
-                audio.addEventListener('ended', () => {
-                    setIsStreaming(null);
-                });
-                
-                audio.addEventListener('error', () => {
-                    setError('Streaming playback failed');
-                    setIsStreaming(null);
-                });
-                
-                setAudioElement(audio);
-            } else {
-                throw new Error(result.error || 'Failed to get stream URL');
-            }
-            
-        } catch (error: any) {
-            console.error('Streaming error:', error);
-            setError(`Streaming failed: ${error.message}`);
-            setIsStreaming(null);
-        }
-    }, [apiPort, apiSigningKey, audioElement]);
-    
-    // Stop streaming
-    const handleStopStream = useCallback(() => {
-        if (audioElement) {
-            audioElement.pause();
-            audioElement.src = '';
-        }
-        setIsStreaming(null);
-    }, [audioElement]);
     
     // Handle suggestion selection
     const handleSuggestionSelect = useCallback((suggestion: string) => {
@@ -488,53 +613,112 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     borderTop: 'none',
                                     borderBottomLeftRadius: '8px',
                                     borderBottomRightRadius: '8px',
-                                    maxHeight: '300px',
+                                    maxHeight: '400px',
                                     overflowY: 'auto',
                                     zIndex: 1000,
                                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
                                 }}>
-                                    {suggestions.map((suggestion, index) => (
-                                        <div
-                                            key={`${suggestion.type}-${index}`}
-                                            onClick={() => handleSuggestionSelect(suggestion.text)}
-                                            style={{
-                                                padding: '12px 16px',
-                                                cursor: 'pointer',
-                                                borderBottom: index < suggestions.length - 1 ? '1px solid var(--border-color)' : 'none',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '8px'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                e.currentTarget.style.background = 'var(--card-bg)';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                e.currentTarget.style.background = 'var(--surface-bg)';
-                                            }}
-                                        >
-                                            <span style={{ 
-                                                fontSize: '14px',
-                                                color: suggestion.type === 'recent' ? 'var(--accent-color)' : 'var(--text-secondary)'
-                                            }}>
-                                                {suggestion.type === 'recent' ? '🕒' : '🔥'}
-                                            </span>
-                                            <span style={{
-                                                color: 'var(--text-primary)',
-                                                fontSize: '14px'
-                                            }}>
-                                                {suggestion.text}
-                                            </span>
-                                            {suggestion.type === 'recent' && (
+                                    {isLoadingSuggestions && (
+                                        <div style={{
+                                            padding: '12px 16px',
+                                            color: 'var(--text-secondary)',
+                                            fontSize: '14px',
+                                            textAlign: 'center'
+                                        }}>
+                                            Loading suggestions...
+                                        </div>
+                                    )}
+                                    
+                                    {autocompleteError && (
+                                        <div style={{
+                                            padding: '12px 16px',
+                                            color: 'var(--error-color)',
+                                            fontSize: '14px',
+                                            textAlign: 'center'
+                                        }}>
+                                            {autocompleteError}
+                                        </div>
+                                    )}
+                                    
+                                    {!isLoadingSuggestions && !autocompleteError && suggestions.map((suggestion, index) => {
+                                        const getLabel = (type: string) => {
+                                            switch (type) {
+                                                case 'recent':
+                                                case 'history':
+                                                    return 'Recent';
+                                                case 'trending':
+                                                case 'popular':
+                                                    return 'Trending';
+                                                case 'song':
+                                                    return 'Song';
+                                                case 'artist':
+                                                    return 'Artist';
+                                                case 'title':
+                                                    return 'Title';
+                                                default:
+                                                    return '';
+                                            }
+                                        };
+                                        
+                                        return (
+                                            <div
+                                                key={`${suggestion.type}-${index}-${suggestion.text}`}
+                                                onClick={() => handleSuggestionSelect(suggestion.text)}
+                                                style={{
+                                                    padding: '12px 16px',
+                                                    cursor: 'pointer',
+                                                    borderBottom: index < suggestions.length - 1 ? '1px solid var(--border-color)' : 'none',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '12px',
+                                                    transition: 'background-color 0.2s ease'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.background = 'var(--card-bg)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.background = 'var(--surface-bg)';
+                                                }}
+                                            >
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '14px',
+                                                        fontWeight: '500',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap'
+                                                    }}>
+                                                        {suggestion.text}
+                                                    </div>
+                                                    {suggestion.artist && suggestion.title && suggestion.type === 'song' && (
+                                                        <div style={{
+                                                            color: 'var(--text-tertiary)',
+                                                            fontSize: '12px',
+                                                            marginTop: '2px',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap'
+                                                        }}>
+                                                            {suggestion.title} • {suggestion.artist}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                
                                                 <span style={{
                                                     marginLeft: 'auto',
-                                                    fontSize: '12px',
-                                                    color: 'var(--text-tertiary)'
+                                                    fontSize: '11px',
+                                                    color: 'var(--text-tertiary)',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px',
+                                                    fontWeight: '500',
+                                                    flexShrink: 0
                                                 }}>
-                                                    Recent
+                                                    {getLabel(suggestion.type)}
                                                 </span>
-                                            )}
-                                        </div>
-                                    ))}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -876,49 +1060,160 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
                                 {/* Download Button / Progress */}
                                 <div className="track-download" style={{ width: '120px', textAlign: 'center', flexShrink: 0 }}>
-                                    {isCurrentlyDownloading ? (
-                                        <div style={{ width: '100%' }}>
-                                            
-                                            <div style={{
-                                                color: 'var(--text-secondary)',
-                                                fontSize: '12px'
-                                            }}>
-                                                Downloading...
-                                            </div>
-                                        </div>
-                                    ) : progress === 100 ? (
-                                        <div style={{
-                                            color: 'var(--success-color)',
-                                            fontSize: '14px',
-                                            fontWeight: '500'
-                                        }}>
-                                            Downloaded
-                                        </div>
-                                    ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                            {/* Stream Button */}
-                                           
-                                            
-                                            {/* Download Button */}
-                                            <button
-                                                onClick={() => handleDownload(track)}
-                                                disabled={!isDownloadPathSet}
-                                                style={{
-                                                    padding: '6px 12px',
-                                                    fontSize: '12px',
-                                                    fontWeight: '500',
-                                                    background: isDownloadPathSet ? 'var(--accent-color)' : 'var(--surface-bg)',
-                                                    color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
-                                                    border: 'none',
-                                                    borderRadius: '4px',
-                                                    cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
-                                                    width: '100%'
-                                                }}
-                                            >
-                                               Download
-                                            </button>
-                                        </div>
-                                    )}
+                                    {(() => {
+                                        const isCurrentlyDownloading = isDownloading === track.id;
+                                        const isDownloaded = downloadedTracks.has(track.id);
+                                        
+                                        // Find any active progress for this track
+                                        const activeProgress = Object.entries(realTimeProgress).find(
+                                            ([id, _]) => id.startsWith(track.id)
+                                        );
+                                        const progressData = activeProgress ? activeProgress[1] : null;
+                                        const progressPercent = progressData?.progress || downloadProgress[track.id] || 0;
+                                        
+                                        if (isCurrentlyDownloading || (progressData && progressData.stage !== 'complete')) {
+                                            return (
+                                                <div style={{ width: '100%' }}>
+                                                    {/* Enhanced Progress Bar */}
+                                                    <div style={{
+                                                        width: '100%',
+                                                        height: '6px',
+                                                        backgroundColor: 'var(--surface-bg)',
+                                                        borderRadius: '3px',
+                                                        overflow: 'hidden',
+                                                        marginBottom: '4px',
+                                                        border: '1px solid var(--border-color)'
+                                                    }}>
+                                                        <div style={{
+                                                            width: `${Math.max(progressPercent, 2)}%`,
+                                                            height: '100%',
+                                                            background: progressData?.stage === 'error' 
+                                                                ? 'linear-gradient(90deg, #ef4444, #dc2626)'
+                                                                : progressData?.stage === 'complete'
+                                                                    ? 'linear-gradient(90deg, #10b981, #059669)'
+                                                                    : 'linear-gradient(90deg, var(--accent-color), #6366f1)',
+                                                            transition: 'width 0.3s ease, background 0.3s ease',
+                                                            borderRadius: '2px'
+                                                        }} />
+                                                    </div>
+                                                    
+                                                    {/* Progress Text */}
+                                                    <div style={{
+                                                        color: progressData?.stage === 'error' 
+                                                            ? '#ef4444'
+                                                            : progressData?.stage === 'complete'
+                                                                ? '#10b981'
+                                                                : 'var(--text-secondary)',
+                                                        fontSize: '11px',
+                                                        fontWeight: '500',
+                                                        marginBottom: '2px'
+                                                    }}>
+                                                        {progressPercent}%
+                                                    </div>
+                                                    
+                                                    {/* Stage Message */}
+                                                    <div style={{
+                                                        color: 'var(--text-tertiary)',
+                                                        fontSize: '10px',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap',
+                                                        maxWidth: '100%'
+                                                    }}>
+                                                        {progressData?.message || 'Downloading...'}
+                                                    </div>
+                                                    
+                                                    {/* Speed indicator for downloading stage */}
+                                                    {progressData?.speed && progressData.stage === 'downloading' && (
+                                                        <div style={{
+                                                            color: 'var(--text-tertiary)',
+                                                            fontSize: '9px',
+                                                            marginTop: '1px'
+                                                        }}>
+                                                            {(progressData.speed / 1024 / 1024).toFixed(1)} MB/s
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        } else if (isDownloaded || progressPercent === 100) {
+                                            return (
+                                                <div style={{
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '2px'
+                                                }}>
+                                                    <div style={{
+                                                        color: '#10b981',
+                                                        fontSize: '14px',
+                                                        fontWeight: '600',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px'
+                                                    }}>
+                                                        ✓ Downloaded
+                                                    </div>
+                                                    <div style={{
+                                                        fontSize: '10px',
+                                                        color: 'var(--text-tertiary)'
+                                                    }}>
+                                                        320kbps MP3
+                                                    </div>
+                                                </div>
+                                            );
+                                        } else {
+                                            return (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    {/* Download Button */}
+                                                    <button
+                                                        onClick={() => handleDownload(track)}
+                                                        disabled={!isDownloadPathSet}
+                                                        style={{
+                                                            padding: '6px 12px',
+                                                            fontSize: '12px',
+                                                            fontWeight: '500',
+                                                            background: isDownloadPathSet 
+                                                                ? 'linear-gradient(135deg, var(--accent-color) 0%, #6366f1 100%)' 
+                                                                : 'var(--surface-bg)',
+                                                            color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
+                                                            border: 'none',
+                                                            borderRadius: '4px',
+                                                            cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
+                                                            width: '100%',
+                                                            transition: 'all 0.2s ease',
+                                                            boxShadow: isDownloadPathSet 
+                                                                ? '0 2px 4px rgba(139, 69, 255, 0.2)' 
+                                                                : 'none'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (isDownloadPathSet) {
+                                                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(139, 69, 255, 0.3)';
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (isDownloadPathSet) {
+                                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(139, 69, 255, 0.2)';
+                                                            }
+                                                        }}
+                                                    >
+                                                        Download
+                                                    </button>
+                                                    
+                                                    {/* Enhanced features indicator */}
+                                                    <div style={{
+                                                        fontSize: '9px',
+                                                        color: 'var(--text-tertiary)',
+                                                        textAlign: 'center',
+                                                        lineHeight: '1.2'
+                                                    }}>
+                                                        320kbps + Artwork
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+                                    })()}
                                 </div>
                             </div>
                         );

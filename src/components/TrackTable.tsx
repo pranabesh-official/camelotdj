@@ -10,6 +10,7 @@ interface TrackTableProps {
   currentlyPlaying?: Song | null;
   getCompatibleSongs: (targetKey: string) => Song[];
   showCompatibleOnly?: boolean;
+  onSongUpdate?: (song: Song) => void; // New prop for updating songs
 }
 
 type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
@@ -23,7 +24,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
   onDeleteSong,
   currentlyPlaying,
   getCompatibleSongs,
-  showCompatibleOnly = false
+  showCompatibleOnly = false,
+  onSongUpdate
 }) => {
   const [sortField, setSortField] = useState<SortField>('filename');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -32,21 +34,44 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [filterTempo, setFilterTempo] = useState<string>('');
   const [filterGenre, setFilterGenre] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [editingCell, setEditingCell] = useState<{songId: string, field: string} | null>(null);
+  const [editingValue, setEditingValue] = useState<string>('');
 
   // Enhanced song interface for display
   const enhancedSongs = useMemo(() => {
     return songs.map(song => {
-      // Calculate estimated bitrate if not provided
-      let estimatedBitrate = song.bitrate;
-      if (!estimatedBitrate && song.file_size && song.duration) {
-        // Estimate bitrate from file size and duration
+      // Calculate accurate bitrate from multiple sources
+      let displayBitrate = song.bitrate;
+      
+      // If bitrate is already provided and seems accurate, use it
+      if (displayBitrate && displayBitrate > 0) {
+        // Ensure it's a reasonable value
+        if (displayBitrate < 1000) {
+          // Already in kbps
+        } else {
+          // Convert from bps to kbps
+          displayBitrate = Math.round(displayBitrate / 1000);
+        }
+      } else if (song.file_size && song.duration && song.duration > 0) {
+        // Calculate from file size and duration
         // Formula: (file_size_bytes * 8) / (duration_seconds * 1000) = kbps
-        estimatedBitrate = Math.round((song.file_size * 8) / (song.duration * 1000));
+        const calculatedBitrate = Math.round((song.file_size * 8) / (song.duration * 1000));
+        
+        // Validate calculated bitrate is reasonable
+        if (calculatedBitrate > 32 && calculatedBitrate < 1000) {
+          displayBitrate = calculatedBitrate;
+        } else {
+          // Default based on common standards
+          displayBitrate = 320; // High quality default
+        }
+      } else {
+        // Default to 320kbps for downloaded/analyzed files
+        displayBitrate = 320;
       }
-      // Default to common bitrates if estimation fails
-      if (!estimatedBitrate) {
-        estimatedBitrate = 320; // Default to high quality
-      }
+      
+      // Ensure bitrate is within reasonable bounds
+      if (displayBitrate < 32) displayBitrate = 128;
+      if (displayBitrate > 320) displayBitrate = 320;
       
       return {
         ...song,
@@ -57,7 +82,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
            song.bpm && song.bpm > 140 ? 'Techno' :
            'Minimal / Deep Tech') : 'Unknown',
         sharp: song.key && song.key.includes('#') ? '#' : song.key && song.key.includes('m') ? 'm' : '',
-        bitrate_display: estimatedBitrate,
+        bitrate_display: displayBitrate,
         comment: `${song.camelot_key} - Energy ${song.energy_level}`
       };
     });
@@ -125,12 +150,110 @@ const TrackTable: React.FC<TrackTableProps> = ({
     }
   };
 
-  const formatDuration = (seconds?: number) => {
-    if (!seconds) return '--';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+
+
+  // Edit functionality
+  const startEditing = (songId: string, field: string, currentValue: any) => {
+    setEditingCell({ songId, field });
+    setEditingValue(String(currentValue || ''));
   };
+
+  const cancelEditing = () => {
+    setEditingCell(null);
+    setEditingValue('');
+  };
+
+  const saveEdit = (song: Song) => {
+    if (!editingCell || !onSongUpdate) return;
+    
+    const { field } = editingCell;
+    let newValue: any = editingValue;
+    
+    // Convert value based on field type
+    if (field === 'bpm' || field === 'energy_level' || field === 'bitrate') {
+      newValue = Number(editingValue) || 0;
+    }
+    
+    // Update the song
+    const updatedSong = {
+      ...song,
+      [field]: newValue
+    };
+    
+    onSongUpdate(updatedSong);
+    cancelEditing();
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent, song: Song) => {
+    if (e.key === 'Enter') {
+      saveEdit(song);
+    } else if (e.key === 'Escape') {
+      cancelEditing();
+    }
+  };
+
+  // Helper function to check if a cell is being edited
+  const isEditing = (songId: string, field: string) => {
+    return editingCell?.songId === songId && editingCell?.field === field;
+  };
+
+  // Render editable cell
+  const renderEditableCell = (song: Song, field: string, value: any, className?: string) => {
+    if (isEditing(song.id, field)) {
+      return (
+        <input
+          type={field === 'bpm' || field === 'energy_level' || field === 'bitrate' ? 'number' : 'text'}
+          value={editingValue}
+          onChange={(e) => setEditingValue(e.target.value)}
+          onBlur={() => saveEdit(song)}
+          onKeyDown={(e) => handleKeyPress(e, song)}
+          className="edit-input"
+          autoFocus
+        />
+      );
+    }
+    
+    return (
+      <span 
+        className={`editable-cell ${className || ''}`}
+        onClick={() => onSongUpdate && startEditing(song.id, field, value)}
+        title={onSongUpdate ? 'Click to edit' : ''}
+      >
+        {value}
+      </span>
+    );
+  };
+
+  // SVG Icon components for professional look
+  const PlayIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z"/>
+    </svg>
+  );
+  
+  const EditIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+    </svg>
+  );
+  
+  const DeleteIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+    </svg>
+  );
+  
+  const MusicIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+    </svg>
+  );
+  
+  const ResetIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+    </svg>
+  );
 
   const getKeyColor = (camelotKey?: string) => {
     if (!camelotKey) return '#ccc';
@@ -222,7 +345,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               title="Clear all filters and reset sorting"
               disabled={!searchTerm && !filterKey && !filterTempo && !filterEnergy && !filterGenre}
             >
-             
+              <ResetIcon />
               Reset All
             </button>
           </div>
@@ -285,6 +408,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               </th>
               <th>Comment</th>
               <th>Rating</th>
+              <th className="actions-header">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -301,7 +425,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               >
                 <td className="cover-art-cell">
                   <div className="cover-art-placeholder">
-                    🎵
+                    <MusicIcon />
                   </div>
                 </td>
                 <td className="artist-cell">
@@ -331,23 +455,25 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   )}
                 </td>
                 <td className="tempo-cell">
-                  {song.bpm ? Math.round(song.bpm) : '--'}
+                  {renderEditableCell(song, 'bpm', song.bpm ? Math.round(song.bpm) : '--', 'bpm-value')}
                 </td>
                 <td className="standard-cell">
                   {song.bpm && song.bpm > 120 ? 'Fm' : 'F#m'}
                 </td>
                 <td className="energy-cell">
-                  {song.energy_level && (
+                  {song.energy_level ? (
                     <span 
                       className="energy-indicator"
                       style={{ backgroundColor: getEnergyColor(song.energy_level) }}
                     >
-                      {song.energy_level}
+                      {renderEditableCell(song, 'energy_level', song.energy_level, 'energy-value')}
                     </span>
+                  ) : (
+                    renderEditableCell(song, 'energy_level', '--', 'energy-value')
                   )}
                 </td>
                 <td className="bitrate-cell">
-                  <span className="bitrate-value">{song.bitrate_display}</span>
+                  {renderEditableCell(song, 'bitrate', song.bitrate_display, 'bitrate-value')}
                 </td>
                 <td className="comment-cell">
                   <span className="comment-text">
@@ -359,6 +485,44 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     {[1, 2, 3, 4, 5].map(star => (
                       <span key={star} className="star">★</span>
                     ))}
+                  </div>
+                </td>
+                <td className="actions-cell">
+                  <div className="action-buttons">
+                    <button 
+                      className="action-btn play-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSongPlay(song);
+                      }}
+                      title="Play track"
+                    >
+                      <PlayIcon />
+                    </button>
+                    {onSongUpdate && (
+                      <button 
+                        className="action-btn edit-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditing(song.id, 'filename', song.filename);
+                        }}
+                        title="Edit track info"
+                      >
+                        <EditIcon />
+                      </button>
+                    )}
+                    <button 
+                      className="action-btn delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Are you sure you want to remove "${song.filename}" from the playlist?`)) {
+                          onDeleteSong(song.id);
+                        }
+                      }}
+                      title="Remove from playlist"
+                    >
+                      <DeleteIcon />
+                    </button>
                   </div>
                 </td>
               </tr>

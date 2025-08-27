@@ -16,63 +16,143 @@ interface AudioPlayerProps {
   apiSigningKey?: string;
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, apiPort = 5001, apiSigningKey = 'devkey' }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, apiPort = 5002, apiSigningKey = 'devkey' }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
   const [cuePoints, setCuePoints] = useState<CuePoint[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [waveformError, setWaveformError] = useState<string | null>(null);
+  const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformData = useRef<number[]>([]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !song) return;
+    if (!audio || !song) {
+      setDuration(0);
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setAudioError(null);
+      return;
+    }
+
+    // Reset states when song changes
+    setIsLoading(true);
+    setAudioError(null);
+    setWaveformError(null);
+    setIsLoadingWaveform(true);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
 
     const updateTime = () => setCurrentTime(audio.currentTime);
-    const updateDuration = () => setDuration(audio.duration);
+    const updateDuration = () => {
+      setDuration(audio.duration);
+      setIsLoading(false);
+      console.log('Audio loaded successfully, duration:', audio.duration);
+    };
     const handleEnded = () => setIsPlaying(false);
+    const handleLoadStart = () => {
+      setIsLoading(true);
+      console.log('Audio loading started for:', song.filename);
+    };
+    const handleCanPlay = () => {
+      setIsLoading(false);
+      console.log('Audio can play:', song.filename);
+    };
+    const handleError = (e: Event) => {
+      setIsLoading(false);
+      setAudioError('Failed to load audio file');
+      console.error('Audio loading error:', e, 'for file:', song.filename);
+    };
+    const handleLoadedData = () => {
+      console.log('Audio data loaded for:', song.filename);
+    };
 
     audio.addEventListener('timeupdate', updateTime);
     audio.addEventListener('loadedmetadata', updateDuration);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('loadstart', handleLoadStart);
+    audio.addEventListener('canplay', handleCanPlay);
+    audio.addEventListener('error', handleError);
+    audio.addEventListener('loadeddata', handleLoadedData);
 
-    // Generate sample waveform data (in a real app, this would come from audio analysis)
-    generateWaveformData();
+    // Fetch real waveform data from backend
+    fetchWaveformData();
+
+    // Log the audio URL for debugging
+    const audioUrl = `http://127.0.0.1:${apiPort}/audio/${encodeURIComponent(song.filename)}?signingkey=${encodeURIComponent(apiSigningKey)}`;
+    console.log('Loading audio from URL:', audioUrl);
 
     return () => {
       audio.removeEventListener('timeupdate', updateTime);
       audio.removeEventListener('loadedmetadata', updateDuration);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('loadstart', handleLoadStart);
+      audio.removeEventListener('canplay', handleCanPlay);
+      audio.removeEventListener('error', handleError);
+      audio.removeEventListener('loadeddata', handleLoadedData);
     };
-  }, [song]);
+  }, [song, apiPort, apiSigningKey]);
 
-  const generateWaveformData = () => {
-    // Generate more realistic waveform data with variations
+  const fetchWaveformData = async () => {
+    if (!song) return;
+    
+    try {
+      setIsLoadingWaveform(true);
+      setWaveformError(null);
+      
+      const waveformUrl = `http://127.0.0.1:${apiPort}/waveform/${encodeURIComponent(song.filename)}?signingkey=${encodeURIComponent(apiSigningKey)}&samples=1000`;
+      console.log('Fetching waveform from URL:', waveformUrl);
+      
+      const response = await fetch(waveformUrl);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const waveformResponse = await response.json();
+      
+      if (waveformResponse.status === 'success' && waveformResponse.waveform_data) {
+        waveformData.current = waveformResponse.waveform_data;
+        console.log(`📊 Successfully loaded waveform data: ${waveformResponse.waveform_data.length} samples`);
+      } else {
+        throw new Error(waveformResponse.error || 'Invalid waveform response');
+      }
+      
+      setIsLoadingWaveform(false);
+      
+    } catch (error) {
+      console.error('Failed to fetch waveform:', error);
+      setWaveformError(`Failed to load waveform: ${error}`);
+      setIsLoadingWaveform(false);
+      
+      // Fallback to simple waveform
+      generateFallbackWaveform();
+    }
+  };
+
+  const generateFallbackWaveform = () => {
+    // Generate simple fallback waveform data
     const samples = 1000;
     const data = [];
     
     for (let i = 0; i < samples; i++) {
-      // Create multiple frequency components for realistic waveform
-      const baseFreq = Math.sin(i * 0.02) * 0.5;
-      const highFreq = Math.sin(i * 0.1) * 0.3;
-      const noise = (Math.random() - 0.5) * 0.2;
-      
-      // Combine frequencies and add envelope
-      const envelope = Math.sin((i / samples) * Math.PI); // Natural fade in/out
-      const value = (baseFreq + highFreq + noise) * envelope;
-      
-      // Ensure positive values and add some variation
-      data.push(Math.abs(value) * (0.3 + Math.random() * 0.7));
+      // Create simple sine wave pattern as fallback
+      const value = Math.abs(Math.sin(i * 0.02)) * 0.5 + Math.random() * 0.1;
+      data.push(value);
     }
     
     waveformData.current = data;
+    console.log('📊 Using fallback waveform data');
   };
 
   const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !duration) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -84,6 +164,41 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     // Clear canvas
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, width, height);
+
+    if (isLoading || isLoadingWaveform) {
+      // Show loading state
+      ctx.fillStyle = '#666';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(isLoadingWaveform ? 'Loading waveform...' : 'Loading...', width / 2, height / 2);
+      return;
+    }
+
+    if (audioError) {
+      // Show error state
+      ctx.fillStyle = '#ff4444';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Audio Error', width / 2, height / 2);
+      return;
+    }
+    
+    if (waveformError) {
+      // Show waveform error state but still allow interaction
+      ctx.fillStyle = '#ff8800';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Using fallback waveform', width / 2, height / 2);
+    }
+
+    if (!duration || data.length === 0) {
+      // Show no data state
+      ctx.fillStyle = '#666';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('No audio data', width / 2, height / 2);
+      return;
+    }
 
     // Draw waveform bars
     const barWidth = Math.max(width / data.length, 1);
@@ -115,28 +230,35 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     ctx.beginPath();
     ctx.arc(progressX, height / 2, 3, 0, 2 * Math.PI);
     ctx.fill();
-  }, [currentTime, duration]);
+  }, [currentTime, duration, isLoading, audioError, isLoadingWaveform, waveformError]);
 
   useEffect(() => {
     drawWaveform();
   }, [drawWaveform]);
 
-  const togglePlayPause = () => {
+  const togglePlayPause = async () => {
     const audio = audioRef.current;
-    if (!audio || !song) return;
+    if (!audio || !song || isLoading || audioError) return;
 
-    if (isPlaying) {
-      audio.pause();
-    } else {
-      audio.play();
+    try {
+      if (isPlaying) {
+        audio.pause();
+        setIsPlaying(false);
+      } else {
+        await audio.play();
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Playback error:', error);
+      setAudioError('Playback failed');
+      setIsPlaying(false);
     }
-    setIsPlaying(!isPlaying);
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     const audio = audioRef.current;
-    if (!canvas || !audio || !duration) return;
+    if (!canvas || !audio || !duration || isLoading || audioError) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -188,8 +310,13 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           <button className="control-btn" onClick={onPrevious} disabled={!onPrevious} title="Previous track">
             ⏮
           </button>
-          <button className="control-btn play-btn" onClick={togglePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
-            {isPlaying ? '⏸' : '▶'}
+          <button 
+            className="control-btn play-btn" 
+            onClick={togglePlayPause} 
+            disabled={isLoading || !!audioError}
+            title={isLoading ? 'Loading...' : audioError ? 'Audio Error' : isPlaying ? 'Pause' : 'Play'}
+          >
+            {isLoading ? '⏳' : audioError ? '❌' : isPlaying ? '⏸' : '▶'}
           </button>
           <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
             ⏭
@@ -207,6 +334,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           <div className="track-artist">
             {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'}
           </div>
+          {isLoading && <div className="loading-indicator">Loading audio...</div>}
+          {audioError && <div className="error-indicator">Error: {audioError}</div>}
         </div>
 
         {/* Waveform */}
@@ -217,7 +346,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
             height={40}
             onClick={handleSeek}
             className="waveform-canvas"
-            title="Click to seek"
+            title={isLoading ? 'Loading...' : audioError ? 'Audio Error' : 'Click to seek'}
+            style={{ cursor: isLoading || audioError ? 'default' : 'pointer' }}
           />
         </div>
 

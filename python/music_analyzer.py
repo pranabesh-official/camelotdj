@@ -1,10 +1,17 @@
 import librosa
 import numpy as np
-import essentia.standard as es
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Union, Optional
 from mutagen.easyid3 import EasyID3  # type: ignore
 from mutagen.id3 import ID3, COMM, ID3NoHeaderError  # type: ignore
 import os
+
+# Try to import Essentia with proper error handling
+try:
+    import essentia.standard as es  # type: ignore
+    ESSENTIA_AVAILABLE = True
+except ImportError:
+    ESSENTIA_AVAILABLE = False
+    es = None
 
 class MusicAnalyzer:
     """
@@ -29,8 +36,28 @@ class MusicAnalyzer:
     
     def __init__(self):
         # Initialize Essentia algorithms
-        self.key_detector = es.KeyExtractor()
-        self.rhythm_detector = es.RhythmExtractor2013()
+        self.key_detector: Optional[Any] = None
+        self.rhythm_detector: Optional[Any] = None
+        
+        if ESSENTIA_AVAILABLE and es is not None:
+            try:
+                # Try different possible names for KeyExtractor
+                key_detector_classes = ['KeyExtractor', 'Key']
+                for class_name in key_detector_classes:
+                    if hasattr(es, class_name):
+                        self.key_detector = getattr(es, class_name)()
+                        break
+                
+                # Try different possible names for RhythmExtractor
+                rhythm_detector_classes = ['RhythmExtractor2013', 'RhythmExtractor']
+                for class_name in rhythm_detector_classes:
+                    if hasattr(es, class_name):
+                        self.rhythm_detector = getattr(es, class_name)()
+                        break
+            except Exception as e:
+                print(f"Warning: Failed to initialize Essentia algorithms: {e}")
+                self.key_detector = None
+                self.rhythm_detector = None
         
     def analyze_audio_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -71,26 +98,67 @@ class MusicAnalyzer:
                 'filename': os.path.basename(file_path) if file_path else 'Unknown'
             }
     
-    def _analyze_key(self, audio: np.ndarray, sr: int) -> Dict[str, Any]:
-        """Analyze musical key using Essentia's KeyExtractor."""
+    def _analyze_key(self, audio: np.ndarray, sr: Union[int, float]) -> Dict[str, Any]:
+        """Analyze musical key using Essentia's KeyExtractor if available, otherwise use librosa."""
         try:
-            # Use Essentia for key detection
-            key, scale, strength = self.key_detector(audio)
+            # Try Essentia for key detection if available
+            if self.key_detector is not None:
+                try:
+                    key, scale, strength = self.key_detector(audio)
+                    
+                    # Format key name
+                    key_name = f"{key} {scale}"
+                    
+                    # Get Camelot notation
+                    camelot_key = self.CAMELOT_WHEEL.get(key_name, 'Unknown')
+                    
+                    essentia_success = True
+                except Exception:
+                    essentia_success = False
+                    key, scale, strength = 'Unknown', 'Unknown', 0.0
+                    key_name = 'Unknown'
+                    camelot_key = 'Unknown'
+            else:
+                essentia_success = False
+                key, scale, strength = 'Unknown', 'Unknown', 0.0
+                key_name = 'Unknown'
+                camelot_key = 'Unknown'
             
-            # Format key name
-            key_name = f"{key} {scale}"
-            
-            # Get Camelot notation
-            camelot_key = self.CAMELOT_WHEEL.get(key_name, 'Unknown')
-            
-            # Also try with librosa for comparison
+            # Use librosa for key estimation (as backup or primary method)
             chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
             chroma_mean = np.mean(chroma, axis=1)
             key_index = np.argmax(chroma_mean)
             
             # Chromatic scale
-            notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F# ', 'G', 'G#', 'A', 'A#', 'B']
+            notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
             estimated_key = notes[key_index]
+            
+            # If Essentia failed, try to provide a better estimate
+            if not essentia_success:
+                # Simple major/minor detection based on chroma profile
+                # This is a basic heuristic - not as accurate as Essentia
+                major_profile = np.array([1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1])
+                minor_profile = np.array([1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0])
+                
+                # Shift profiles to match detected key
+                major_shifted = np.roll(major_profile, key_index)
+                minor_shifted = np.roll(minor_profile, key_index)
+                
+                # Calculate correlation with major and minor profiles
+                major_corr = np.corrcoef(chroma_mean, major_shifted)[0, 1]
+                minor_corr = np.corrcoef(chroma_mean, minor_shifted)[0, 1]
+                
+                if not np.isnan(major_corr) and not np.isnan(minor_corr):
+                    if major_corr > minor_corr:
+                        scale = 'major'
+                        strength = float(major_corr)
+                    else:
+                        scale = 'minor'
+                        strength = float(minor_corr)
+                    
+                    key = estimated_key
+                    key_name = f"{key} {scale}"
+                    camelot_key = self.CAMELOT_WHEEL.get(key_name, 'Unknown')
             
             return {
                 'key': key,
@@ -98,7 +166,8 @@ class MusicAnalyzer:
                 'key_name': key_name,
                 'camelot_key': camelot_key,
                 'key_strength': float(strength),
-                'estimated_key_librosa': estimated_key
+                'estimated_key_librosa': estimated_key,
+                'essentia_available': self.key_detector is not None
             }
             
         except Exception as e:
@@ -108,35 +177,59 @@ class MusicAnalyzer:
                 'key_name': 'Unknown',
                 'camelot_key': 'Unknown',
                 'key_strength': 0.0,
+                'estimated_key_librosa': 'Unknown',
+                'essentia_available': False,
                 'error': str(e)
             }
     
-    def _analyze_bpm(self, audio: np.ndarray, sr: int) -> Dict[str, Any]:
+    def _analyze_bpm(self, audio: np.ndarray, sr: Union[int, float]) -> Dict[str, Any]:
         """Analyze BPM using both Essentia and librosa."""
         try:
-            # Essentia rhythm analysis
-            bpm, beats, beats_confidence, _, beats_intervals = self.rhythm_detector(audio)
+            # Try Essentia rhythm analysis if available
+            if self.rhythm_detector is not None:
+                try:
+                    bpm, beats, beats_confidence, _, beats_intervals = self.rhythm_detector(audio)
+                    essentia_success = True
+                except Exception:
+                    essentia_success = False
+                    bpm, beats, beats_confidence = 120.0, [], 0.0
+            else:
+                essentia_success = False
+                bpm, beats, beats_confidence = 120.0, [], 0.0
             
-            # Librosa tempo estimation
-            tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+            # Librosa tempo estimation (always try this as backup)
+            try:
+                tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+                # Convert tempo to scalar value safely
+                tempo_value = float(np.asarray(tempo).flatten()[0]) if hasattr(tempo, '__len__') else float(tempo)
+            except Exception:
+                tempo_value = 120.0
+            
+            # Use Essentia BPM if available, otherwise use librosa
+            final_bpm = float(bpm) if essentia_success else tempo_value
             
             return {
-                'bpm': float(bpm),
-                'bpm_librosa': float(tempo) if isinstance(tempo, (int, float)) else float(tempo[0]),
+                'bpm': final_bpm,
+                'bpm_librosa': tempo_value,
                 'beats_confidence': float(beats_confidence),
-                'beat_count': len(beats)
+                'beat_count': len(beats) if isinstance(beats, (list, np.ndarray)) else 0,
+                'essentia_available': self.rhythm_detector is not None,
+                'essentia_success': essentia_success
             }
             
         except Exception as e:
-            # Fallback to librosa only
+            # Final fallback
             try:
                 tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+                tempo_value = float(np.asarray(tempo).flatten()[0]) if hasattr(tempo, '__len__') else float(tempo)
+                
                 return {
-                    'bpm': float(tempo) if isinstance(tempo, (int, float)) else float(tempo[0]),
-                    'bpm_librosa': float(tempo) if isinstance(tempo, (int, float)) else float(tempo[0]),
+                    'bpm': tempo_value,
+                    'bpm_librosa': tempo_value,
                     'beats_confidence': 0.0,
                     'beat_count': 0,
-                    'warning': 'Essentia analysis failed, using librosa only'
+                    'essentia_available': False,
+                    'warning': 'Both Essentia and advanced librosa analysis failed, using basic tempo detection'
                 }
             except Exception as e2:
                 return {
@@ -144,10 +237,11 @@ class MusicAnalyzer:
                     'bpm_librosa': 120.0,
                     'beats_confidence': 0.0,
                     'beat_count': 0,
+                    'essentia_available': False,
                     'error': f"BPM analysis failed: {str(e2)}"
                 }
     
-    def _analyze_energy(self, audio: np.ndarray, sr: int) -> Dict[str, Any]:
+    def _analyze_energy(self, audio: np.ndarray, sr: Union[int, float]) -> Dict[str, Any]:
         """Analyze energy level and other perceptual features."""
         try:
             # RMS energy
@@ -235,7 +329,7 @@ class MusicAnalyzer:
                 'file_info_error': str(e)
             }
     
-    def get_compatible_keys(self, camelot_key: str) -> Dict[str, list]:
+    def get_compatible_keys(self, camelot_key: str) -> Dict[str, Union[List[str], str]]:
         """
         Get harmonically compatible keys according to the Camelot wheel system.
         
@@ -243,7 +337,7 @@ class MusicAnalyzer:
             camelot_key (str): Camelot key notation (e.g., '8A', '5B')
             
         Returns:
-            Dict[str, list]: Compatible keys for different mixing techniques
+            Dict[str, Union[List[str], str]]: Compatible keys for different mixing techniques or error message
         """
         if not camelot_key or camelot_key == 'Unknown':
             return {'error': 'Invalid camelot key'}
@@ -284,7 +378,7 @@ class MusicAnalyzer:
         except Exception as e:
             return {'error': f'Error calculating compatible keys: {str(e)}'}
 
-    def _detect_cue_points(self, audio: np.ndarray, sr: int) -> List[float]:
+    def _detect_cue_points(self, audio: np.ndarray, sr: Union[int, float]) -> List[float]:
         """Detect cue points using onsets and beats; return up to 8 seconds values."""
         try:
             onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
@@ -300,6 +394,59 @@ class MusicAnalyzer:
             return [float(round(t, 2)) for t in filtered[:8]]
         except Exception:
             return []
+    
+    def generate_waveform_data(self, file_path: str, samples: int = 1000) -> List[float]:
+        """Generate waveform data for visualization.
+        
+        Args:
+            file_path (str): Path to the audio file
+            samples (int): Number of waveform samples to generate
+            
+        Returns:
+            List[float]: Normalized waveform data points (0-1 range)
+        """
+        try:
+            # Load audio with librosa
+            audio, sr = librosa.load(file_path, sr=22050)  # Lower sample rate for faster processing
+            
+            # Calculate the duration and chunk size
+            duration = len(audio) / sr
+            chunk_size = len(audio) // samples
+            
+            if chunk_size == 0:
+                chunk_size = 1
+            
+            waveform_data = []
+            
+            # Process audio in chunks to create waveform points
+            for i in range(0, len(audio), chunk_size):
+                chunk = audio[i:i+chunk_size]
+                if len(chunk) > 0:
+                    # Calculate RMS (root mean square) for this chunk
+                    rms = np.sqrt(np.mean(chunk**2))
+                    waveform_data.append(float(rms))
+                    
+                # Stop when we have enough samples
+                if len(waveform_data) >= samples:
+                    break
+            
+            # Ensure we have exactly the requested number of samples
+            while len(waveform_data) < samples:
+                waveform_data.append(0.0)
+            
+            waveform_data = waveform_data[:samples]
+            
+            # Normalize to 0-1 range
+            if waveform_data and max(waveform_data) > 0:
+                max_val = max(waveform_data)
+                waveform_data = [val / max_val for val in waveform_data]
+            
+            return waveform_data
+            
+        except Exception as e:
+            print(f"Error generating waveform for {file_path}: {str(e)}")
+            # Return flat line as fallback
+            return [0.1] * samples
 
     def write_id3_tags(self, file_path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Write key, BPM, energy, and cue points to ID3 tags (cleaned)."""

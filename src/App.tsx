@@ -718,7 +718,9 @@ const App: React.FC = () => {
             <header className="App-header">
                 <div className="header-content">
                     <div className="brand">
-                        <div className="logo">MIXED IN KEY</div>
+                        <div className="logo">
+                            <img src="/logwhite.png" alt="CAMELOTDJ" className="logo-image" />
+                        </div>
                     </div>
                     <nav className="nav-tabs">
                         <button 

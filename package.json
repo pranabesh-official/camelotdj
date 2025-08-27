@@ -1,6 +1,8 @@
 {
-    "name": "mixed-in-key",
+    "name": "camelotdj",
     "version": "1.0.0",
+    "description": "CAMELOTDJ - Professional Music Analyzer and DJ Tool",
+    "author": "CAMELOTDJ Team",
     "private": true,
     "homepage": "./",
     "main": "buildMain/index.js",
@@ -42,6 +44,7 @@
         "react-dom": "^16.8.4",
         "react-scripts": "3.0.1",
         "shx": "^0.3.2",
+        "socket.io-client": "^4.8.1",
         "superagent": "^5.0.2",
         "uuid": "^3.3.2"
     },
@@ -69,10 +72,11 @@
         "not op_mini all"
     ],
     "build": {
-        "appId": "com.mixedinkey.musicanalyzer",
-        "productName": "Mixed In Key - Music Analyzer",
+        "appId": "com.camelotdj.musicanalyzer",
+        "productName": "CAMELOTDJ - Music Analyzer",
         "forceCodeSigning": false,
         "asar": false,
+        "icon": "applogo.icns",
         "directories": {
             "buildResources": "build",
             "output": "dist"

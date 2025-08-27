@@ -73,7 +73,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onFolderUpload, i
                     </div>
                 ) : (
                     <div className="upload-state">
-                        <div className="upload-icon">🎵</div>
+                        <div className="upload-icon"><span role="img" aria-label="music">🎵</span></div>
                         <h3>Drag & Drop Music Files Here</h3>
                         <p>or</p>
                         <label className="file-input-label">
@@ -95,7 +95,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onFolderUpload, i
                                     onChange={handleFolderSelect}
                                     disabled={isAnalyzing}
                                 />
-                                📁 Choose Folder
+                                <span role="img" aria-label="folder">📁</span> Choose Folder
                             </label>
                         )}
                         <div className="supported-formats">

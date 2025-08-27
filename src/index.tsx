@@ -4,7 +4,7 @@ import App from "./App";
 import "./index.css";
 import * as serviceWorker from "./serviceWorker";
 
-console.log('Mixed In Key App starting...');
+console.log('CAMELOTDJ App starting...');
 const rootElement = document.getElementById("root");
 console.log('Root element:', rootElement);
 

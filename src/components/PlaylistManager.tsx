@@ -26,6 +26,71 @@ interface PlaylistManagerProps {
   isAnalyzing?: boolean;
 }
 
+// Simple SVG icons for clean UI
+const PlusIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>
+);
+
+const MusicIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="9 18V5l12-2v13"></path>
+    <circle cx="6" cy="18" r="3"></circle>
+    <circle cx="18" cy="16" r="3"></circle>
+  </svg>
+);
+
+const PlaylistIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="21 15V6"></path>
+    <path d="3 17a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3"></path>
+    <path d="21 6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v11"></path>
+  </svg>
+);
+
+const FolderIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+  </svg>
+);
+
+const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
+  <svg 
+    width="14" 
+    height="14" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2"
+    style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}
+  >
+    <polyline points="9,18 15,12 9,6"></polyline>
+  </svg>
+);
+
+const DeleteIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="3,6 5,6 21,6"></polyline>
+    <path d="19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
+  </svg>
+);
+
+const ExportIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7,10 12,15 17,10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
+
+const LoadingIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="loading-icon">
+    <path d="21 12a9 9 0 11-6.219-8.56"/>
+  </svg>
+);
+
 const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   playlists,
   songs,
@@ -152,157 +217,111 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   }, [playlists, playlistSearch]);
 
   return (
-    <div className="playlist-manager">
-      <div className="playlist-header">
-        <div className="upload-section">
-          {isAnalyzing ? (
-            <div className="upload-analyzing">
-              <div className="upload-spinner"></div>
-              <span>Analyzing...</span>
-            </div>
-          ) : (
-            <>
-              <label className="add-tracks-btn">
-                <input 
-                  type="file" 
-                  accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file && onFileUpload) {
-                      onFileUpload(file);
-                    }
-                    e.target.value = '';
-                  }}
-                  style={{ display: 'none' }}
-                />
-                 Add tracks
-              </label>
-              {/* {onFolderUpload && (
-                <label className="add-folder-btn">
-                  <input 
-                    type="file" 
-                    {...({ webkitdirectory: "", directory: "" } as any)}
-                    multiple
-                    accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
-                    onChange={(e) => {
-                      const files = e.target.files;
-                      if (files && files.length > 0 && onFolderUpload) {
-                        onFolderUpload(files);
-                      }
-                      e.target.value = '';
-                    }}
-                    style={{ display: 'none' }}
-                  />
-                  📁 Add folder
-                </label>
-              )} */}
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="all-music-stats">
-        <div className="stats-item">
-         
-          <div className="stats-content">
-            <span className="label">All Music</span>
-            <span className="count">{songs.length} tracks</span>
-          </div>
-        </div>
-      </div>
-
-      {/* <div className="analysis-section">
-        <div className="section-header">
-          <span className="icon">📊</span>
-          <span className="title">Analysis Queue</span>
-          <span className="count">0</span>
-        </div>
-      </div> */}
-
-      {/* <div className="improve-section">
-        <div className="section-header">
-          <span className="icon">✨</span>
-          <span className="title">Improve Tracks</span>
-          <span className="count">0</span>
-        </div>
-      </div> */}
-
-      
-
-      <div className="playlists-section">
-        <div className="section-header">
-       
-          <span className="title">Playlists</span>
-          <button className="create-btn" onClick={() => setIsCreating(true)}>+</button>
-        </div>
-
-        {isCreating && (
-          <div className="create-playlist-form">
-            <input
-              type="text"
-              placeholder="Playlist name..."
-              value={newPlaylistName}
-              onChange={(e) => setNewPlaylistName(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleCreatePlaylist()}
-              autoFocus
+    <div className="playlist-manager-compact">
+      {/* Add Tracks Button */}
+      <div className="add-tracks-section">
+        {isAnalyzing ? (
+          <button className="add-tracks-btn analyzing" disabled>
+            <LoadingIcon />
+            Analyzing...
+          </button>
+        ) : (
+          <label className="add-tracks-btn">
+            <input 
+              type="file" 
+              accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file && onFileUpload) {
+                  onFileUpload(file);
+                }
+                e.target.value = '';
+              }}
+              style={{ display: 'none' }}
             />
-            <div className="form-actions">
-              <button onClick={handleCreatePlaylist} disabled={!newPlaylistName.trim()}>
-                Create
-              </button>
-              <button onClick={() => {
-                setIsCreating(false);
-                setNewPlaylistName('');
-              }}>
-                Cancel
-              </button>
-            </div>
-          </div>
+            <PlusIcon />
+            Add Tracks
+          </label>
         )}
+      </div>
 
-        <div className="playlist-search">
-          <input
-            type="text"
-            placeholder="Search playlists..."
-            value={playlistSearch}
-            onChange={(e) => setPlaylistSearch(e.target.value)}
-          />
+      {/* Playlists Header */}
+      <div className="section-title">
+        Playlists
+        <span className="item-count">{playlists.length}</span>
+      </div>
+
+      {/* Main Content - Scrollable */}
+      <div className="playlist-content">
+        {/* All Music */}
+        <div className="playlist-item-row" onClick={() => onPlaylistSelect(null)}>
+          <div className="playlist-item-icon">
+            <MusicIcon />
+          </div>
+          <div className="playlist-item-info">
+            <span className="playlist-item-name">All Music</span>
+            <span className="playlist-item-count">({songs.length})</span>
+          </div>
         </div>
 
-        <div className="playlist-list">
+        {/* Genre-based playlists */}
+        {['House', 'Techno', 'Hip-Hop', 'Jazz', 'Rock', 'Pop', 'Reggae', 'Ambient'].map((genre) => {
+          const genreCount = songs.filter(song => {
+            if (!song.bpm || !song.energy_level) return false;
+            
+            switch(genre) {
+              case 'House': return song.energy_level >= 5 && song.energy_level <= 7;
+              case 'Techno': return song.energy_level > 7;
+              case 'Hip-Hop': return song.energy_level <= 4 && song.bpm >= 70 && song.bpm <= 100;
+              case 'Jazz': return song.energy_level <= 3;
+              case 'Rock': return song.energy_level >= 6;
+              case 'Pop': return song.energy_level >= 4 && song.energy_level <= 6;
+              default: return false;
+            }
+          }).length;
+          
+          return (
+            <div key={genre} className="playlist-item-row genre-item">
+              <div className="genre-indicator">●</div>
+              <div className="playlist-item-info">
+                <span className="playlist-item-name">{genre}</span>
+                <span className="playlist-item-count">({genreCount})</span>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* User Playlists */}
+        <div className="user-playlists">
           {filteredPlaylists.map(playlist => {
-            const stats = getPlaylistStats(playlist);
+            const stats = {
+              tracks: playlist.songs.length
+            };
+            
             return (
               <div
                 key={playlist.id}
-                className={`playlist-item ${selectedPlaylist?.id === playlist.id ? 'selected' : ''}`}
+                className={`playlist-item-row user-playlist ${
+                  selectedPlaylist?.id === playlist.id ? 'selected' : ''
+                }`}
                 onClick={() => onPlaylistSelect(playlist)}
               >
-                <div className="playlist-color" style={{ backgroundColor: playlist.color }} />
-                <div className="playlist-info">
-                  <div className="playlist-name">{playlist.name}</div>
-                  <div className="playlist-stats">
-                    {stats.tracks} tracks - {stats.duration}min
-                  </div>
+                <div className="playlist-item-icon">
+                  <PlaylistIcon />
                 </div>
-                <div className="playlist-actions-menu">
+                <div className="playlist-item-info">
+                  <span className="playlist-item-name">{playlist.name}</span>
+                  <span className="playlist-item-count">({stats.tracks})</span>
+                </div>
+                <div className="playlist-actions">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       exportPlaylist(playlist);
                     }}
-                    title="Export as M3U"
+                    title="Export playlist"
                   >
-                    📤
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      exportPlaylistAsFolder(playlist);
-                    }}
-                    title="Export as folder"
-                  >
-                    📁
+                    <ExportIcon />
                   </button>
                   <button
                     onClick={(e) => {
@@ -313,46 +332,55 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                     }}
                     title="Delete playlist"
                   >
-                    🗑️
+                    <DeleteIcon />
                   </button>
                 </div>
               </div>
             );
           })}
         </div>
-
-        {filteredPlaylists.length === 0 && (
-          <div className="empty-playlists">
-            <p>No playlists found</p>
-          </div>
-        )}
       </div>
 
-      {selectedPlaylist && (
-        <div className="selected-playlist-details">
-          <h4>{selectedPlaylist.name}</h4>
-          <button 
-            className="add-songs-btn"
-            onClick={() => setShowAddSongs(true)}
-          >
-            Add Songs
-          </button>
-          <div className="playlist-song-list">
-            {selectedPlaylist.songs.map(song => (
-              <div key={song.id} className="playlist-song">
-                <span className="song-title">{song.filename}</span>
-                <button 
-                  onClick={() => onRemoveFromPlaylist(selectedPlaylist.id, [song.id])}
-                  title="Remove from playlist"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
+      {/* Create Playlist Button */}
+      <div className="create-playlist-footer">
+        <button 
+          className="create-playlist-btn"
+          onClick={() => setIsCreating(true)}
+        >
+          <PlusIcon />
+          New Playlist
+        </button>
+      </div>
+
+      {/* Inline Create Form */}
+      {isCreating && (
+        <div className="create-playlist-inline">
+          <input
+            type="text"
+            placeholder="Playlist name..."
+            value={newPlaylistName}
+            onChange={(e) => setNewPlaylistName(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleCreatePlaylist();
+              } else if (e.key === 'Escape') {
+                setIsCreating(false);
+                setNewPlaylistName('');
+              }
+            }}
+            onBlur={() => {
+              if (!newPlaylistName.trim()) {
+                setIsCreating(false);
+              } else {
+                handleCreatePlaylist();
+              }
+            }}
+            autoFocus
+          />
         </div>
       )}
 
+      {/* Add Songs Modal */}
       {showAddSongs && selectedPlaylist && (
         <div className="add-songs-modal">
           <div className="modal-content">
@@ -395,6 +423,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
         </div>
       )}
 
+      {/* Hidden file input for M3U import */}
       <input
         ref={fileInputRef}
         type="file"

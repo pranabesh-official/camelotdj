@@ -9,6 +9,9 @@ import YouTubeMusic from './components/YouTubeMusic';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import AuthGate from './components/AuthGate';
+import { useAuth } from './services/AuthContext';
+import { upsertUserTrack, upsertManyUserTracks } from './services/TrackSyncService';
 import logoWhite from './assets/logwhite.png';
 
 export interface Song {
@@ -28,6 +31,7 @@ export interface Song {
     analysis_date?: string;
     cue_points?: number[];
     track_id?: string; // Unique track identifier
+    id3?: any; // Raw ID3/metadata blob for cloud sync
 }
 
 // Function to get the correct logo path for both development and production
@@ -55,6 +59,7 @@ const LogoComponent = () => {
 };
 
 const App: React.FC = () => {
+    const { user } = useAuth();
     console.log('App component rendering...');
     const [songs, setSongs] = useState<Song[]>([]);
     const [selectedSong, setSelectedSong] = useState<Song | null>(null);
@@ -311,6 +316,21 @@ const App: React.FC = () => {
         }
     }, [apiPort]);
 
+    // Small helper to keep Firestore docs <1MB by stripping large blobs
+    const sanitizeId3 = (raw: any) => {
+        if (!raw || typeof raw !== 'object') return raw;
+        const clone: any = { ...raw };
+        // common large keys from parsers
+        delete clone.picture; 
+        delete clone.pictures;
+        delete clone.image;
+        delete clone.images;
+        delete clone.cover;
+        delete clone.coverArt;
+        delete clone.apic; // ID3 APIC frames
+        return clone;
+    };
+
     const handleFileUpload = useCallback(async (file: File) => {
         console.log('Starting file upload:', file.name, 'to port:', apiPort);
         setIsAnalyzing(true);
@@ -343,7 +363,7 @@ const App: React.FC = () => {
                 console.log('Upload URL:', uploadUrl);
                 
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+                const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout for large files
                 
                 const response = await fetch(uploadUrl, {
                     method: 'POST',
@@ -388,13 +408,25 @@ const App: React.FC = () => {
                         status: 'analyzed',
                         analysis_date: new Date().toISOString(),
                         cue_points: result.cue_points || [],
-                        track_id: result.track_id // Ensure track_id is included
+                        track_id: result.track_id, // Ensure track_id is included
+                        id3: sanitizeId3(result.id3 || result.metadata || result.tags)
                     };
                     
                     setSongs(prevSongs => [...prevSongs, newSong]);
                     setSelectedSong(newSong);
                     setCurrentView('library');
                     console.log('Song added successfully:', newSong.filename);
+
+                    // Firestore sync (offline-first; will upload when online)
+                    try {
+                        if (user?.uid) {
+                            await upsertUserTrack(user.uid, {
+                                ...newSong,
+                            } as any);
+                        }
+                    } catch (syncErr) {
+                        console.warn('Firestore track sync failed (will retry when online):', syncErr);
+                    }
                     break; // Success, exit retry loop
                 } else {
                     const errorMsg = `Analysis failed: ${result.error || 'Unknown error'}`;
@@ -413,7 +445,7 @@ const App: React.FC = () => {
                 });
                 
                 if (retryCount < maxRetries && error instanceof Error && 
-                    (error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
+                    (error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.name === 'AbortError' || error.message.includes('aborted'))) {
                     console.log(`Network error, retrying in 2 seconds... (${retryCount + 1}/${maxRetries + 1})`);
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     retryCount++;
@@ -424,8 +456,8 @@ const App: React.FC = () => {
                 if (error instanceof Error) {
                     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
                         errorMessage = `Cannot connect to backend server on port ${apiPort}.\n\nThe Python backend may have stopped. Please restart it using:\n./start_backend.sh`;
-                    } else if (error.message.includes('timeout') || error.message.includes('AbortError')) {
-                        errorMessage = `Upload timed out. The file may be too large or the backend is overloaded.\n\nTry uploading a smaller file or restart the backend.`;
+                    } else if (error.message.includes('timeout') || error.message.includes('AbortError') || error.message.includes('aborted')) {
+                        errorMessage = `Upload timed out or was aborted. The file may be large or the backend is busy.\n\nWe now wait up to 120s per upload. Try again or ensure the backend is running.`;
                     } else {
                         errorMessage = `Upload failed: ${error.message}`;
                     }
@@ -453,6 +485,7 @@ const App: React.FC = () => {
         let successCount = 0;
         let errorCount = 0;
 
+        const syncedTracks: Song[] = [];
         for (let i = 0; i < musicFiles.length; i++) {
             const file = musicFiles[i];
             
@@ -493,11 +526,15 @@ const App: React.FC = () => {
                         bitrate: estimatedBitrate,
                         status: 'analyzed',
                         analysis_date: new Date().toISOString(),
-                        track_id: result.track_id // Ensure track_id is included
+                        track_id: result.track_id, // Ensure track_id is included
+                        id3: sanitizeId3(result.id3 || result.metadata || result.tags)
                     };
                     
                     setSongs(prevSongs => [...prevSongs, newSong]);
                     successCount++;
+
+                    // accumulate for batched sync
+                    syncedTracks.push(newSong);
                 } else {
                     console.error(`Analysis failed for ${file.name}:`, result.error);
                     errorCount++;
@@ -511,6 +548,15 @@ const App: React.FC = () => {
         setIsAnalyzing(false);
         setCurrentView('library');
         
+        // Firestore batch sync for folder uploads (offline-first)
+        try {
+            if (user?.uid && syncedTracks.length > 0) {
+                await upsertManyUserTracks(user.uid, syncedTracks as any);
+            }
+        } catch (syncErr) {
+            console.warn('Firestore batch track sync failed (folder) - will retry when online:', syncErr);
+        }
+
         if (successCount > 0) {
             alert(`Successfully processed ${successCount} files. ${errorCount > 0 ? `${errorCount} files failed.` : ''}`);
         } else {
@@ -807,7 +853,8 @@ const App: React.FC = () => {
             status: 'analyzed',
             analysis_date: new Date().toISOString(),
             cue_points: downloadedSong.cue_points || [],
-            track_id: downloadedSong.track_id // Ensure track_id is included
+            track_id: downloadedSong.track_id, // Ensure track_id is included
+            id3: sanitizeId3(downloadedSong.id3 || downloadedSong.metadata || downloadedSong.tags)
         };
         
         // Add to songs list
@@ -816,6 +863,19 @@ const App: React.FC = () => {
         
         // Switch to library view to show the new song
         setCurrentView('library');
+
+        // Firestore sync for YouTube downloads
+        (async () => {
+            try {
+                if (user?.uid) {
+                    await upsertUserTrack(user.uid, {
+                        ...newSong,
+                    } as any);
+                }
+            } catch (syncErr) {
+                console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
+            }
+        })();
     }, []);
 
     // Handle song updates from metadata editor
@@ -847,6 +907,7 @@ const App: React.FC = () => {
     console.log('App render - apiPort:', apiPort, 'currentView:', currentView);
 
     return (
+        <AuthGate>
         <div className="App">
             <header className="App-header">
                 <div className="header-content">
@@ -1221,6 +1282,7 @@ const App: React.FC = () => {
                 </main>
             </div>
         </div>
+        </AuthGate>
     );
 };
 

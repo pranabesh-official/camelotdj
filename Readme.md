@@ -8,7 +8,7 @@ A professional desktop music analysis application built with Electron + Python +
 ```bash
 npm start
 ```
-This automatically:
+This automatically:n
 - Starts React frontend on port 3000
 - Spawns Python backend on port 5002 via Electron
 - Opens desktop application window

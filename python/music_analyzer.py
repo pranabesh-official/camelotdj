@@ -449,8 +449,9 @@ class MusicAnalyzer:
             return [0.1] * samples
 
     def write_id3_tags(self, file_path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Write key, BPM, energy, and cue points to ID3 tags (cleaned)."""
+        """Write comprehensive metadata to ID3 tags."""
         try:
+            # Initialize or load existing ID3 tags
             try:
                 tags = EasyID3(file_path)
             except ID3NoHeaderError:
@@ -458,29 +459,70 @@ class MusicAnalyzer:
                 tags.save(file_path)
                 tags = EasyID3(file_path)
 
+            # Write basic metadata
             if analysis.get('key_name'):
-                tags['initialkey'] = analysis['key_name']
+                tags['initialkey'] = [analysis['key_name']]
+            
             if analysis.get('bpm') is not None:
-                tags['bpm'] = str(int(round(float(analysis['bpm']))))
+                bpm_value = int(round(float(analysis['bpm'])))
+                tags['bpm'] = [str(bpm_value)]
+            
             if analysis.get('energy_level') is not None:
-                tags['comment'] = [f"Energy {analysis['energy_level']}"]
-            # Remove common junk
+                energy_value = int(float(analysis['energy_level']))
+                tags['comment'] = [f"Energy Level: {energy_value}/10"]
+            
+            # Add custom metadata fields
+            if analysis.get('camelot_key'):
+                tags['comment'] = tags.get('comment', []) + [f"Camelot: {analysis['camelot_key']}"]
+            
+            if analysis.get('duration') is not None:
+                duration_seconds = float(analysis['duration'])
+                duration_minutes = int(duration_seconds // 60)
+                duration_secs = int(duration_seconds % 60)
+                tags['comment'] = tags.get('comment', []) + [f"Duration: {duration_minutes}:{duration_secs:02d}"]
+            
+            # Add analysis timestamp
+            from datetime import datetime
+            analysis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tags['comment'] = tags.get('comment', []) + [f"Analyzed: {analysis_time}"]
+            
+            # Clean up common junk tags
             for junk in ['encodedby', 'lyricist', 'composer']:
                 if junk in tags:
                     del tags[junk]
+            
+            # Save the tags
             tags.save(file_path)
 
             # Write cue points to COMM frame with desc CUE
             cue_points = analysis.get('cue_points') or []
-            try:
-                id3 = ID3(file_path)
-            except ID3NoHeaderError:
-                id3 = ID3()
-            cue_str = ','.join([str(round(float(t), 2)) for t in cue_points])
-            id3.add(COMM(encoding=3, lang='eng', desc='CUE', text=cue_str))
-            id3.save(file_path)
-            return { 'updated': True, 'cue_points': cue_points }
+            if cue_points:
+                try:
+                    id3 = ID3(file_path)
+                except ID3NoHeaderError:
+                    id3 = ID3()
+                
+                cue_str = ','.join([str(round(float(t), 2)) for t in cue_points])
+                id3.add(COMM(encoding=3, lang='eng', desc='CUE', text=cue_str))
+                id3.save(file_path)
+            
+            print(f"✅ Successfully updated ID3 tags for: {os.path.basename(file_path)}")
+            return { 
+                'updated': True, 
+                'cue_points': cue_points,
+                'metadata_written': {
+                    'key': analysis.get('key_name'),
+                    'bpm': analysis.get('bpm'),
+                    'energy': analysis.get('energy_level'),
+                    'camelot': analysis.get('camelot_key'),
+                    'duration': analysis.get('duration')
+                }
+            }
+            
         except Exception as e:
+            print(f"❌ Error writing ID3 tags for {file_path}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return { 'updated': False, 'error': str(e) }
 
 

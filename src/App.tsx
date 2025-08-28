@@ -9,6 +9,7 @@ import YouTubeMusic from './components/YouTubeMusic';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import logoWhite from './assets/logwhite.png';
 
 export interface Song {
     id: string;
@@ -26,7 +27,32 @@ export interface Song {
     status?: string;
     analysis_date?: string;
     cue_points?: number[];
+    track_id?: string; // Unique track identifier
 }
+
+// Function to get the correct logo path for both development and production
+const getLogoPath = () => {
+    // Return the bundled asset path resolved by Webpack
+    return logoWhite as unknown as string;
+};
+
+// Alternative approach: Use a simple text logo if image fails
+const LogoComponent = () => {
+    const [imageError, setImageError] = useState(false);
+    
+    if (imageError) {
+        return <div className="logo-text">CAMELOTDJ</div>;
+    }
+    
+    return (
+        <img 
+            src={getLogoPath()} 
+            alt="CAMELOTDJ" 
+            className="logo-image"
+            onError={() => setImageError(true)}
+        />
+    );
+};
 
 const App: React.FC = () => {
     console.log('App component rendering...');
@@ -66,7 +92,7 @@ const App: React.FC = () => {
                 ipcRenderer.on('apiDetails', (event: any, details: string) => {
                     try {
                         const apiInfo = JSON.parse(details);
-                        console.log('✅ Received API details from Electron:', apiInfo);
+                        console.log(' Received API details from Electron:', apiInfo);
                         setApiPort(apiInfo.port);
                         setApiSigningKey(apiInfo.signingKey);
                         
@@ -148,9 +174,9 @@ const App: React.FC = () => {
                     throw new Error(`Backend not ready: ${testResponse.status}`);
                 }
                 
-                console.log('✅ Backend connectivity confirmed');
+                console.log(' Backend connectivity confirmed');
             } catch (connectError) {
-                console.warn('⚠️ Backend connectivity issue:', connectError);
+                console.warn('Backend connectivity issue:', connectError);
                 // Try again with longer delay
                 if (delay < 5000) {
                     console.log('🔄 Retrying database load with longer delay...');
@@ -190,7 +216,8 @@ const App: React.FC = () => {
                         bitrate: estimatedBitrate,
                         status: song.status || 'found',
                         analysis_date: song.analysis_date,
-                        cue_points: song.cue_points || []
+                        cue_points: song.cue_points || [],
+                        track_id: song.track_id // Ensure track_id is included
                     };
                 });
                 
@@ -360,7 +387,8 @@ const App: React.FC = () => {
                         bitrate: estimatedBitrate,
                         status: 'analyzed',
                         analysis_date: new Date().toISOString(),
-                        cue_points: result.cue_points || []
+                        cue_points: result.cue_points || [],
+                        track_id: result.track_id // Ensure track_id is included
                     };
                     
                     setSongs(prevSongs => [...prevSongs, newSong]);
@@ -464,7 +492,8 @@ const App: React.FC = () => {
                         file_size: result.file_size,
                         bitrate: estimatedBitrate,
                         status: 'analyzed',
-                        analysis_date: new Date().toISOString()
+                        analysis_date: new Date().toISOString(),
+                        track_id: result.track_id // Ensure track_id is included
                     };
                     
                     setSongs(prevSongs => [...prevSongs, newSong]);
@@ -493,12 +522,49 @@ const App: React.FC = () => {
         setSelectedSong(song);
     }, []);
 
-    const handleDeleteSong = useCallback((songId: string) => {
-        setSongs(prevSongs => prevSongs.filter(song => song.id !== songId));
-        if (selectedSong && selectedSong.id === songId) {
-            setSelectedSong(null);
+    const handleDeleteSong = useCallback(async (songId: string) => {
+        try {
+            // Find the song to get its file path
+            const songToDelete = songs.find(song => song.id === songId);
+            if (!songToDelete) {
+                console.error('Song not found for deletion:', songId);
+                return;
+            }
+
+            // Delete from backend database first
+            if (databaseService) {
+                try {
+                    // Try to delete by ID first, fallback to file path
+                    await databaseService.deleteSong(songId);
+                    console.log('Song deleted from database:', songId);
+                } catch (error) {
+                    console.error('Failed to delete song from database:', error);
+                    // If deletion fails, don't remove from local state
+                    return;
+                }
+            }
+
+            // Remove from local state only after successful database deletion
+            setSongs(prevSongs => prevSongs.filter(song => song.id !== songId));
+            
+            // Clear selection if the deleted song was selected
+            if (selectedSong && selectedSong.id === songId) {
+                setSelectedSong(null);
+            }
+
+            // Clear currently playing if the deleted song was playing
+            if (currentlyPlaying && currentlyPlaying.id === songId) {
+                setCurrentlyPlaying(null);
+            }
+
+            console.log('🗑️ Song removed from local state:', songId);
+            
+        } catch (error) {
+            console.error('❌ Error in handleDeleteSong:', error);
+            // Show user-friendly error message
+            alert(`Failed to delete song: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
-    }, [selectedSong]);
+    }, [songs, selectedSong, currentlyPlaying, databaseService]);
 
     const getCompatibleSongs = useCallback((targetKey: string) => {
         return songs.filter(song => {
@@ -740,7 +806,8 @@ const App: React.FC = () => {
             bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
             status: 'analyzed',
             analysis_date: new Date().toISOString(),
-            cue_points: downloadedSong.cue_points || []
+            cue_points: downloadedSong.cue_points || [],
+            track_id: downloadedSong.track_id // Ensure track_id is included
         };
         
         // Add to songs list
@@ -751,6 +818,32 @@ const App: React.FC = () => {
         setCurrentView('library');
     }, []);
 
+    // Handle song updates from metadata editor
+    const handleSongUpdate = async (updatedSong: Song) => {
+        try {
+            // Update the songs array with the new data
+            setSongs(prevSongs => 
+                prevSongs.map(song => 
+                    song.id === updatedSong.id ? updatedSong : song
+                )
+            );
+            
+            // Update selected song if it's the one being edited
+            if (selectedSong && selectedSong.id === updatedSong.id) {
+                setSelectedSong(updatedSong);
+            }
+            
+            // Update currently playing if it's the one being edited
+            if (currentlyPlaying && currentlyPlaying.id === updatedSong.id) {
+                setCurrentlyPlaying(updatedSong);
+            }
+            
+            console.log('Song updated successfully:', updatedSong.filename);
+        } catch (error) {
+            console.error('Failed to update song:', error);
+        }
+    };
+
     console.log('App render - apiPort:', apiPort, 'currentView:', currentView);
 
     return (
@@ -759,22 +852,17 @@ const App: React.FC = () => {
                 <div className="header-content">
                     <div className="brand">
                         <div className="logo">
-                            <img src="/logwhite.png" alt="CAMELOTDJ" className="logo-image" />
+                            <LogoComponent />
                         </div>
                     </div>
-                    <nav className="nav-tabs">
+                    {/* <nav className="nav-tabs">
                         <button 
                             className={currentView === 'library' ? 'active' : ''}
                             onClick={() => setCurrentView('library')}
                         >
                             My collection
                         </button>
-                        {/* <button 
-                            className={currentView === 'youtube' ? 'active' : ''}
-                            onClick={() => setCurrentView('youtube')}
-                        >
-                            🎵 YouTube Music
-                        </button> */}
+
                         <button 
                             className={currentView === 'settings' ? 'active' : ''}
                             onClick={() => setCurrentView('settings')}
@@ -790,7 +878,7 @@ const App: React.FC = () => {
                             readOnly
                             style={{ cursor: 'pointer' }}
                         />
-                    </div>
+                    </div> */}
                 </div>
             </header>
 
@@ -853,6 +941,9 @@ const App: React.FC = () => {
                                     currentlyPlaying={currentlyPlaying}
                                     getCompatibleSongs={getCompatibleSongs}
                                     showCompatibleOnly={showCompatibleOnly}
+                                    onSongUpdate={handleSongUpdate}
+                                    apiPort={apiPort}
+                                    apiSigningKey={apiSigningKey}
                                 />
                             </div>
                         </>
@@ -1017,7 +1108,7 @@ const App: React.FC = () => {
                                                 fontSize: '14px',
                                                 fontWeight: '500'
                                             }}>
-                                                {isLoadingSettings ? '⏳ Loading settings...' : (isDownloadPathSet ? '✅ Download path configured' : '⚠️ Download path required for YouTube Music downloads')}
+                                                {isLoadingSettings ? '⏳ Loading settings...' : (isDownloadPathSet ? 'Download path configured' : ' Download path required for YouTube Music downloads')}
                                             </p>
                                         </div>
 
@@ -1034,7 +1125,7 @@ const App: React.FC = () => {
                                                     fontSize: '14px',
                                                     fontWeight: '500'
                                                 }}>
-                                                    ✅ Settings saved successfully!
+                                                     Settings saved successfully!
                                                 </p>
                                             </div>
                                         )}
@@ -1065,7 +1156,7 @@ const App: React.FC = () => {
                                                 fontSize: '14px',
                                                 fontWeight: '500'
                                             }}>
-                                                {databaseService ? '✅ Database connected' : '❌ Database not connected'}
+                                                {databaseService ? ' Database connected' : ' Database not connected'}
                                             </p>
                                         </div>
 
@@ -1081,7 +1172,7 @@ const App: React.FC = () => {
                                                 fontSize: '14px',
                                                 fontWeight: '500'
                                             }}>
-                                                {isLoadingSettings ? '⏳ Loading settings...' : '✅ Settings loaded'}
+                                                {isLoadingSettings ? 'Loading settings...' : ' Settings loaded'}
                                             </p>
                                         </div>
 
@@ -1097,7 +1188,7 @@ const App: React.FC = () => {
                                                 fontSize: '14px',
                                                 fontWeight: '500'
                                             }}>
-                                                {isLibraryLoaded ? `✅ Library loaded (${songs.length} tracks)` : '⏳ Loading library...'}
+                                                {isLibraryLoaded ? `Library loaded (${songs.length} tracks)` : '⏳ Loading library...'}
                                             </p>
                                         </div>
                                     </div>

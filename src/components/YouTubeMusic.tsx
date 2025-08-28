@@ -49,6 +49,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [downloadProgress, setDownloadProgress] = useState<{[key: string]: number}>({});
     const [realTimeProgress, setRealTimeProgress] = useState<{[key: string]: any}>({});
     const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
+    const [previewingId, setPreviewingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -74,10 +75,39 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         const initializeWebSocket = () => {
             try {
                 console.log('🔌 Initializing WebSocket connection for download progress...');
+                
+                // First check if backend is accessible
+                fetch(`http://127.0.0.1:${apiPort}/hello?signingkey=${apiSigningKey}`)
+                    .then(response => {
+                        if (response.ok) {
+                            console.log('✅ Backend is accessible, initializing WebSocket...');
+                            createWebSocket();
+                        } else {
+                            console.log('⚠️ Backend responded but not ready, retrying in 2 seconds...');
+                            setTimeout(createWebSocket, 2000);
+                        }
+                    })
+                    .catch(error => {
+                        console.log('⚠️ Backend not accessible, retrying in 3 seconds...', error);
+                        setTimeout(createWebSocket, 3000);
+                    });
+                
+            } catch (error) {
+                console.error('❌ Failed to check backend accessibility:', error);
+                setTimeout(createWebSocket, 3000);
+            }
+        };
+
+        const createWebSocket = () => {
+            try {
+                console.log('🔌 Creating WebSocket connection...');
                 const socket = io(`http://127.0.0.1:${apiPort}`, {
                     transports: ['websocket', 'polling'],
-                    timeout: 10000,
-                    autoConnect: true
+                    timeout: 15000,
+                    autoConnect: true,
+                    reconnection: true,
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 1000
                 });
                 
                 socket.on('connect', () => {
@@ -88,29 +118,52 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     console.log('❌ WebSocket disconnected');
                 });
                 
+                socket.on('connect_error', (error) => {
+                    console.error('❌ WebSocket connection error:', error);
+                });
+                
+                socket.on('reconnect', (attemptNumber) => {
+                    console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
+                });
+                
                 socket.on('connected', (data) => {
                     console.log('📡 WebSocket server confirmed:', data.status);
+                });
+                
+                socket.on('test_response', (data) => {
+                    console.log('🧪 Test response received:', data);
                 });
                 
                 socket.on('download_progress', (data) => {
                     console.log('📥 Download progress update:', data);
                     
                     if (data.download_id) {
-                        setRealTimeProgress(prev => ({
-                            ...prev,
-                            [data.download_id]: data
-                        }));
+                        console.log('🔄 Updating progress for:', data.download_id, 'Stage:', data.stage, 'Progress:', data.progress);
+                        
+                        setRealTimeProgress(prev => {
+                            const newProgress = {
+                                ...prev,
+                                [data.download_id]: data
+                            };
+                            console.log('📊 New real-time progress state:', newProgress);
+                            return newProgress;
+                        });
                         
                         // Update legacy progress for compatibility
                         if (data.progress !== undefined) {
-                            setDownloadProgress(prev => ({
-                                ...prev,
-                                [data.download_id]: data.progress
-                            }));
+                            setDownloadProgress(prev => {
+                                const newProgress = {
+                                    ...prev,
+                                    [data.download_id]: data.progress
+                                };
+                                console.log('📈 New download progress state:', newProgress);
+                                return newProgress;
+                            });
                         }
                         
                         // Mark as downloaded when complete
                         if (data.stage === 'complete' && data.progress === 100) {
+                            console.log('✅ Download complete for:', data.download_id);
                             setDownloadedTracks(prev => new Set([...prev, data.download_id]));
                             setIsDownloading(null);
                             
@@ -140,9 +193,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         
                         // Handle errors
                         if (data.stage === 'error') {
+                            console.error('❌ Download error for:', data.download_id, data.message);
                             setError(data.message || 'Download failed');
                             setIsDownloading(null);
                         }
+                    } else {
+                        console.warn('⚠️ Download progress update without download_id:', data);
                     }
                 });
                 
@@ -370,7 +426,10 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         
         // Join download room for WebSocket updates
         if (socketRef.current) {
+            console.log('🔌 Joining download room for:', downloadId);
             socketRef.current.emit('join_download', { download_id: downloadId });
+        } else {
+            console.warn('⚠️ WebSocket not available for download:', downloadId);
         }
         
         // Convert YouTube Music URL to regular YouTube URL
@@ -570,6 +629,68 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             setShowSuggestions(false);
         }
     }, [handleSearch]);
+
+    // Handle preview functionality
+    const handlePreview = useCallback((track: YouTubeTrack) => {
+        if (previewingId === track.id) {
+            // Stop preview
+            setPreviewingId(null);
+            console.log(`⏹️ Stopped preview for: ${track.title}`);
+            return;
+        }
+
+        console.log(`🎵 Starting preview for: ${track.title} by ${track.artist}`);
+        setPreviewingId(track.id);
+        
+        // Create audio element for preview
+        const audio = new Audio();
+        audio.volume = 0.7; // Set volume to 70%
+        
+        // Set up audio event handlers
+        audio.onloadstart = () => {
+            console.log('🎵 Audio loading started...');
+        };
+        
+        audio.oncanplay = () => {
+            console.log('🎵 Audio can play, starting...');
+            audio.play().catch(error => {
+                console.error('❌ Failed to play audio:', error);
+                setPreviewingId(null);
+                alert('Failed to play preview. Please try again.');
+            });
+        };
+        
+        audio.onerror = (error) => {
+            console.error('❌ Audio error:', error);
+            setPreviewingId(null);
+            alert('Failed to load preview. Please try again.');
+        };
+        
+        audio.onended = () => {
+            console.log('⏹️ Preview ended');
+            setPreviewingId(null);
+        };
+        
+        // Set audio source to backend streaming endpoint
+        audio.src = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
+        
+        // Auto-stop preview after 30 seconds
+        const autoStopTimer = setTimeout(() => {
+            if (previewingId === track.id) {
+                audio.pause();
+                audio.currentTime = 0;
+                setPreviewingId(null);
+                console.log(`⏰ Preview auto-stopped for: ${track.title}`);
+            }
+        }, 30000);
+        
+        // Cleanup function
+        return () => {
+            clearTimeout(autoStopTimer);
+            audio.pause();
+            audio.currentTime = 0;
+        };
+    }, [previewingId, apiPort, apiSigningKey]);
 
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
@@ -1164,6 +1285,39 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         } else {
                                             return (
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    {/* Preview Button */}
+                                                    <button
+                                                        onClick={() => handlePreview(track)}
+                                                        style={{
+                                                            padding: '6px 12px',
+                                                            fontSize: '12px',
+                                                            fontWeight: '500',
+                                                            background: previewingId === track.id ? 'var(--accent-color)' : 'var(--surface-bg)',
+                                                            color: previewingId === track.id ? 'white' : 'var(--text-primary)',
+                                                            border: '1px solid var(--border-color)',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            width: '100%',
+                                                            transition: 'all 0.2s ease'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (previewingId !== track.id) {
+                                                                e.currentTarget.style.backgroundColor = 'var(--accent-color)';
+                                                                e.currentTarget.style.color = 'white';
+                                                                e.currentTarget.style.borderColor = 'var(--accent-color)';
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (previewingId !== track.id) {
+                                                                e.currentTarget.style.backgroundColor = 'var(--surface-bg)';
+                                                                e.currentTarget.style.color = 'var(--text-primary)';
+                                                                e.currentTarget.style.borderColor = 'var(--border-color)';
+                                                            }
+                                                        }}
+                                                    >
+                                                        {previewingId === track.id ? 'Playing...' : 'Preview'}
+                                                    </button>
+                                                    
                                                     {/* Download Button */}
                                                     <button
                                                         onClick={() => handleDownload(track)}
@@ -1231,6 +1385,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     </div>
                 )}
             </div>
+
+
         </div>
     );
 };

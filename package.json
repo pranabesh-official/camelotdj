@@ -80,7 +80,12 @@
         "forceCodeSigning": false,
         "asar": true,
         "asarUnpack": [
-            "pythondist/**"
+            "pythondist/**",
+            "python/**",
+            "build/logwhite.png",
+            "build/applogo.png",
+            "logwhite.png",
+            "build/static/logwhite.png"
         ],
         "icon": "applogo.icns",
         "directories": {
@@ -94,6 +99,7 @@
             "node_modules/**",
             "buildMain/**",
             "pythondist/**",
+            "python/**",
             "build/**"
         ],
         "extraResources": [],

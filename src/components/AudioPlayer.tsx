@@ -300,7 +300,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     <div className="audio-player">
       <audio
         ref={audioRef}
-        src={song.file_path ? `http://127.0.0.1:${apiPort}/audio/${encodeURIComponent(song.filename)}?signingkey=${encodeURIComponent(apiSigningKey)}` : undefined}
+        src={song.file_path ? `http://127.0.0.1:${apiPort}/audio/${encodeURIComponent(song.filename)}?signingkey=${encodeURIComponent(apiSigningKey)}&path=${encodeURIComponent(song.file_path)}` : undefined}
         crossOrigin="anonymous"
       />
       

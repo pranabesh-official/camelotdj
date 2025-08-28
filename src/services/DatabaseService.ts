@@ -272,6 +272,50 @@ export class DatabaseService {
             // Don't throw error as this is not critical for app functionality
         }
     }
+
+    /**
+     * Delete a song from the database library
+     */
+    async deleteSong(songId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest('/library/delete', {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    song_id: songId,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to delete song');
+            }
+        } catch (error) {
+            console.error('Error deleting song:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete a song by file path from the database library
+     */
+    async deleteSongByPath(filePath: string): Promise<void> {
+        try {
+            const result = await this.makeRequest('/library/delete-by-path', {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    file_path: filePath,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to delete song by path');
+            }
+        } catch (error) {
+            console.error('Error deleting song by path:', error);
+            throw error;
+        }
+    }
 }
 
 export default DatabaseService;

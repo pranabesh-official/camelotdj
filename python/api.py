@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from graphene import ObjectType, String, Schema, Field, List, Mutation
@@ -17,6 +17,7 @@ import ytmusicapi
 from pytube import YouTube
 import yt_dlp
 import subprocess
+import sqlite3
 import shutil
 import threading
 import time
@@ -179,13 +180,24 @@ def handle_join_download(data):
     except Exception as e:
         print(f"⚠️ Join download handler error: {str(e)}")
 
+@socketio.on('test_message')
+def handle_test_message(data):
+    try:
+        client_id = getattr(request, 'sid', 'unknown')
+        print(f"🧪 Test message received from {client_id}: {data}")
+        emit('test_response', {'status': 'received', 'message': data.get('message', 'No message')})
+    except Exception as e:
+        print(f"⚠️ Test message handler error: {str(e)}")
+
 def emit_progress(download_id, progress_data):
     """Emit download progress to all connected clients"""
+    print(f"📡 Emitting progress for {download_id}: {progress_data}")
     active_downloads[download_id] = progress_data
     socketio.emit('download_progress', {
         'download_id': download_id,
         **progress_data
     })
+    print(f"✅ Progress emitted for {download_id}")
 
 # REST endpoints for file upload and music analysis
 @app.route('/upload-analyze', methods=['POST'])
@@ -218,25 +230,72 @@ def upload_and_analyze():
         uploaded_files[file.filename] = permanent_path
         
         try:
-            # Analyze the uploaded file
-            analysis_result = analyze_music_file(permanent_path)
+            # Check if song already has metadata before analyzing
+            metadata_check = db_manager.check_song_has_metadata(permanent_path)
+            track_id = db_manager.generate_unique_track_id(permanent_path, file.filename)
+            
+            if metadata_check['exists'] and metadata_check['has_complete_metadata']:
+                # Song already has complete metadata, skip analysis
+                print(f"✅ Song already has complete metadata - skipping analysis")
+                print(f"📊 Existing metadata: Key={metadata_check['camelot_key']}, BPM={metadata_check['bpm']}, Energy={metadata_check['energy_level']}")
+                
+                # Update track_id for existing song
+                db_manager.update_track_id(str(metadata_check['song_id']), track_id)
+                
+                # Return existing metadata
+                analysis_result = {
+                    'filename': metadata_check['filename'],
+                    'file_path': permanent_path,
+                    'key': metadata_check['key_signature'],
+                    'camelot_key': metadata_check['camelot_key'],
+                    'bpm': metadata_check['bpm'],
+                    'energy_level': metadata_check['energy_level'],
+                    'duration': metadata_check['duration'],
+                    'analysis_date': metadata_check['analysis_date'],
+                    'track_id': track_id,
+                    'status': 'existing_metadata',
+                    'message': 'Song already has complete metadata'
+                }
+            else:
+                # Analyze the uploaded file
+                print(f"🆕 Analyzing new song or song with incomplete metadata")
+                analysis_result = analyze_music_file(permanent_path)
+                analysis_result['track_id'] = track_id
             # Write tags and cue points to ID3
             try:
                 analyzer = MusicAnalyzer()
                 tag_result = analyzer.write_id3_tags(permanent_path, analysis_result)
                 analysis_result['tag_write'] = tag_result
             except Exception as _e:
-                pass
+                print(f"Warning: Failed to write ID3 tags: {str(_e)}")
+            
+            # Automatically rename file with key and BPM information
+            rename_result = None
+            try:
+                if analysis_result.get('camelot_key') and analysis_result.get('bpm'):
+                    rename_result = rename_file_with_metadata(permanent_path, analysis_result)
+                    if rename_result.get('renamed'):
+                        # Update the uploaded_files mapping with new filename
+                        new_filename = rename_result['new_filename']
+                        uploaded_files[new_filename] = rename_result['new_path']
+                        analysis_result['filename'] = new_filename
+                        analysis_result['file_path'] = rename_result['new_path']
+                        print(f"✅ Automatically renamed file: {file.filename} → {new_filename}")
+                    else:
+                        print(f"⚠️ Failed to rename file: {rename_result.get('error', 'Unknown error')}")
+            except Exception as rename_error:
+                print(f"Warning: Failed to rename file: {str(rename_error)}")
             
             # Add file path to result for audio serving
-            analysis_result['file_path'] = permanent_path
-            analysis_result['filename'] = file.filename
+            analysis_result['file_path'] = analysis_result.get('file_path', permanent_path)
+            analysis_result['filename'] = analysis_result.get('filename', file.filename)
+            analysis_result['auto_rename'] = rename_result
             
             # Save to database
             try:
                 file_data = {
-                    'filename': file.filename,
-                    'file_path': permanent_path,
+                    'filename': analysis_result['filename'],
+                    'file_path': analysis_result['file_path'],
                     'file_size': analysis_result.get('file_size', 0),
                     'key': analysis_result.get('key', ''),
                     'scale': analysis_result.get('scale', ''),
@@ -422,6 +481,76 @@ def verify_library():
     except Exception as e:
         return jsonify({
             "error": f"Failed to verify library: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/delete', methods=['DELETE'])
+def delete_song():
+    """Delete a song from the database library by song ID."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        song_id = request_json.get('song_id')
+        if not song_id:
+            return jsonify({"error": "No song ID provided"}), 400
+        
+        # Delete from database
+        success = db_manager.delete_music_file_by_id(song_id)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Song deleted successfully'
+            })
+        else:
+            return jsonify({
+                'error': 'Song not found or could not be deleted',
+                'status': 'error'
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to delete song: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/delete-by-path', methods=['DELETE'])
+def delete_song_by_path():
+    """Delete a song from the database library by file path."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        file_path = request_json.get('file_path')
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        # Delete from database
+        success = db_manager.delete_music_file_by_path(file_path)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Song deleted successfully'
+            })
+        else:
+            return jsonify({
+                'error': 'Song not found or could not be deleted',
+                'status': 'error'
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to delete song: {str(e)}",
             "status": "error"
         }), 500
 
@@ -1682,11 +1811,28 @@ def youtube_download():
             except Exception as e:
                 print(f"Failed to write ID3 tags: {str(e)}")
             
+            # Automatically rename file with key and BPM information
+            rename_result = None
+            try:
+                if analysis_result.get('camelot_key') and analysis_result.get('bpm'):
+                    rename_result = rename_file_with_metadata(final_path, analysis_result)
+                    if rename_result.get('renamed'):
+                        # Update the uploaded_files mapping with new filename
+                        new_filename = rename_result['new_filename']
+                        uploaded_files[new_filename] = rename_result['new_path']
+                        analysis_result['filename'] = new_filename
+                        analysis_result['file_path'] = rename_result['new_path']
+                        print(f"✅ Automatically renamed YouTube download: {final_filename} → {new_filename}")
+                    else:
+                        print(f"⚠️ Failed to rename YouTube download: {rename_result.get('error', 'Unknown error')}")
+            except Exception as rename_error:
+                print(f"Warning: Failed to rename YouTube download: {str(rename_error)}")
+            
             # Save to database
             try:
                 file_data = {
-                    'filename': final_filename,
-                    'file_path': final_path,
+                    'filename': analysis_result['filename'],
+                    'file_path': analysis_result['file_path'],
                     'file_size': analysis_result.get('file_size', 0),
                     'key': analysis_result.get('key', ''),
                     'scale': analysis_result.get('scale', ''),
@@ -1708,7 +1854,7 @@ def youtube_download():
             quality_status = "verified" if analysis_result.get('quality_verified', False) else "unverified"
             final_bitrate = analysis_result.get('bitrate', 'unknown')
             
-            print(f"🎉 Successfully downloaded and analyzed: {final_filename}")
+            print(f"🎉 Successfully downloaded and analyzed: {analysis_result['filename']}")
             print(f"🎧 Final format and quality: {final_bitrate} kbps MP3 ({quality_status})")
             
             success_message = f"Successfully downloaded and analyzed {title} by {artist} as {final_bitrate} kbps MP3"
@@ -1725,7 +1871,8 @@ def youtube_download():
                     "actual_bitrate": f"{final_bitrate} kbps",
                     "quality_verified": analysis_result.get('quality_verified', False),
                     "quality_warning": analysis_result.get('quality_warning'),
-                    "file_extension": ".mp3"
+                    "file_extension": ".mp3",
+                    "auto_rename": rename_result
                 }
             })
             
@@ -2021,6 +2168,55 @@ def youtube_download_enhanced():
             "status": "error"
         }), 500
 
+# YouTube Preview Endpoint (placeholder for future implementation)
+@app.route('/youtube/preview/<video_id>', methods=['GET'])
+def youtube_preview(video_id):
+    """Get YouTube video preview audio stream (placeholder implementation)"""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        # This is a placeholder - in a real implementation, you would:
+        # 1. Use yt-dlp to get audio stream URL
+        # 2. Stream the audio to the client
+        # 3. Handle different audio formats and quality
+        
+        print(f"🎵 Preview requested for video: {video_id}")
+        
+        # For now, return a placeholder response
+        return jsonify({
+            "status": "success",
+            "message": "Preview endpoint ready (placeholder)",
+            "video_id": video_id,
+            "note": "This endpoint will stream actual YouTube audio in production"
+        })
+        
+    except Exception as e:
+        print(f"❌ Preview error: {str(e)}")
+        return jsonify({
+            "error": f"Preview failed: {str(e)}",
+            "status": "error"
+        }), 500
+
+# Health Check Endpoint
+@app.route('/hello', methods=['GET'])
+def hello():
+    """Simple health check endpoint"""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    return jsonify({
+        "status": "success",
+        "message": "Backend is running",
+        "timestamp": time.time()
+    })
+
 # Settings Management Endpoints
 @app.route('/settings/download-path', methods=['GET'])
 def get_download_path():
@@ -2179,7 +2375,7 @@ def serve_waveform(filename):
 
 @app.route('/audio/<filename>', methods=['GET'])
 def serve_audio(filename):
-    """Serve audio files for playback."""
+    """Serve audio files for playback with Range support."""
     
     # Check signing key
     signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
@@ -2187,54 +2383,477 @@ def serve_audio(filename):
         return jsonify({"error": "invalid signature"}), 401
     
     try:
-        # Decode the filename
-        decoded_filename = unquote(filename)
-        
-        # Check if file exists in uploaded files or try to find it
-        file_path = uploaded_files.get(decoded_filename)
-        
-        if not file_path or not os.path.exists(file_path):
-            # Try to find the file in the database first
-            try:
-                # Query database for file with matching filename
-                db_files = db_manager.get_all_music_files()
-                for db_file in db_files:
-                    if db_file['filename'] == decoded_filename:
-                        db_file_path = db_file['file_path']
-                        if db_file_path and os.path.exists(db_file_path):
-                            file_path = db_file_path
-                            print(f"📁 Found audio file in database: {file_path}")
+        def _resolve_path():
+            explicit_path = request.args.get('path')
+            if explicit_path and os.path.exists(explicit_path):
+                return explicit_path
+            decoded_filename = unquote(filename)
+            path = uploaded_files.get(decoded_filename)
+            if not path or not os.path.exists(path):
+                try:
+                    db_files = db_manager.get_all_music_files()
+                    for db_file in db_files:
+                        if db_file['filename'] == decoded_filename:
+                            db_file_path = db_file['file_path']
+                            if db_file_path and os.path.exists(db_file_path):
+                                path = db_file_path
+                                break
+                except Exception as db_error:
+                    print(f"⚠️ Failed to query database for audio file: {str(db_error)}")
+                if not path or not os.path.exists(path):
+                    possible_paths = [
+                        os.path.join(os.path.expanduser('~'), 'Music', decoded_filename),
+                        os.path.join(os.path.expanduser('~'), 'Downloads', decoded_filename),
+                        os.path.join(tempfile.gettempdir(), decoded_filename),
+                        decoded_filename
+                    ]
+                    for p in possible_paths:
+                        if os.path.exists(p):
+                            path = p
                             break
-            except Exception as db_error:
-                print(f"⚠️ Failed to query database for audio file: {str(db_error)}")
-            
-            # If still not found, try common music directories
-            if not file_path or not os.path.exists(file_path):
-                possible_paths = [
-                    os.path.join(os.path.expanduser('~'), 'Music', decoded_filename),
-                    os.path.join(os.path.expanduser('~'), 'Downloads', decoded_filename),
-                    os.path.join(tempfile.gettempdir(), decoded_filename),
-                    decoded_filename  # Try as absolute path
-                ]
-                
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        file_path = path
-                        break
-            
-            if not file_path or not os.path.exists(file_path):
-                return jsonify({"error": "Audio file not found"}), 404
+            return path
         
-        # Serve the audio file
-        return send_file(
-            file_path,
-            as_attachment=False,
-            mimetype='audio/mpeg'  # Default to MP3, could be enhanced to detect actual type
-        )
+        file_path = _resolve_path()
+        if not file_path or not os.path.exists(file_path):
+            return jsonify({"error": "Audio file not found"}), 404
+        
+        file_size = os.path.getsize(file_path)
+        range_header = request.headers.get('Range', None)
+        mime = 'audio/mpeg'
+        if file_path.lower().endswith('.wav'):
+            mime = 'audio/wav'
+        elif file_path.lower().endswith('.m4a') or file_path.lower().endswith('.mp4'):
+            mime = 'audio/mp4'
+        elif file_path.lower().endswith('.ogg'):
+            mime = 'audio/ogg'
+        
+        if range_header:
+            # Parse Range header: e.g., 'bytes=0-'
+            import re
+            match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                start = int(match.group(1))
+                end = match.group(2)
+                end = int(end) if end else file_size - 1
+                start = max(0, start)
+                end = min(end, file_size - 1)
+                length = end - start + 1
+                with open(file_path, 'rb') as f:
+                    f.seek(start)
+                    data = f.read(length)
+                rv = Response(data, 206, mimetype=mime, direct_passthrough=True)
+                rv.headers.add('Content-Range', f'bytes {start}-{end}/{file_size}')
+                rv.headers.add('Accept-Ranges', 'bytes')
+                rv.headers.add('Content-Length', str(length))
+                rv.headers.add('Cache-Control', 'no-cache')
+                return rv
+        
+        # No Range header, send whole file
+        rv = send_file(file_path, as_attachment=False, mimetype=mime)
+        rv.headers.add('Accept-Ranges', 'bytes')
+        rv.headers.add('Cache-Control', 'no-cache')
+        return rv
         
     except Exception as e:
         return jsonify({
             "error": f"Failed to serve audio: {str(e)}"
+        }), 500
+
+@app.route('/library/update-metadata', methods=['PUT'])
+def update_song_metadata():
+    """Update song metadata and optionally rename the file."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        song_id = data.get('song_id')
+        file_path_hint = data.get('file_path')
+        filename_hint = data.get('filename')
+        metadata_updates = data.get('metadata', {})
+        rename_file = data.get('rename_file', False)
+        
+        print(f"🔍 Update metadata request - song_id: {song_id}, file_path: {file_path_hint}, filename: {filename_hint}, metadata: {metadata_updates}")
+        
+        # Resolve song record by id, else by file_path, else by filename
+        song_record = None
+        if song_id:
+            song_record = db_manager.get_music_file_by_id(song_id)
+        if (not song_record) and file_path_hint:
+            try:
+                song_record = db_manager.get_music_file_by_path(file_path_hint)
+            except Exception as e:
+                print(f"⚠️ Lookup by file_path failed: {e}")
+        if (not song_record) and filename_hint:
+            try:
+                # Fallback: scan all and match filename
+                files = db_manager.get_all_music_files()
+                for f in files:
+                    if f.get('filename') == filename_hint:
+                        song_record = f
+                        break
+            except Exception as e:
+                print(f"⚠️ Lookup by filename failed: {e}")
+        
+        if not song_record:
+            return jsonify({"error": "Song not found"}), 404
+        
+        file_id = song_record['id']
+        file_path = song_record['file_path']
+        
+        # Include rating update if present (pass-through to DB layer later if supported)
+        updated_song = db_manager.update_music_file_metadata(file_id, metadata_updates)
+        # If metadata did not include rating but client sent 'rating' at root, handle here
+        if (not updated_song) and 'rating' in data:
+            try:
+                with sqlite3.connect(db_manager.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE music_files SET rating = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (int(data['rating']), int(file_id)))
+                    conn.commit()
+                updated_song = db_manager.get_music_file_by_id(str(file_id))
+            except Exception as _:
+                pass
+        if not updated_song:
+            return jsonify({"error": "Failed to update database"}), 500
+        
+        # Optional file rename using updated fields
+        rename_result = None
+        if rename_file and updated_song.get('camelot_key') and updated_song.get('bpm'):
+            try:
+                rename_result = rename_file_with_metadata(file_path, updated_song)
+                if rename_result.get('renamed'):
+                    updated_song = db_manager.update_music_file_path(file_id, rename_result['new_path']) or updated_song
+            except Exception as e:
+                print(f"Warning: Failed to rename file: {str(e)}")
+                rename_result = {'renamed': False, 'error': str(e)}
+        
+        return jsonify({
+            'status': 'success',
+            'song': updated_song,
+            'file_rename': rename_result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to update metadata: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/rename-file', methods=['POST'])
+def rename_song_file():
+    """Rename a song file with key and BPM information."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        song_id = data.get('song_id')
+        file_path_hint = data.get('file_path')
+        filename_hint = data.get('filename')
+        new_filename = data.get('new_filename')
+        
+        if not new_filename:
+            return jsonify({"error": "No new filename provided"}), 400
+        
+        # Resolve song record
+        song_record = None
+        if song_id:
+            song_record = db_manager.get_music_file_by_id(song_id)
+        if (not song_record) and file_path_hint:
+            song_record = db_manager.get_music_file_by_path(file_path_hint)
+        if (not song_record) and filename_hint:
+            try:
+                for f in db_manager.get_all_music_files():
+                    if f.get('filename') == filename_hint:
+                        song_record = f
+                        break
+            except Exception as e:
+                print(f"⚠️ Lookup by filename failed: {e}")
+        if not song_record:
+            return jsonify({"error": "Song not found"}), 404
+        
+        file_id = song_record['id']
+        file_path = song_record['file_path']
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found on disk"}), 404
+        
+        # Rename the file
+        rename_result = rename_file_with_custom_name(file_path, new_filename)
+        if not rename_result['renamed']:
+            return jsonify(rename_result), 500
+        
+        # Update database with new file path
+        updated_song = db_manager.update_music_file_path(file_id, rename_result['new_path'])
+        if not updated_song:
+            return jsonify({"error": "Failed to update database"}), 500
+        
+        # Update in-memory map for serving
+        try:
+            old_name = rename_result.get('old_filename')
+            new_name = rename_result.get('new_filename')
+            if old_name and old_name in uploaded_files:
+                uploaded_files.pop(old_name, None)
+            if new_name:
+                uploaded_files[new_name] = rename_result['new_path']
+        except Exception as _:
+            pass
+        
+        return jsonify({
+            'status': 'success',
+            'song': updated_song,
+            'rename_result': rename_result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to rename file: {str(e)}",
+            "status": "error"
+        }), 500
+
+def rename_file_with_metadata(file_path: str, song_data: dict) -> dict:
+    """Rename file with key and BPM information in the filename."""
+    try:
+        # Get directory and extension
+        directory = os.path.dirname(file_path)
+        file_ext = os.path.splitext(file_path)[1]
+        
+        # Get original filename without extension
+        original_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Extract artist and title if available
+        if ' - ' in original_name:
+            artist, title = original_name.split(' - ', 1)
+        else:
+            artist = 'Unknown Artist'
+            title = original_name
+        
+        # Get key and BPM information
+        camelot_key = song_data.get('camelot_key', '')
+        bpm = song_data.get('bpm', 0)
+        
+        # Create new filename format: "artist - title bpm XXX - XXx.mp3"
+        if camelot_key and bpm:
+            new_filename = f"{artist} - {title} bpm {int(bpm)} - {camelot_key}{file_ext}"
+        elif bpm:
+            new_filename = f"{artist} - {title} bpm {int(bpm)}{file_ext}"
+        elif camelot_key:
+            new_filename = f"{artist} - {title} - {camelot_key}{file_ext}"
+        else:
+            new_filename = f"{artist} - {title}{file_ext}"
+        
+        # Clean filename (remove invalid characters)
+        new_filename = "".join(c for c in new_filename if c.isalnum() or c in (' ', '-', '_', '.'))
+        new_filename = new_filename.replace('  ', ' ').strip()
+        
+        new_path = os.path.join(directory, new_filename)
+        
+        # Check if file already exists
+        if os.path.exists(new_path) and new_path != file_path:
+            # Add timestamp to make unique
+            import time
+            timestamp = int(time.time())
+            name_without_ext = os.path.splitext(new_filename)[0]
+            new_filename = f"{name_without_ext}_{timestamp}{file_ext}"
+            new_path = os.path.join(directory, new_filename)
+        
+        # Rename the file
+        os.rename(file_path, new_path)
+        
+        return {
+            'renamed': True,
+            'old_path': file_path,
+            'new_path': new_path,
+            'old_filename': os.path.basename(file_path),
+            'new_filename': new_filename
+        }
+        
+    except Exception as e:
+        return {
+            'renamed': False,
+            'error': str(e),
+            'old_path': file_path
+        }
+
+def rename_file_with_custom_name(file_path: str, new_filename: str) -> dict:
+    """Rename file with a custom filename."""
+    try:
+        # Get directory and extension
+        directory = os.path.dirname(file_path)
+        file_ext = os.path.splitext(file_path)[1]
+        
+        # Ensure new filename has the correct extension
+        if not new_filename.endswith(file_ext):
+            new_filename += file_ext
+        
+        # Clean filename (remove invalid characters)
+        new_filename = "".join(c for c in new_filename if c.isalnum() or c in (' ', '-', '_', '.'))
+        new_filename = new_filename.replace('  ', ' ').strip()
+        
+        new_path = os.path.join(directory, new_filename)
+        
+        # Check if file already exists
+        if os.path.exists(new_path) and new_path != file_path:
+            # Add timestamp to make unique
+            import time
+            timestamp = int(time.time())
+            name_without_ext = os.path.splitext(new_filename)[0]
+            new_filename = f"{name_without_ext}_{timestamp}{file_ext}"
+            new_path = os.path.join(directory, new_filename)
+        
+        # Rename the file
+        os.rename(file_path, new_path)
+        
+        return {
+            'renamed': True,
+            'old_path': file_path,
+            'new_path': new_path,
+            'old_filename': os.path.basename(file_path),
+            'new_filename': new_filename
+        }
+        
+    except Exception as e:
+        return {
+            'renamed': False,
+            'error': str(e),
+            'old_path': file_path
+        }
+
+@app.route('/test-database', methods=['GET'])
+def test_database():
+    """Test database connection and basic operations."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        # Test database connection
+        files = db_manager.get_all_music_files()
+        
+        # Test a simple query
+        if files:
+            first_file = files[0]
+            test_id = first_file['id']
+            
+            # Test get by ID
+            retrieved_file = db_manager.get_music_file_by_id(str(test_id))
+            
+            return jsonify({
+                'status': 'success',
+                'database_connected': True,
+                'total_files': len(files),
+                'test_file_id': test_id,
+                'test_file_found': retrieved_file is not None,
+                'test_file_name': retrieved_file.get('filename') if retrieved_file else None
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'database_connected': True,
+                'total_files': 0,
+                'message': 'Database is empty'
+            })
+            
+    except Exception as e:
+        print(f"❌ Database test failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
+            'database_connected': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/library/check-metadata', methods=['POST'])
+def check_song_metadata():
+    """Check if a song already has key and BPM metadata."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        file_path = data.get('file_path')
+        
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        # Check if song already has metadata
+        metadata_check = db_manager.check_song_has_metadata(file_path)
+        
+        # Generate unique track ID
+        filename = os.path.basename(file_path)
+        track_id = db_manager.generate_unique_track_id(file_path, filename)
+        
+        # If song exists and has complete metadata, update track_id
+        if metadata_check['exists'] and metadata_check['has_complete_metadata']:
+            db_manager.update_track_id(str(metadata_check['song_id']), track_id)
+            print(f"✅ Song already has complete metadata - Track ID: {track_id}")
+        elif metadata_check['exists']:
+            db_manager.update_track_id(str(metadata_check['song_id']), track_id)
+            print(f"⚠️ Song exists but has incomplete metadata - Track ID: {track_id}")
+        else:
+            print(f"🆕 New song detected - Track ID: {track_id}")
+        
+        return jsonify({
+            'status': 'success',
+            'metadata_check': metadata_check,
+            'track_id': track_id,
+            'should_analyze': not metadata_check['exists'] or not metadata_check['has_complete_metadata']
+        })
+        
+    except Exception as e:
+        print(f"❌ Error checking song metadata: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": f"Failed to check metadata: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/track/<track_id>', methods=['GET'])
+def get_song_by_track_id(track_id):
+    """Get a song by its unique track ID."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        song = db_manager.get_song_by_track_id(track_id)
+        
+        if song:
+            return jsonify({
+                'status': 'success',
+                'song': song
+            })
+        else:
+            return jsonify({
+                'status': 'not_found',
+                'message': 'Song not found with this track ID'
+            }), 404
+        
+    except Exception as e:
+        print(f"❌ Error getting song by track ID: {str(e)}")
+        return jsonify({
+            "error": f"Failed to get song: {str(e)}",
+            "status": "error"
         }), 500
 
 if __name__ == "__main__":

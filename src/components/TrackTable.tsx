@@ -1,16 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { Song } from '../App';
+import MetadataEditor from './MetadataEditor';
 
 interface TrackTableProps {
   songs: Song[];
   selectedSong: Song | null;
   onSongSelect: (song: Song) => void;
   onSongPlay: (song: Song) => void;
-  onDeleteSong: (songId: string) => void;
+  onDeleteSong: (songId: string) => Promise<void>; // Updated to async
   currentlyPlaying?: Song | null;
   getCompatibleSongs: (targetKey: string) => Song[];
   showCompatibleOnly?: boolean;
   onSongUpdate?: (song: Song) => void; // New prop for updating songs
+  apiPort: number;
+  apiSigningKey: string;
 }
 
 type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
@@ -25,7 +28,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
   currentlyPlaying,
   getCompatibleSongs,
   showCompatibleOnly = false,
-  onSongUpdate
+  onSongUpdate,
+  apiPort,
+  apiSigningKey
 }) => {
   const [sortField, setSortField] = useState<SortField>('filename');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -36,6 +41,11 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [editingCell, setEditingCell] = useState<{songId: string, field: string} | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
+  const [deletingSongs, setDeletingSongs] = useState<Set<string>>(new Set());
+  
+  // Metadata editor state
+  const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
+  const [editingSong, setEditingSong] = useState<Song | null>(null);
 
   // Enhanced song interface for display
   const enhancedSongs = useMemo(() => {
@@ -224,6 +234,26 @@ const TrackTable: React.FC<TrackTableProps> = ({
     );
   };
 
+  // Handle double-click to play track instead of opening metadata editor
+  const handleRowDoubleClick = (song: Song) => {
+    onSongPlay(song);
+  };
+
+  // Handle metadata editor save
+  const handleMetadataSave = async (updatedSong: Song, renameFile: boolean) => {
+    if (onSongUpdate) {
+      await onSongUpdate(updatedSong);
+    }
+    
+    // Update the songs array with the new data
+    const updatedSongs = songs.map(s => 
+      s.id === updatedSong.id ? updatedSong : s
+    );
+    
+    // Note: The parent component should handle the songs state update
+    // This is just for local state management
+  };
+
   // SVG Icon components for professional look
   const PlayIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -406,9 +436,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th>Comment</th>
-              <th>Rating</th>
-              <th className="actions-header">Actions</th>
+                              <th>Comment</th>
+                <th>Rating</th>
+                <th className="actions-header">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -421,7 +451,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   currentlyPlaying && currentlyPlaying.id === song.id ? 'playing' : ''
                 }`}
                 onClick={() => onSongSelect(song)}
-                onDoubleClick={() => onSongPlay(song)}
+                onDoubleClick={() => handleRowDoubleClick(song)}
+                title="Double-click to edit metadata"
               >
                 <td className="cover-art-cell">
                   <div className="cover-art-placeholder">
@@ -482,13 +513,39 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 </td>
                 <td className="rating-cell">
                   <div className="star-rating">
-                    {[1, 2, 3, 4, 5].map(star => (
-                      <span key={star} className="star">★</span>
-                    ))}
+                    {[1, 2, 3, 4, 5].map(star => {
+                      const current = (song as any).rating || 0;
+                      const filled = star <= current;
+                      return (
+                        <span
+                          key={star}
+                          className="star"
+                          style={{ cursor: 'pointer', color: filled ? '#FFD700' : undefined }}
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const optimistic = { ...song, rating: star } as any;
+                            onSongUpdate && onSongUpdate(optimistic);
+                            try {
+                              await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
+                                body: JSON.stringify({ song_id: song.id, filename: song.filename, file_path: song.file_path, rating: star, metadata: {} })
+                              });
+                            } catch (err) {
+                              console.error('Failed to persist rating', err);
+                            }
+                          }}
+                          title={`Rate ${star} star${star > 1 ? 's' : ''}`}
+                        >
+                          ★
+                        </span>
+                      );
+                    })}
                   </div>
                 </td>
                 <td className="actions-cell">
                   <div className="action-buttons">
+                    {false && (
                     <button 
                       className="action-btn play-btn"
                       onClick={(e) => {
@@ -499,29 +556,53 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     >
                       <PlayIcon />
                     </button>
-                    {onSongUpdate && (
-                      <button 
-                        className="action-btn edit-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startEditing(song.id, 'filename', song.filename);
-                        }}
-                        title="Edit track info"
-                      >
-                        <EditIcon />
-                      </button>
+                    )}
+                    {false && (
+                    <button 
+                      className="action-btn edit-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingSong(song);
+                        setMetadataEditorOpen(true);
+                      }}
+                      title="Edit metadata"
+                    >
+                      <EditIcon />
+                    </button>
                     )}
                     <button 
                       className="action-btn delete-btn"
-                      onClick={(e) => {
+                      disabled={deletingSongs.has(song.id)}
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (window.confirm(`Are you sure you want to remove "${song.filename}" from the playlist?`)) {
-                          onDeleteSong(song.id);
+                        const confirmMessage = `Are you sure you want to permanently delete "${song.filename}"?\n\nThis will:\n• Remove it from the library\n• Remove it from all playlists\n• Cannot be undone`;
+                        if (window.confirm(confirmMessage)) {
+                          setDeletingSongs(prev => new Set([...prev, song.id]));
+                          try {
+                            await onDeleteSong(song.id);
+                          } catch (error) {
+                            console.error('Delete failed:', error);
+                            // Error is already handled in the parent component
+                          } finally {
+                            setDeletingSongs(prev => {
+                              const newSet = new Set(prev);
+                              newSet.delete(song.id);
+                              return newSet;
+                            });
+                          }
                         }
                       }}
-                      title="Remove from playlist"
+                      title="Permanently delete track from library"
+                      style={{
+                        opacity: deletingSongs.has(song.id) ? 0.6 : 1,
+                        cursor: deletingSongs.has(song.id) ? 'not-allowed' : 'pointer'
+                      }}
                     >
-                      <DeleteIcon />
+                      {deletingSongs.has(song.id) ? (
+                        <span style={{ fontSize: '12px' }}>...</span>
+                      ) : (
+                        <DeleteIcon />
+                      )}
                     </button>
                   </div>
                 </td>
@@ -536,6 +617,19 @@ const TrackTable: React.FC<TrackTableProps> = ({
           
         </div>
       )}
+
+      {/* Metadata Editor Modal */}
+      <MetadataEditor
+        song={editingSong}
+        isOpen={metadataEditorOpen}
+        onClose={() => {
+          setMetadataEditorOpen(false);
+          setEditingSong(null);
+        }}
+        onSave={handleMetadataSave}
+        apiPort={apiPort}
+        apiSigningKey={apiSigningKey}
+      />
     </div>
   );
 };

@@ -11,7 +11,7 @@ app.on("window-all-closed", () => {
     }
 });
 
-app.on("ready", () => {
+app.on("ready", async () => {
     // Set app name explicitly for better branding
     app.setName("CAMELOTDJ");
     
@@ -19,6 +19,18 @@ app.on("ready", () => {
         const sourceMapSupport = require("source-map-support"); // tslint:disable-line
         sourceMapSupport.install();
     }
+    
+    // Initialize Python backend immediately when app is ready
+    try {
+        // Import the initializeApi function from with-python
+        const { initializeApi } = require("./with-python");
+        await initializeApi();
+        console.log("✅ Python backend initialized successfully");
+    } catch (error) {
+        console.error("❌ Failed to initialize Python backend:", error);
+        dialog.showErrorBox("Backend Error", "Failed to start Python backend server. Please restart the application.");
+    }
+    
     createWindow();
 });
 

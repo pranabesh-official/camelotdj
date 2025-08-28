@@ -37,6 +37,8 @@ class DatabaseManager:
                     file_path TEXT NOT NULL UNIQUE,
                     file_size INTEGER,
                     file_hash TEXT,
+                    track_id TEXT UNIQUE,  -- Unique track identifier
+                    rating INTEGER DEFAULT 0,
                     
                     -- Music analysis data
                     key_signature TEXT,
@@ -62,6 +64,21 @@ class DatabaseManager:
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add track_id column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute('ALTER TABLE music_files ADD COLUMN track_id TEXT UNIQUE')
+                print("✅ Added track_id column to existing database")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+            # Add rating column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute('ALTER TABLE music_files ADD COLUMN rating INTEGER DEFAULT 0')
+                print("✅ Added rating column to existing database")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Playlists table
             cursor.execute('''
@@ -353,7 +370,344 @@ class DatabaseManager:
             cursor.execute('DELETE FROM app_settings WHERE key = ?', (key,))
             conn.commit()
     
+    def delete_music_file_by_id(self, song_id: str) -> bool:
+        """Delete a music file from the database by ID."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # First get the file path to check if file exists
+                cursor.execute('SELECT file_path FROM music_files WHERE id = ?', (song_id,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    return False
+                
+                file_path = result[0]
+                
+                # Delete from database
+                cursor.execute('DELETE FROM music_files WHERE id = ?', (song_id,))
+                
+                # Also remove from playlist items
+                cursor.execute('DELETE FROM playlist_items WHERE music_file_id = ?', (song_id,))
+                
+                conn.commit()
+                
+                print(f"🗑️ Deleted song ID {song_id} from database")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error deleting song by ID {song_id}: {str(e)}")
+            return False
+    
+    def delete_music_file_by_path(self, file_path: str) -> bool:
+        """Delete a music file from the database by file path."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # First get the ID to check if file exists
+                cursor.execute('SELECT id FROM music_files WHERE file_path = ?', (file_path,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    return False
+                
+                song_id = result[0]
+                
+                # Delete from database
+                cursor.execute('DELETE FROM music_files WHERE file_path = ?', (file_path,))
+                
+                # Also remove from playlist items
+                cursor.execute('DELETE FROM playlist_items WHERE music_file_id = ?', (song_id,))
+                
+                conn.commit()
+                
+                print(f"🗑️ Deleted song with path {file_path} from database")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error deleting song by path {file_path}: {str(e)}")
+            return False
+    
+    def update_music_file_metadata(self, file_id: str, metadata_updates: dict) -> Optional[dict]:
+        """Update metadata for a music file."""
+        try:
+            # Convert file_id to integer if it's a string
+            try:
+                file_id_int = int(file_id)
+            except (ValueError, TypeError):
+                print(f"Invalid file_id format: {file_id}")
+                return None
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Build dynamic update query
+                update_fields = []
+                params = []
+                
+                # Map frontend field names to database column names
+                field_mapping = {
+                    'key': 'key_signature',
+                    'scale': 'scale',
+                    'key_name': 'key_name',
+                    'camelot_key': 'camelot_key',
+                    'bpm': 'bpm',
+                    'energy_level': 'energy_level',
+                    'duration': 'duration',
+                    'cue_points': 'cue_points'
+                }
+                
+                for field, value in metadata_updates.items():
+                    if field in field_mapping:
+                        db_field = field_mapping[field]
+                        update_fields.append(f"{db_field} = ?")
+                        
+                        # Handle special cases
+                        if field == 'cue_points' and isinstance(value, list):
+                            params.append(json.dumps(value))
+                        elif field in ['bpm', 'energy_level', 'duration']:
+                            # Ensure numeric values are properly converted
+                            try:
+                                if value is not None and value != '':
+                                    if field == 'energy_level':
+                                        params.append(int(float(value)))
+                                    else:
+                                        params.append(float(value))
+                                else:
+                                    params.append(None)
+                            except (ValueError, TypeError):
+                                params.append(None)
+                        else:
+                            # Handle string values
+                            if value is not None and value != '':
+                                params.append(str(value))
+                            else:
+                                params.append(None)
+                
+                if not update_fields:
+                    print(f"No valid fields to update for file_id: {file_id_int}")
+                    return None
+                
+                # Add updated_at timestamp and analysis_date
+                update_fields.append("updated_at = CURRENT_TIMESTAMP")
+                update_fields.append("analysis_date = CURRENT_TIMESTAMP")
+                
+                # Add file_id to params
+                params.append(file_id_int)
+                
+                query = f"""
+                    UPDATE music_files 
+                    SET {', '.join(update_fields)}
+                    WHERE id = ?
+                """
+                
+                print(f"Executing update query: {query}")
+                print(f"Parameters: {params}")
+                
+                cursor.execute(query, params)
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    print(f"Successfully updated {cursor.rowcount} rows for file_id: {file_id_int}")
+                    # Return updated record
+                    return self.get_music_file_by_id(str(file_id_int))
+                else:
+                    print(f"No rows updated for file_id: {file_id_int}")
+                    return None
+                    
+        except Exception as e:
+            print(f"Error updating music file metadata: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def update_music_file_path(self, file_id: int, new_file_path: str) -> Optional[dict]:
+        """Update file path for a music file (after renaming)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Update both file_path and filename
+                new_filename = os.path.basename(new_file_path)
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET file_path = ?, filename = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_file_path, new_filename, file_id))
+                
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    # Return updated record
+                    return self.get_music_file_by_id(file_id)
+                else:
+                    return None
+                    
+        except Exception as e:
+            print(f"Error updating music file path: {str(e)}")
+            return None
+
+    def get_music_file_by_id(self, file_id: str) -> Optional[dict]:
+        """Get a music file by its ID."""
+        try:
+            # Convert file_id to integer if it's a string
+            try:
+                file_id_int = int(file_id)
+            except (ValueError, TypeError):
+                print(f"Invalid file_id format: {file_id}")
+                return None
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT * FROM music_files WHERE id = ?
+                """, (file_id_int,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    print(f"No music file found with ID: {file_id_int}")
+                    return None
+                    
+        except Exception as e:
+            print(f"Error getting music file by ID: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def close(self):
         """Close database connection."""
         # SQLite connections are automatically closed when using context managers
         pass
+
+    def check_song_has_metadata(self, file_path: str) -> dict:
+        """Check if a song already has key and BPM metadata."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT id, filename, key_signature, camelot_key, bpm, energy_level, duration, analysis_date
+                    FROM music_files 
+                    WHERE file_path = ?
+                """, (file_path,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    song_data = dict(zip(columns, row))
+                    
+                    # Check if song has complete metadata
+                    has_key = bool(song_data.get('key_signature') or song_data.get('camelot_key'))
+                    has_bpm = bool(song_data.get('bpm') and song_data.get('bpm') > 0)
+                    has_energy = bool(song_data.get('energy_level') and song_data.get('energy_level') > 0)
+                    has_duration = bool(song_data.get('duration') and song_data.get('duration') > 0)
+                    
+                    return {
+                        'exists': True,
+                        'song_id': song_data['id'],
+                        'filename': song_data['filename'],
+                        'has_complete_metadata': has_key and has_bpm and has_energy and has_duration,
+                        'has_key': has_key,
+                        'has_bpm': has_bpm,
+                        'has_energy': has_energy,
+                        'has_duration': has_duration,
+                        'key_signature': song_data.get('key_signature'),
+                        'camelot_key': song_data.get('camelot_key'),
+                        'bpm': song_data.get('bpm'),
+                        'energy_level': song_data.get('energy_level'),
+                        'duration': song_data.get('duration'),
+                        'analysis_date': song_data.get('analysis_date'),
+                        'status': 'complete' if (has_key and has_bpm and has_energy and has_duration) else 'partial'
+                    }
+                else:
+                    return {
+                        'exists': False,
+                        'status': 'not_found'
+                    }
+                    
+        except Exception as e:
+            print(f"Error checking song metadata: {str(e)}")
+            return {
+                'exists': False,
+                'status': 'error',
+                'error': str(e)
+            }
+
+    def generate_unique_track_id(self, file_path: str, filename: str) -> str:
+        """Generate a unique track ID based on file path and content."""
+        try:
+            import hashlib
+            import os
+            
+            # Get file size and modification time for uniqueness
+            file_stat = os.stat(file_path)
+            file_size = file_stat.st_size
+            file_mtime = file_stat.st_mtime
+            
+            # Create a unique hash based on file path, size, and modification time
+            unique_string = f"{file_path}:{file_size}:{file_mtime}"
+            track_hash = hashlib.md5(unique_string.encode()).hexdigest()[:12]
+            
+            # Create a readable track ID
+            clean_filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_')).strip()
+            clean_filename = clean_filename[:20]  # Limit length
+            
+            unique_track_id = f"{clean_filename}_{track_hash}"
+            
+            return unique_track_id
+            
+        except Exception as e:
+            print(f"Error generating unique track ID: {str(e)}")
+            # Fallback to timestamp-based ID
+            import time
+            return f"track_{int(time.time())}"
+
+    def get_song_by_track_id(self, track_id: str) -> Optional[dict]:
+        """Get a song by its unique track ID."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT * FROM music_files 
+                    WHERE track_id = ?
+                """, (track_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+                    
+        except Exception as e:
+            print(f"Error getting song by track ID: {str(e)}")
+            return None
+
+    def update_track_id(self, file_id: str, track_id: str) -> bool:
+        """Update the track_id for a song."""
+        try:
+            file_id_int = int(file_id)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET track_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (track_id, file_id_int))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error updating track ID: {str(e)}")
+            return False

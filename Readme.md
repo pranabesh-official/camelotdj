@@ -1,10 +1,10 @@
 # Mixed In Key - Professional Music Analysis Desktop Application
 
-A professional desktop music analysis application built with Electron + Python + React, following the [electron-python boilerplate](https://github.com/yoDon/electron-python) pattern.
+A professional desktop music analysis application built with Electron + Python + React, following the [electron-python boilerplate](n) pattern.
 
 ## 🚀 Quick Start
 
-### One-Click Launch (Electron Desktop App)
+### One-Click Launch (Electron Desktop App)c
 ```bash
 npm start
 ```

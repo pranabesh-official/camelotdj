@@ -344,30 +344,73 @@ body {
 }
 
 .audio-player.no-song {
-  background: #282828;
-  border: 2px dashed #404040;
-  height: 80px;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+  border: 1px solid #404040;
+  height: 60px;
+  padding: 12px 20px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease;
+}
+
+.audio-player.no-song:hover {
+  border-color: #555;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
 }
 
 .player-placeholder {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
 }
 
 .placeholder-icon {
-  font-size: 24px;
-  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.placeholder-icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.placeholder-icon svg {
+  color: #888;
+  transition: color 0.3s ease;
+}
+
+.placeholder-icon:hover svg {
+  color: #aaa;
 }
 
 .placeholder-text {
-  color: #999;
-  font-size: 14px;
+  color: #aaa;
+  font-size: 13px;
+  font-weight: 500;
   margin: 0;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  opacity: 0.8;
+  transition: all 0.3s ease;
+}
+
+.audio-player.no-song:hover .placeholder-text {
+  color: #ccc;
+  opacity: 1;
 }
 
 /* Main Player Layout */

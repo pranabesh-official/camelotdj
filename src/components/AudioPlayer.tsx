@@ -303,7 +303,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       <div className="audio-player no-song">
         <div className="player-placeholder">
           <div className="placeholder-icon">
-            <Music2 size={48} className="text-gray-400" />
+            <Music2 size={24} className="text-gray-400" />
           </div>
           <p className="placeholder-text">Select a track to start playing</p>
         </div>

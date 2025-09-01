@@ -204,15 +204,16 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
                 className="refresh-btn"
                 onClick={getUSBDevices}
                 disabled={isLoading}
+                title="Refresh USB devices"
               >
                 <RefreshIcon />
-                {isLoading ? ' Refreshing...' : ' Refresh'}
+                {isLoading ? 'Refreshing' : 'Refresh'}
               </button>
             </div>
             
             {!selectedDevice && (
               <div className="device-selection-hint">
-                <p>💡 Click on a USB device below to select it for export</p>
+                <p>💡 Select a USB device to export your playlist</p>
               </div>
             )}
             
@@ -239,6 +240,8 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
                       <div className="device-info">
                         <div className="device-name">{device.name}</div>
                         <div className="device-path">{device.path}</div>
+                      </div>
+                      <div className="device-status">
                         <div className="device-space">
                           <span className="free-space">
                             {device.free_space_gb.toFixed(1)} GB free
@@ -247,8 +250,6 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
                             of {device.total_space_gb.toFixed(1)} GB
                           </span>
                         </div>
-                      </div>
-                      <div className="device-status">
                         <div className="space-bar">
                           <div 
                             className="space-used"

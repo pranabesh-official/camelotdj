@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { User, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, signInWithRedirect, getRedirectResult, signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
 import { auth, googleProvider, isDesktopEnvironment } from '../firebase';
 import { writeAuthHealth } from './TrackSyncService';
 
@@ -7,7 +7,7 @@ export interface AuthContextValue {
     user: User | null;
     loading: boolean;
     error: string | null;
-    signInWithGoogle: () => Promise<void>;
+    signInWithGoogle: (method?: 'primary' | 'popup' | 'redirect') => Promise<void>;
     signInWithEmailLink: (email: string) => Promise<void>;
     checkIsDesktopEnvironment: () => boolean;
     signOutUser: () => Promise<void>;
@@ -55,6 +55,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return () => unsub();
     }, []);
 
+    // Set up IPC listeners for external OAuth flow
+    React.useEffect(() => {
+        // Check if we're in Electron environment
+        if (typeof window !== 'undefined' && (window as any).require) {
+            try {
+                const { ipcRenderer } = (window as any).require('electron');
+                
+                // Listen for OAuth tokens from main process
+                const handleOAuthTokens = async (_event: any, tokens: any) => {
+                    try {
+                        console.log('[Auth] Received OAuth tokens, signing into Firebase...');
+                        const credential = GoogleAuthProvider.credential(tokens.id_token);
+                        await signInWithCredential(auth, credential);
+                        console.log('[Auth] Successfully signed in with OAuth tokens');
+                    } catch (err: any) {
+                        console.error('[Auth] Error signing in with OAuth tokens:', err);
+                        setError('Failed to sign in with external authentication. Please try again.');
+                    }
+                };
+                
+                // Listen for OAuth errors from main process
+                const handleOAuthError = (_event: any, error: string) => {
+                    console.error('[Auth] OAuth error from main process:', error);
+                    setError(`External authentication failed: ${error}. Please try again.`);
+                };
+                
+                ipcRenderer.on('oauth-tokens', handleOAuthTokens);
+                ipcRenderer.on('oauth-error', handleOAuthError);
+                
+                return () => {
+                    ipcRenderer.removeListener('oauth-tokens', handleOAuthTokens);
+                    ipcRenderer.removeListener('oauth-error', handleOAuthError);
+                };
+            } catch (error) {
+                console.log('[Auth] Not in Electron environment or IPC not available');
+            }
+        }
+    }, []);
+
     // Use the isDesktopEnvironment function from firebase.ts
     const checkIsDesktopEnvironment = React.useCallback(() => {
         return isDesktopEnvironment();
@@ -65,10 +104,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             setError(null);
             console.log('[Auth] Attempting email link authentication');
-            // This is just a placeholder - in a real implementation, you would:
-            // 1. Send an email with a sign-in link
-            // 2. Handle the redirect when the user clicks the link
-            // For now, we'll just show an error message
             setError('Email link authentication is not implemented yet. Please contact support.');
         } catch (e: any) {
             console.error('[Auth] Email link authentication failed:', e);
@@ -76,57 +111,92 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
-    const signInWithGoogle = React.useCallback(async () => {
+    const signInWithGoogle = React.useCallback(async (method: 'primary' | 'popup' | 'redirect' = 'primary') => {
         setError(null);
-        try {
-            console.log('[Auth] Starting Google sign-in');
-            
-            // Set custom parameters for desktop environment
-            if (checkIsDesktopEnvironment()) {
-                console.log('[Auth] Using desktop authentication flow');
-                googleProvider.setCustomParameters({
-                    prompt: 'select_account',
-                    // Adding these parameters can help with desktop auth
-                    login_hint: 'user@example.com',
-                    // Force a new window which can help with desktop auth
-                    authType: 'reauthenticate'
-                });
+        const isDesktop = checkIsDesktopEnvironment();
+        console.log(`[Auth] Starting Google sign-in with method: ${method}. Origin:`, window.location.origin, 'Protocol:', window.location.protocol, 'Env:', isDesktop ? 'Desktop/Electron' : 'Web');
+        
+        // Configure Google provider
+        googleProvider.setCustomParameters({ prompt: 'select_account', authType: 'reauthenticate' });
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+
+        // Handle specific method requests
+        if (method === 'popup') {
+            console.log('[Auth] Using Firebase popup authentication (requested)');
+            try {
+                await signInWithPopup(auth, googleProvider);
+                console.log('[Auth] Firebase popup authentication successful');
+                return;
+            } catch (popupError: any) {
+                console.error('[Auth] Firebase popup failed:', popupError);
+                throw popupError;
             }
-            
-            await signInWithPopup(auth, googleProvider);
-            console.log('[Auth] Google sign-in completed');
-        } catch (e: any) {
-            console.error('[Auth] Google sign-in failed:', e);
-            const code = e?.code as string | undefined;
-            
-            // Handle unauthorized domain error specifically
-            if (code === 'auth/unauthorized-domain') {
-                console.log('[Auth] Unauthorized domain, attempting alternative sign-in method');
-                try {
-                    // Force a different auth flow that might work better in desktop environments
-                    googleProvider.setCustomParameters({
-                        prompt: 'select_account',
-                        login_hint: 'user@example.com'
-                    });
-                    await signInWithPopup(auth, googleProvider);
+        }
+
+        if (method === 'redirect') {
+            console.log('[Auth] Using Firebase redirect authentication (requested)');
+            try {
+                await signInWithRedirect(auth, googleProvider);
+                console.log('[Auth] Firebase redirect authentication initiated');
+                return;
+            } catch (redirectError: any) {
+                console.error('[Auth] Firebase redirect failed:', redirectError);
+                throw redirectError;
+            }
+        }
+
+        // Primary method: Try External Browser OAuth first (Electron only), then fallback
+        if (isDesktop) {
+            console.log('[Auth] Primary method: Trying external browser OAuth flow');
+            try {
+                if (typeof window !== 'undefined' && (window as any).require) {
+                    const { ipcRenderer } = (window as any).require('electron');
+                    await ipcRenderer.invoke('start-external-oauth');
+                    console.log('[Auth] External browser OAuth initiated successfully');
                     return;
-                } catch (ue: any) {
-                    console.error('[Auth] Alternative sign-in failed:', ue);
-                    setError('Authentication failed. Please ensure you have an internet connection and try again.');
-                    return;
+                } else {
+                    throw new Error('Electron IPC not available');
                 }
+            } catch (ipcError) {
+                console.log('[Auth] External browser OAuth failed:', ipcError);
+                console.log('[Auth] Falling back to Firebase popup method');
             }
+        }
+
+        // Fallback: Try Firebase Popup
+        console.log('[Auth] Fallback: Trying Firebase popup authentication');
+        try {
+            await signInWithPopup(auth, googleProvider);
+            console.log('[Auth] Firebase popup authentication successful');
+            return;
+        } catch (popupError: any) {
+            console.log('[Auth] Firebase popup failed:', popupError?.code);
             
-            if (code === 'auth/popup-closed-by-user' || code === 'auth/popup-blocked') {
-                console.log('[Auth] Falling back to redirect sign-in');
+            // If popup fails due to blocking or domain issues, try redirect
+            if (popupError?.code === 'auth/popup-blocked' || 
+                popupError?.code === 'auth/popup-closed-by-user' ||
+                popupError?.code === 'auth/unauthorized-domain') {
+                
+                console.log('[Auth] Final fallback: Trying Firebase redirect authentication');
                 try {
                     await signInWithRedirect(auth, googleProvider);
+                    console.log('[Auth] Firebase redirect authentication initiated');
                     return;
-                } catch (re: any) {
-                    console.error('[Auth] Redirect sign-in failed:', re);
-                    setError(re?.message || 'Sign-in failed');
-                    throw re;
+                } catch (redirectError: any) {
+                    console.error('[Auth] Firebase redirect failed:', redirectError);
+                    // Fall through to error handling
                 }
+            }
+            
+            // Handle all authentication errors
+            const code = popupError?.code as string | undefined;
+            if (code === 'auth/unauthorized-domain') {
+                setError('This domain is not authorized for Firebase authentication. Please add localhost and 127.0.0.1 to Authorized domains.');
+            } else if (code === 'auth/popup-closed-by-user') {
+                setError('Sign-in was cancelled. Please try again.');
+            } else if (code === 'auth/popup-blocked') {
+                setError('Pop-up was blocked by your browser. Please allow pop-ups and try again.');
             } else if (code === 'auth/network-request-failed') {
                 setError('Network error. Please check your internet connection and try again.');
             } else if (code === 'auth/too-many-requests') {
@@ -134,16 +204,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else if (code === 'auth/user-disabled') {
                 setError('This account has been disabled. Please contact support.');
             } else if (code === 'auth/operation-not-allowed') {
-                setError('This sign-in method is not enabled. Please try another method.');
+                setError('Google sign-in is not enabled. Please contact support.');
             } else if (code?.includes('auth/')) {
-                // Handle any other auth errors with a more specific message
                 setError(`Authentication error: ${code.replace('auth/', '')}. Please try again.`);
             } else {
-                setError(e?.message || 'Sign-in failed');
+                setError(popupError?.message || 'All authentication methods failed. Please try again.');
             }
-            throw e;
+            throw popupError;
         }
-    }, []);
+    }, [checkIsDesktopEnvironment]);
 
     const signOutUser = React.useCallback(async () => {
         setError(null);

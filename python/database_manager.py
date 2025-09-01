@@ -80,6 +80,38 @@ class DatabaseManager:
                 # Column already exists
                 pass
             
+            # Add ID3 metadata columns if they don't exist (for existing databases)
+            id3_columns = [
+                ('title', 'TEXT'),
+                ('artist', 'TEXT'),
+                ('album', 'TEXT'),
+                ('albumartist', 'TEXT'),
+                ('date', 'TEXT'),
+                ('year', 'TEXT'),
+                ('genre', 'TEXT'),
+                ('composer', 'TEXT'),
+                ('tracknumber', 'TEXT'),
+                ('discnumber', 'TEXT'),
+                ('comment', 'TEXT'),
+                ('initialkey', 'TEXT'),
+                ('bpm_from_tags', 'TEXT'),
+                ('website', 'TEXT'),
+                ('isrc', 'TEXT'),
+                ('language', 'TEXT'),
+                ('organization', 'TEXT'),
+                ('copyright', 'TEXT'),
+                ('encodedby', 'TEXT'),
+                ('id3_metadata', 'TEXT')  # JSON blob for all metadata
+            ]
+            
+            for column_name, column_type in id3_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE music_files ADD COLUMN {column_name} {column_type}')
+                    print(f"✅ Added {column_name} column to existing database")
+                except sqlite3.OperationalError:
+                    # Column already exists
+                    pass
+            
             # Playlists table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS playlists (
@@ -149,12 +181,19 @@ class DatabaseManager:
             if existing:
                 # Update existing file
                 file_id = existing[0]
+                # Extract ID3 metadata
+                id3_data = file_data.get('id3', {})
+                
                 cursor.execute('''
                     UPDATE music_files SET
                         filename = ?, file_size = ?, key_signature = ?, scale = ?,
                         key_name = ?, camelot_key = ?, bpm = ?, energy_level = ?,
                         duration = ?, analysis_date = ?, cue_points = ?,
-                        status = ?, last_checked = ?, updated_at = ?
+                        status = ?, last_checked = ?, updated_at = ?,
+                        title = ?, artist = ?, album = ?, albumartist = ?, date = ?, year = ?,
+                        genre = ?, composer = ?, tracknumber = ?, discnumber = ?, comment = ?,
+                        initialkey = ?, bpm_from_tags = ?, website = ?, isrc = ?, language = ?,
+                        organization = ?, copyright = ?, encodedby = ?, id3_metadata = ?
                     WHERE id = ?
                 ''', (
                     file_data.get('filename', ''),
@@ -171,16 +210,44 @@ class DatabaseManager:
                     file_data.get('status', 'found'),
                     current_time,
                     current_time,
+                    # ID3 metadata fields
+                    id3_data.get('title', ''),
+                    id3_data.get('artist', ''),
+                    id3_data.get('album', ''),
+                    id3_data.get('albumartist', ''),
+                    id3_data.get('date', ''),
+                    id3_data.get('year', ''),
+                    id3_data.get('genre', ''),
+                    id3_data.get('composer', ''),
+                    id3_data.get('tracknumber', ''),
+                    id3_data.get('discnumber', ''),
+                    id3_data.get('comment', ''),
+                    id3_data.get('initialkey', ''),
+                    id3_data.get('bpm', ''),
+                    id3_data.get('website', ''),
+                    id3_data.get('isrc', ''),
+                    id3_data.get('language', ''),
+                    id3_data.get('organization', ''),
+                    id3_data.get('copyright', ''),
+                    id3_data.get('encodedby', ''),
+                    json.dumps(id3_data),  # Store complete metadata as JSON
                     file_id
                 ))
             else:
                 # Insert new file
+                # Extract ID3 metadata
+                id3_data = file_data.get('id3', {})
+                
                 cursor.execute('''
                     INSERT INTO music_files (
                         filename, file_path, file_size, key_signature, scale,
                         key_name, camelot_key, bpm, energy_level, duration,
-                        analysis_date, cue_points, status, last_checked
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        analysis_date, cue_points, status, last_checked,
+                        title, artist, album, albumartist, date, year,
+                        genre, composer, tracknumber, discnumber, comment,
+                        initialkey, bpm_from_tags, website, isrc, language,
+                        organization, copyright, encodedby, id3_metadata
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_data.get('filename', ''),
                     file_data['file_path'],
@@ -195,7 +262,28 @@ class DatabaseManager:
                     file_data.get('analysis_date', current_time),
                     json.dumps(file_data.get('cue_points', [])),
                     file_data.get('status', 'found'),
-                    current_time
+                    current_time,
+                    # ID3 metadata fields
+                    id3_data.get('title', ''),
+                    id3_data.get('artist', ''),
+                    id3_data.get('album', ''),
+                    id3_data.get('albumartist', ''),
+                    id3_data.get('date', ''),
+                    id3_data.get('year', ''),
+                    id3_data.get('genre', ''),
+                    id3_data.get('composer', ''),
+                    id3_data.get('tracknumber', ''),
+                    id3_data.get('discnumber', ''),
+                    id3_data.get('comment', ''),
+                    id3_data.get('initialkey', ''),
+                    id3_data.get('bpm', ''),
+                    id3_data.get('website', ''),
+                    id3_data.get('isrc', ''),
+                    id3_data.get('language', ''),
+                    id3_data.get('organization', ''),
+                    id3_data.get('copyright', ''),
+                    id3_data.get('encodedby', ''),
+                    json.dumps(id3_data)  # Store complete metadata as JSON
                 ))
                 file_id = cursor.lastrowid
                 if file_id is None:

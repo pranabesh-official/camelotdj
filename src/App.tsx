@@ -207,7 +207,7 @@ const App: React.FC = () => {
                     }
                     
                     return {
-                        id: song.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                        id: song.id ? song.id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: song.filename,
                         file_path: song.file_path,
                         key: song.key,
@@ -393,7 +393,7 @@ const App: React.FC = () => {
                     }
                     
                     const newSong: Song = {
-                        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                        id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: result.filename,
                         file_path: result.file_path,
                         key: result.key,
@@ -525,7 +525,7 @@ const App: React.FC = () => {
                     }
                     
                     const newSong: Song = {
-                        id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
+                        id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
                         filename: result.filename,
                         file_path: result.file_path,
                         key: result.key,
@@ -873,7 +873,7 @@ const App: React.FC = () => {
         
         // Transform the downloaded song to match our Song interface
         const newSong: Song = {
-            id: downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            id: downloadedSong.db_id ? downloadedSong.db_id.toString() : (downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9)),
             filename: downloadedSong.filename,
             file_path: downloadedSong.file_path,
             key: downloadedSong.key,

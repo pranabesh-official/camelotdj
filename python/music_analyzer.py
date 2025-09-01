@@ -82,12 +82,16 @@ class MusicAnalyzer:
             # Get file info
             file_info = self._get_file_info(file_path)
             
+            # Extract ID3 metadata
+            id3_metadata = self._extract_id3_metadata(file_path)
+            
             return {
                 **file_info,
                 **key_info,
                 **bpm_info,
                 **energy_info,
                 'cue_points': cue_points,
+                'id3': id3_metadata,
                 'status': 'success'
             }
             
@@ -448,6 +452,86 @@ class MusicAnalyzer:
             # Return flat line as fallback
             return [0.1] * samples
 
+    def _extract_id3_metadata(self, file_path: str) -> Dict[str, Any]:
+        """Extract existing ID3 metadata from the audio file."""
+        metadata = {}
+        
+        try:
+            # Try to load existing ID3 tags
+            try:
+                tags = EasyID3(file_path)
+                
+                # Extract standard ID3 tags
+                metadata['title'] = tags.get('title', [''])[0] if tags.get('title') else ''
+                metadata['artist'] = tags.get('artist', [''])[0] if tags.get('artist') else ''
+                metadata['album'] = tags.get('album', [''])[0] if tags.get('album') else ''
+                metadata['albumartist'] = tags.get('albumartist', [''])[0] if tags.get('albumartist') else ''
+                metadata['date'] = tags.get('date', [''])[0] if tags.get('date') else ''
+                metadata['year'] = metadata['date'][:4] if metadata['date'] and len(metadata['date']) >= 4 else ''
+                metadata['genre'] = tags.get('genre', [''])[0] if tags.get('genre') else ''
+                metadata['composer'] = tags.get('composer', [''])[0] if tags.get('composer') else ''
+                metadata['tracknumber'] = tags.get('tracknumber', [''])[0] if tags.get('tracknumber') else ''
+                metadata['discnumber'] = tags.get('discnumber', [''])[0] if tags.get('discnumber') else ''
+                # Try different comment fields that might exist
+                metadata['comment'] = (tags.get('comment', [''])[0] if tags.get('comment') else 
+                                     tags.get('grouping', [''])[0] if tags.get('grouping') else '')
+                metadata['initialkey'] = tags.get('initialkey', [''])[0] if tags.get('initialkey') else ''
+                metadata['bpm'] = tags.get('bpm', [''])[0] if tags.get('bpm') else ''
+                metadata['website'] = tags.get('website', [''])[0] if tags.get('website') else ''
+                metadata['isrc'] = tags.get('isrc', [''])[0] if tags.get('isrc') else ''
+                metadata['language'] = tags.get('language', [''])[0] if tags.get('language') else ''
+                metadata['organization'] = tags.get('organization', [''])[0] if tags.get('organization') else ''
+                metadata['copyright'] = tags.get('copyright', [''])[0] if tags.get('copyright') else ''
+                metadata['encodedby'] = tags.get('encodedby', [''])[0] if tags.get('encodedby') else ''
+                
+                print(f"✅ ID3 metadata extracted from: {os.path.basename(file_path)}")
+                if metadata['title'] or metadata['artist']:
+                    print(f"📝 Found: '{metadata['title']}' by '{metadata['artist']}'")
+                
+            except ID3NoHeaderError:
+                print(f"⚠️ No ID3 header found in: {os.path.basename(file_path)}")
+                # Initialize empty metadata for files without ID3 tags
+                metadata = {
+                    'title': '', 'artist': '', 'album': '', 'albumartist': '', 'date': '', 'year': '',
+                    'genre': '', 'composer': '', 'tracknumber': '', 'discnumber': '', 'comment': '',
+                    'initialkey': '', 'bpm': '', 'website': '', 'isrc': '', 'language': '',
+                    'organization': '', 'copyright': '', 'encodedby': ''
+                }
+            except Exception as e:
+                print(f"⚠️ Error reading ID3 tags from {file_path}: {str(e)}")
+                metadata = {
+                    'title': '', 'artist': '', 'album': '', 'albumartist': '', 'date': '', 'year': '',
+                    'genre': '', 'composer': '', 'tracknumber': '', 'discnumber': '', 'comment': '',
+                    'initialkey': '', 'bpm': '', 'website': '', 'isrc': '', 'language': '',
+                    'organization': '', 'copyright': '', 'encodedby': '', 'error': str(e)
+                }
+            
+            # Try to get additional metadata using mutagen for more comprehensive info
+            try:
+                from mutagen import File
+                audio_file = File(file_path)
+                if audio_file is not None:
+                    # Get audio properties
+                    if hasattr(audio_file, 'info'):
+                        info = audio_file.info
+                        metadata['bitrate'] = getattr(info, 'bitrate', 0)
+                        metadata['sample_rate'] = getattr(info, 'sample_rate', 0)
+                        metadata['channels'] = getattr(info, 'channels', 0)
+                        metadata['file_size'] = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                        
+                        # Duration from mutagen (more accurate than librosa for metadata)
+                        if hasattr(info, 'length'):
+                            metadata['duration_from_tags'] = float(info.length)
+                            
+            except Exception as e:
+                print(f"⚠️ Error reading additional metadata: {str(e)}")
+                
+        except Exception as e:
+            print(f"❌ Error extracting ID3 metadata from {file_path}: {str(e)}")
+            metadata = {'error': str(e)}
+            
+        return metadata
+
     def write_id3_tags(self, file_path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Write comprehensive metadata to ID3 tags."""
         try:
@@ -467,24 +551,32 @@ class MusicAnalyzer:
                 bpm_value = int(round(float(analysis['bpm'])))
                 tags['bpm'] = [str(bpm_value)]
             
+            # Collect comments for writing to ID3
+            comments = []
+            
             if analysis.get('energy_level') is not None:
                 energy_value = int(float(analysis['energy_level']))
-                tags['comment'] = [f"Energy Level: {energy_value}/10"]
+                comments.append(f"Energy Level: {energy_value}/10")
             
             # Add custom metadata fields
             if analysis.get('camelot_key'):
-                tags['comment'] = tags.get('comment', []) + [f"Camelot: {analysis['camelot_key']}"]
+                comments.append(f"Camelot: {analysis['camelot_key']}")
             
             if analysis.get('duration') is not None:
                 duration_seconds = float(analysis['duration'])
                 duration_minutes = int(duration_seconds // 60)
                 duration_secs = int(duration_seconds % 60)
-                tags['comment'] = tags.get('comment', []) + [f"Duration: {duration_minutes}:{duration_secs:02d}"]
+                comments.append(f"Duration: {duration_minutes}:{duration_secs:02d}")
             
             # Add analysis timestamp
             from datetime import datetime
             analysis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            tags['comment'] = tags.get('comment', []) + [f"Analyzed: {analysis_time}"]
+            comments.append(f"Analyzed: {analysis_time}")
+            
+            # Write comments if any - use a valid EasyID3 key
+            if comments:
+                # Use 'grouping' field to store analysis comments
+                tags['grouping'] = [' | '.join(comments)]
             
             # Clean up common junk tags
             for junk in ['encodedby', 'lyricist', 'composer']:

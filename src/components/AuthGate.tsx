@@ -10,18 +10,29 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [showEmailOption, setShowEmailOption] = useState(false);
     const [email, setEmail] = useState('');
     const [isDesktop, setIsDesktop] = useState(false);
+    const [showFallbackOptions, setShowFallbackOptions] = useState(false);
+    const [authMethod, setAuthMethod] = useState<'primary' | 'popup' | 'redirect'>('primary');
 
     // Check if we're in a desktop environment on component mount
     React.useEffect(() => {
         setIsDesktop(checkIsDesktopEnvironment());
     }, [checkIsDesktopEnvironment]);
 
-    const handleSignIn = async () => {
+    const handleSignIn = async (method: 'primary' | 'popup' | 'redirect' = 'primary') => {
         if (isSubmitting) return;
         setIsSubmitting(true);
+        setAuthMethod(method);
+        
         try {
             await signInWithGoogle();
         } catch (e: any) {
+            console.log(`[AuthGate] ${method} authentication failed:`, e?.code);
+            
+            // Show fallback options if primary method fails
+            if (method === 'primary' && !showFallbackOptions) {
+                setShowFallbackOptions(true);
+            }
+            
             // If we get an unauthorized domain error and we're in a desktop environment,
             // show the email option as a fallback
             if (e?.code === 'auth/unauthorized-domain' && isDesktop) {
@@ -171,64 +182,129 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     <div style={{ color: 'var(--text-secondary)', fontSize: 15, marginBottom: 32, lineHeight: 1.5, textAlign: 'center', maxWidth: '90%', margin: '0 auto 32px' }}>Sign in to access your music library and playlists.</div>
 
                     {!showEmailOption ? (
-                        <button
-                            onClick={handleSignIn}
-                            disabled={isSubmitting}
-                            style={{
-                                width: '100%',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 14,
-                                padding: '16px 24px',
-                                background: isSubmitting ? 'rgba(255,255,255,0.8)' : 'linear-gradient(to bottom, #ffffff, #f5f5f5)',
-                                color: '#111827',
-                                border: 'none',
-                                borderRadius: 14,
-                                cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                                fontWeight: 600,
-                                fontSize: 15,
-                                letterSpacing: 0.3,
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.08)',
-                                transition: 'all 0.2s ease',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                WebkitTapHighlightColor: 'transparent',
-                            }}
-                            onMouseEnter={(e) => {
-                                if (!isSubmitting) {
-                                    e.currentTarget.style.transform = 'translateY(-1px)';
-                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.08)';
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (!isSubmitting) {
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.08)';
-                                }
-                            }}
-                        >
-                        {isSubmitting ? (
-                            <div style={{ position: 'relative', width: 24, height: 24 }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" style={{ animation: 'spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite', position: 'absolute', top: 0, left: 0 }}>
-                                    <circle cx="12" cy="12" r="10" stroke="rgba(0,0,0,0.15)" strokeWidth="2.5" fill="none"/>
-                                    <path d="M12 2a10 10 0 0 1 10 10" stroke="#4285F4" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
+                        <div>
+                            <button
+                                onClick={() => handleSignIn('primary')}
+                                disabled={isSubmitting}
+                                style={{
+                                    width: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 14,
+                                    padding: '16px 24px',
+                                    background: isSubmitting ? 'rgba(255,255,255,0.8)' : 'linear-gradient(to bottom, #ffffff, #f5f5f5)',
+                                    color: '#111827',
+                                    border: 'none',
+                                    borderRadius: 14,
+                                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                    fontWeight: 600,
+                                    fontSize: 15,
+                                    letterSpacing: 0.3,
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.08)',
+                                    transition: 'all 0.2s ease',
+                                    position: 'relative',
+                                    overflow: 'hidden',
+                                    WebkitTapHighlightColor: 'transparent',
+                                    marginBottom: showFallbackOptions ? 12 : 0,
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!isSubmitting) {
+                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.08)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!isSubmitting) {
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.08)';
+                                    }
+                                }}
+                            >
+                            {isSubmitting ? (
+                                <div style={{ position: 'relative', width: 24, height: 24 }}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" style={{ animation: 'spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite', position: 'absolute', top: 0, left: 0 }}>
+                                        <circle cx="12" cy="12" r="10" stroke="rgba(0,0,0,0.15)" strokeWidth="2.5" fill="none"/>
+                                        <path d="M12 2a10 10 0 0 1 10 10" stroke="#4285F4" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
+                                    </svg>
+                                </div>
+                            ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, position: 'relative' }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="24" height="24" style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.05))' }}>
+                                    <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12 s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C33.64,6.053,29.083,4,24,4C12.955,4,4,12.955,4,24 s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+                                    <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,16.108,18.961,13,24,13c3.059,0,5.842,1.154,7.961,3.039 l5.657-5.657C33.64,6.053,29.083,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                                    <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36 c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                                    <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.094,5.571 c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.982,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
                                 </svg>
                             </div>
-                        ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, position: 'relative' }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="24" height="24" style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.05))' }}>
-                                <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12 s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C33.64,6.053,29.083,4,24,4C12.955,4,4,12.955,4,24 s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
-                                <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,16.108,18.961,13,24,13c3.059,0,5.842,1.154,7.961,3.039 l5.657-5.657C33.64,6.053,29.083,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
-                                <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36 c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
-                                <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.094,5.571 c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.982,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
-                            </svg>
-                        </div>
+                            )}
+                            <span style={{ fontWeight: 600, position: 'relative', zIndex: 2 }}>
+                                {isSubmitting ? 'Signing in...' : 'Sign in with Google'}
+                            </span>
+                        </button>
+
+                        {/* Fallback Authentication Options */}
+                        {showFallbackOptions && (
+                            <div style={{ marginTop: 16, padding: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.1)' }}>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 12, textAlign: 'center' }}>
+                                    Having trouble signing in? Try these alternatives:
+                                </div>
+                                <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
+                                    <button
+                                        onClick={() => handleSignIn('popup')}
+                                        disabled={isSubmitting}
+                                        style={{
+                                            width: '100%',
+                                            padding: '12px 16px',
+                                            background: 'rgba(59, 130, 246, 0.1)',
+                                            color: 'var(--text-primary)',
+                                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                                            borderRadius: 8,
+                                            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                            fontSize: 14,
+                                            fontWeight: 500,
+                                        }}
+                                    >
+                                        Try Popup Login
+                                    </button>
+                                    <button
+                                        onClick={() => handleSignIn('redirect')}
+                                        disabled={isSubmitting}
+                                        style={{
+                                            width: '100%',
+                                            padding: '12px 16px',
+                                            background: 'rgba(16, 185, 129, 0.1)',
+                                            color: 'var(--text-primary)',
+                                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                                            borderRadius: 8,
+                                            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                            fontSize: 14,
+                                            fontWeight: 500,
+                                        }}
+                                    >
+                                        Try Browser Redirect
+                                    </button>
+                                    <button
+                                        onClick={() => setShowEmailOption(true)}
+                                        disabled={isSubmitting}
+                                        style={{
+                                            width: '100%',
+                                            padding: '12px 16px',
+                                            background: 'rgba(168, 85, 247, 0.1)',
+                                            color: 'var(--text-primary)',
+                                            border: '1px solid rgba(168, 85, 247, 0.3)',
+                                            borderRadius: 8,
+                                            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                            fontSize: 14,
+                                            fontWeight: 500,
+                                        }}
+                                    >
+                                        Try Email Link
+                                    </button>
+                                </div>
+                            </div>
                         )}
-                        <span style={{ fontWeight: 600, position: 'relative', zIndex: 2 }}>
-                            {isSubmitting ? 'Signing in...' : 'Sign in with Google'}
-                        </span>
-                    </button>
+                        </div>
 
                     ) : (
                         <form onSubmit={handleEmailSignIn} style={{ width: '100%' }}>

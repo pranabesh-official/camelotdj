@@ -305,11 +305,18 @@ def upload_and_analyze():
                     'energy_level': analysis_result.get('energy_level', 0.0),
                     'duration': analysis_result.get('duration', 0.0),
                     'cue_points': analysis_result.get('cue_points', []),
+                    'id3': analysis_result.get('id3', {}),  # Include ID3 metadata
                     'status': 'found'
                 }
                 db_id = db_manager.add_music_file(file_data)
                 analysis_result['db_id'] = db_id
                 print(f"Saved file to database with ID: {db_id}")
+                
+                # Log ID3 metadata for debugging
+                id3_data = analysis_result.get('id3', {})
+                if id3_data.get('title') or id3_data.get('artist'):
+                    print(f"📝 Saved ID3 metadata: '{id3_data.get('title', 'N/A')}' by '{id3_data.get('artist', 'N/A')}'")
+                    
             except Exception as e:
                 print(f"Failed to save to database: {str(e)}")
                 # Continue without database save

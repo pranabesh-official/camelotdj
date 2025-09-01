@@ -183,8 +183,13 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
         value *= 1.2; // Emphasize certain sections
       }
       
-      // Ensure values are within bounds
-      value = Math.max(0.1, Math.min(0.9, value));
+      // Add some dramatic peaks for visibility
+      if (i % 100 === 0) {
+        value = Math.random() * 0.8 + 0.2; // Random peaks
+      }
+      
+      // Ensure values are within bounds but more visible
+      value = Math.max(0.15, Math.min(0.95, value));
       
       data.push(value);
     }

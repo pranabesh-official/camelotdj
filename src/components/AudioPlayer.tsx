@@ -229,7 +229,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       ctx.fillStyle = '#888';
       ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(isLoadingWaveform ? 'Loading waveform...' : 'Loading audio...', width / 2, height - 8);
+      ctx.fillText(isLoadingWaveform ? '' : '', width / 2, height - 8);
       return;
     }
 
@@ -464,6 +464,25 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           </button>
           <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
             <SkipForward size={20} />
+          </button>
+          <button 
+            className="control-btn" 
+            onClick={() => {
+              const audio = audioRef.current;
+              if (audio) {
+                console.log('Audio element state:', {
+                  src: audio.src,
+                  readyState: audio.readyState,
+                  networkState: audio.networkState,
+                  error: audio.error,
+                  duration: audio.duration,
+                  currentTime: audio.currentTime
+                });
+              }
+            }}
+            title="Debug Audio"
+          >
+            🐛
           </button>
         </div>
 

@@ -1,82 +1,186 @@
-# Electron + Python
+# CamelotDJ - Open Source Music Analyzer
 
-This sample shows how to build Python Flask apps that run in Electron. I'm using it to combine Python backends with React frontends but if you prefer to use handle your frontend entirely from Flask that should be simple to do. The Electron main (backend) process spawns a Python Flask webserver and provides a randomly generated authentication token to both the webserver and the Electron renderer (frontend) process for use in authenticating messages sent between the frontend and the webserver. 
+**An open-source desktop application for analyzing music files and providing harmonic mixing capabilities for DJs and music enthusiasts, inspired by [Mixed In Key](https://mixedinkey.com/).**
 
-The webserver currently exposes a GraphQL endpoint for the frontend to interact with but the backend is just a plain old Flask webserver so you can tweak it to host whatever sort of REST or other Flask web services as might be needed by your application. The React frontend part of the sample is similarly based on a stock create-react-app site, so it should be easy to customize as needed. The only significant embelishments to the stock cra app are (1) the bare minimal amount of https://github.com/sharegate/craco to support hooking into electron without needing to eject the create react app and (2) typescript support, which you don't have to use but I personally can't imagine building a serious javascript project without it so it's there if you need it.
+This project combines the power of Python music analysis with a modern React frontend, all wrapped in an Electron desktop application. It provides professional-grade music analysis tools that are typically expensive, making them accessible to everyone in the DJ and music production community.
 
-This example builds a stand-alone Electron + Create-React-App + Python application and installer. On Windows it builds the app into `./dist/win-unpacked/My Electron Python App.exe` and the installer into `./dist/My Electron Python App Setup 1.0.0.exe` (OSX and Linux destinations are similar). You can change the name of the application by changing the `name` property in `package.json`.
+## 🎯 What is CamelotDJ?
 
-# Installation
+CamelotDJ is a desktop application that analyzes your music files to provide:
+- **Musical Key Detection** (with Camelot Wheel notation)
+- **BPM Analysis** for beatmatching
+- **Energy Level Ratings** for perfect set progression
+- **Harmonic Mixing Suggestions** for seamless transitions
 
-Tested with Anaconda Python v3, should work fine with Anaconda Python v2 (should also work fine with whatever python environment you use if you have the correct packages installed).
+## 🏗️ Architecture
 
-NOTE: On windows you will need to [install anaconda](https://www.anaconda.com/download/) (which installs python and pip) and potentially configure environment variables to add python and/or pip to the path if you don't have it installed already.
+This application uses a hybrid architecture:
+- **Frontend**: React + TypeScript with modern UI components
+- **Backend**: Python Flask with music analysis engines (Librosa, Essentia)
+- **Desktop**: Electron for cross-platform compatibility
+- **Database**: Firebase Firestore for cloud storage and authentication
 
+## 🚀 Quick Start
+
+### Prerequisites
+- **Python 3.7+** with pip
+- **Node.js 14+** with npm
+- **Firebase project** (for authentication and data storage)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/pranabesh-official/camelotdj.git
+   cd camelotdj
+   ```
+
+2. **Setup environment**
+   ```bash
+   # Copy environment template
+   cp .env.example .env
+   
+   # Edit .env with your Firebase configuration
+   # Get config from: https://console.firebase.google.com/
+   ```
+
+3. **Install dependencies**
+   ```bash
+   # Python dependencies
+   pip3 install -r requirements.txt
+   
+   # Node.js dependencies
+   npm install
+   ```
+
+4. **Run the application**
+   ```bash
+   npm run start
+   ```
+
+## 🔐 Firebase Setup
+
+This application requires Firebase for authentication and data storage:
+
+1. **Create a Firebase project** at [Firebase Console](https://console.firebase.google.com/)
+2. **Enable Authentication** with Google sign-in
+3. **Create a Firestore database**
+4. **Copy your config** to the `.env` file
+
+**⚠️ Important**: Never commit your `.env` file. It's already excluded in `.gitignore`.
+
+## 🎵 Music Analysis Features
+
+### Key Detection
+- Uses both Essentia KeyExtractor and Librosa chroma analysis
+- Provides both traditional notation (A minor) and Camelot notation (8A)
+- Supports all major and minor keys
+
+### BPM Analysis
+- Essentia RhythmExtractor2013 for accurate tempo detection
+- Librosa verification for consistency
+- Perfect for beatmatching and set planning
+
+### Energy Level Rating
+- 1-10 scale energy analysis
+- Based on multiple factors: RMS, spectral features, dynamics
+- Helps create perfect energy progression in your sets
+
+## 🎛️ Harmonic Mixing
+
+The application includes a visual Camelot Wheel that shows:
+- **Perfect matches**: Same key (8A → 8A)
+- **Energy progression**: +1 key (8A → 9A)
+- **Mood changes**: Same number, different letter (8A → 8B)
+
+## 🛠️ Development
+
+### Project Structure
+```
+camelotdj/
+├── src/                 # React frontend
+│   ├── components/      # UI components
+│   ├── services/        # Firebase and API services
+│   └── App.tsx         # Main application
+├── python/             # Python backend
+│   ├── api.py          # Flask server
+│   └── music_analyzer.py # Analysis engine
+├── main/               # Electron main process
+└── package.json        # Configuration
+```
+
+### Testing the Python Backend
 ```bash
-# start with the obvious step you always need to do with node projects
-npm install
-
-# Depending on the packages you install, with Electron projects you may need to do 
-# an npm rebuild to rebuild any included binaries for the current OS. It's probably
-# not needed here but I do it out of habit because its fast and the issues can be
-# a pain to track down if they come up and you dont realize a rebuild is needed
-npm rebuild
+cd python
+python3 api.py --apiport 5000 --signingkey devkey
 ```
 
-**VERY IMPORTANT:** Windows users, if you use VS Code or use Powershell as your shell, you need to type `cmd` inside the VS Code terminal or inside your Powershell window before running the conda commands because conda's environment switcher will not work under Powershell (much of it works, but the critical parts that don't work, like activating evironments, fail silently while appearing to work),
+Visit `http://127.0.0.1:5000/graphiql/` for the GraphQL interface.
 
+### Building for Distribution
 ```bash
-# install Anaconda if not already installed
-
-cmd # Only needed if you're coding on Windows in VS Code or Powershell, as discussed above
-conda env create -f environment.yml
-conda activate electron-python-sample
-conda env list 
-# in the list, make sure the electron-python-sample has a * in front
-# indicating it is activated (under Powershell on Windows the activate
-# command fails silently which is why you needed to run the conda commands
-# in a cmd prompt)
-
-# run the unpackaged python scripts from a dev build of electron
-npm run start # must be run in the same shell you just conda activated
+npm run build
 ```
 
-**NOTE** if you see the following error message when trying to `npm run start` it means you did not successfully `conda activate electron-python-sample` in the shell from which you are trying to `npm run start`. On Windows under VS Code that could be because you forgot to go into a `cmd` shell as discussed above before trying to conda activate.
+This creates a packaged application with:
+- Python backend compiled with PyInstaller
+- React frontend built and optimized
+- Platform-specific installer in `dist/`
 
-```
-Traceback (most recent call last):
-  File "python/api.py", line 3, in <module>
-    from graphene import ObjectType, String, Schema
-ModuleNotFoundError: No module named 'graphene'
-```
+## 🐛 Troubleshooting
 
-```bash
-# use pyinstaller to convert the source code in python/ into an 
-# executable in pythondist/, build the electron app into a subdirectory 
-# of dist/, and run electron-packager to package the electron app as a 
-# platform-specific installer in dist/
-npm run build # must be run in the same shell you just conda activated
+### Common Issues
 
-# double-click to run the either the platform-specific app that is built 
-# into a subdirectory of dist/ or the platform-specific installer that is 
-# built and placed in the dist/ folder
-```
+1. **OpenSSL Error (Node.js 17+)**
+   ```bash
+   export NODE_OPTIONS="--openssl-legacy-provider"
+   npm run start
+   ```
 
-# Debugging the Python process
+2. **Python Dependencies Missing**
+   ```bash
+   pip3 install librosa essentia mutagen flask flask-cors flask-graphql
+   ```
 
-To test the Python GraphQL server, in a conda activated terminal window run `npm run python-build`, cd into the newly generated `pythondist` folder, and run `api.exe --apiport 5000 --signingkey devkey` then browse to `http://127.0.0.1:5000/graphiql/` to access a GraphiQL view of the server. For a more detailed example, try `http://127.0.0.1:5000/graphiql/?query={calc(math:"1/2",signingkey:"devkey")}` which works great if you copy and paste into the browser but which is a complex enough URL that it will confuse chrome if you try to click directly on it.
+3. **Firebase Configuration Error**
+   - Ensure all environment variables are set in `.env`
+   - Check Firebase project settings and permissions
 
-# Notes
+4. **Port 5000 in Use**
+   - Backend will automatically find an available port
+   - Or manually specify: `python3 api.py --apiport 5001`
 
-The electron main process both spawns the Python child process and creates the window. The electron renderer process communicates with the python backend via GraphQL web service calls.
+## 🤝 Contributing
 
-The Python script `python/calc.py` provides a function: `calc(text)` that can take text like `1 + 1` and return the result like `2.0`. The calc functionality is exposed as a GraphQL api by `python/api.py`.
+We welcome contributions! This is an open-source project inspired by Mixed In Key, and we'd love your help to make it even better.
 
-The details of how the electron app launches the Python executable is tricky because of differences between packaged and unpackaged scenarios. This complexity is handled by `main/with-python.ts`. If the Electron app is not packaged, the code needs to `spawn` the Python source script. If the Electron app is packaged, it needs to `execFile` the packaged Python executable found in the app.asar. To decide whether the Electron app itself has been packaged for distribution or not, `main/with-python.ts` checks whether the `__dirname` looks like an asar folder or not.
+1. Fork the repository
+2. Create a feature branch
+3. Add your improvements
+4. Test thoroughly
+5. Submit a pull request
 
-# Important
+## 📄 License
 
-Killing spawned processes under Electron can be tricky so the electron main process sends a message to the Python server telling it to exit when Electron is shutting down (and yes, that does mean that if you are debugging and control-c to kill the npm process hosting the app you can leave a zombie python process, so it's better to close the app normally by closing the window before killing your npm process).
+MIT License - see LICENSE.txt for details
 
-# source boilerplate
-https://github.com/yoDon/electron-python
+## 🙏 Acknowledgments
+
+- **Inspired by**: [Mixed In Key](https://mixedinkey.com/) - The industry standard for harmonic mixing software
+- **Built on**: [electron-python](https://github.com/yoDon/electron-python) boilerplate
+- **Music analysis**: [Librosa](https://librosa.org/) and [Essentia](https://essentia.upf.edu/)
+
+## 🔗 Related Projects
+
+- [Mixed In Key](https://mixedinkey.com/) - Commercial software that inspired this project
+- [Camelot Wheel](https://en.wikipedia.org/wiki/Circle_of_fifths) - Harmonic mixing system
+- [Essentia](https://essentia.upf.edu/) - Music analysis library
+- [Librosa](https://librosa.org/) - Audio analysis library
+
+---
+
+**Ready to mix harmonically? Upload your first track and discover the magic of musical key analysis!** 🎶
+
+*This project is not affiliated with Mixed In Key LLC. It's an open-source alternative inspired by their excellent software.*
+
+For detailed documentation, see [README_MIXED_IN_KEY.md](README_MIXED_IN_KEY.md).

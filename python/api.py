@@ -2637,7 +2637,7 @@ def rename_song_file():
         }), 500
 
 def rename_file_with_metadata(file_path: str, song_data: dict) -> dict:
-    """Rename file with key and BPM information in the filename."""
+    """Rename file with key and BPM information in the filename using format: 100BPM_11A_songname.mp3"""
     try:
         # Get directory and extension
         directory = os.path.dirname(file_path)
@@ -2657,15 +2657,33 @@ def rename_file_with_metadata(file_path: str, song_data: dict) -> dict:
         camelot_key = song_data.get('camelot_key', '')
         bpm = song_data.get('bpm', 0)
         
-        # Create new filename format: "artist - title bpm XXX - XXx.mp3"
+        # Create new filename format: "100BPM_11A_songname.mp3"
         if camelot_key and bpm:
-            new_filename = f"{artist} - {title} bpm {int(bpm)} - {camelot_key}{file_ext}"
+            bpm_value = int(round(float(bpm)))
+            # Clean song name (remove artist prefix if present)
+            song_name = title
+            if ' - ' in song_name:
+                song_name = song_name.split(' - ', 1)[1]
+            
+            # Clean song name for filename (remove invalid characters)
+            clean_song_name = "".join(c for c in song_name if c.isalnum() or c in (' ', '-', '_'))
+            clean_song_name = clean_song_name.replace('  ', ' ').strip()
+            
+            new_filename = f"{bpm_value}BPM_{camelot_key}_{clean_song_name}{file_ext}"
         elif bpm:
-            new_filename = f"{artist} - {title} bpm {int(bpm)}{file_ext}"
+            bpm_value = int(round(float(bpm)))
+            clean_song_name = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_'))
+            clean_song_name = clean_song_name.replace('  ', ' ').strip()
+            new_filename = f"{bpm_value}BPM_{clean_song_name}{file_ext}"
         elif camelot_key:
-            new_filename = f"{artist} - {title} - {camelot_key}{file_ext}"
+            clean_song_name = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_'))
+            clean_song_name = clean_song_name.replace('  ', ' ').strip()
+            new_filename = f"{camelot_key}_{clean_song_name}{file_ext}"
         else:
-            new_filename = f"{artist} - {title}{file_ext}"
+            # Fallback to original name if no analysis data
+            clean_song_name = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_'))
+            clean_song_name = clean_song_name.replace('  ', ' ').strip()
+            new_filename = f"{clean_song_name}{file_ext}"
         
         # Clean filename (remove invalid characters)
         new_filename = "".join(c for c in new_filename if c.isalnum() or c in (' ', '-', '_', '.'))
@@ -2685,6 +2703,8 @@ def rename_file_with_metadata(file_path: str, song_data: dict) -> dict:
         # Rename the file
         os.rename(file_path, new_path)
         
+        print(f"🔄 Renamed file: {os.path.basename(file_path)} → {new_filename}")
+        
         return {
             'renamed': True,
             'old_path': file_path,
@@ -2694,6 +2714,7 @@ def rename_file_with_metadata(file_path: str, song_data: dict) -> dict:
         }
         
     except Exception as e:
+        print(f"❌ Error renaming file {file_path}: {str(e)}")
         return {
             'renamed': False,
             'error': str(e),
@@ -3104,6 +3125,361 @@ def remove_song_from_playlist(playlist_id, music_file_id):
         print(f"❌ Error removing song from playlist: {str(e)}")
         return jsonify({
             "error": f"Failed to remove song from playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/update-tags', methods=['POST'])
+def update_song_tags():
+    """Update ID3 tags for an existing song in the library."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        song_id = request_json.get('song_id')
+        file_path = request_json.get('file_path')
+        
+        if not song_id and not file_path:
+            return jsonify({"error": "Either song_id or file_path must be provided"}), 400
+        
+        # Get song data from database if song_id provided
+        song_data = None
+        if song_id:
+            try:
+                db_files = db_manager.get_all_music_files()
+                for db_file in db_files:
+                    if str(db_file['id']) == str(song_id):
+                        song_data = {
+                            'filename': db_file['filename'],
+                            'file_path': db_file['file_path'],
+                            'key': db_file['key_signature'],
+                            'scale': db_file['scale'],
+                            'key_name': db_file['key_name'],
+                            'camelot_key': db_file['camelot_key'],
+                            'bpm': db_file['bpm'],
+                            'energy_level': db_file['energy_level'],
+                            'duration': db_file['duration'],
+                            'cue_points': json.loads(db_file['cue_points']) if db_file['cue_points'] else []
+                        }
+                        break
+            except Exception as db_error:
+                print(f"⚠️ Failed to get song data from database: {str(db_error)}")
+        
+        # If no song_data from database, try to analyze the file directly
+        if not song_data and file_path:
+            if not os.path.exists(file_path):
+                return jsonify({"error": "File not found"}), 404
+            
+            try:
+                song_data = analyze_music_file(file_path)
+            except Exception as analysis_error:
+                return jsonify({
+                    "error": f"Failed to analyze file: {str(analysis_error)}",
+                    "status": "error"
+                }), 500
+        
+        if not song_data:
+            return jsonify({"error": "Could not retrieve song data"}), 404
+        
+        # Update ID3 tags
+        try:
+            analyzer = MusicAnalyzer()
+            tag_result = analyzer.write_id3_tags(file_path or song_data['file_path'], song_data)
+            
+            if tag_result.get('updated'):
+                # Rename file with new metadata format
+                rename_result = None
+                try:
+                    if song_data.get('camelot_key') and song_data.get('bpm'):
+                        rename_result = rename_file_with_metadata(file_path or song_data['file_path'], song_data)
+                        if rename_result.get('renamed'):
+                            # Update database with new filename and path
+                            new_filename = rename_result['new_filename']
+                            new_path = rename_result['new_path']
+                            try:
+                                if song_id:
+                                    db_manager.update_music_file_path(song_id, new_path)
+                                song_data['filename'] = new_filename
+                                song_data['file_path'] = new_path
+                                print(f"✅ Updated database with new filename: {new_filename}")
+                            except Exception as db_update_error:
+                                print(f"⚠️ Failed to update database: {str(db_update_error)}")
+                except Exception as rename_error:
+                    print(f"Warning: Failed to rename file: {str(rename_error)}")
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': 'ID3 tags updated successfully',
+                    'tag_result': tag_result,
+                    'rename_result': rename_result,
+                    'song_data': song_data
+                })
+            else:
+                return jsonify({
+                    'error': f'Failed to update ID3 tags: {tag_result.get("error", "Unknown error")}',
+                    'status': 'error'
+                }), 500
+                
+        except Exception as tag_error:
+            return jsonify({
+                'error': f'Failed to update ID3 tags: {str(tag_error)}',
+                'status': 'error'
+            }), 500
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to update song tags: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/batch-update-tags', methods=['POST'])
+def batch_update_song_tags():
+    """Update ID3 tags for multiple songs in the library."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        song_ids = request_json.get('song_ids', [])
+        update_all = request_json.get('update_all', False)
+        
+        if not song_ids and not update_all:
+            return jsonify({"error": "Either song_ids array or update_all=true must be provided"}), 400
+        
+        # Get all songs to update
+        songs_to_update = []
+        if update_all:
+            try:
+                db_files = db_manager.get_all_music_files()
+                songs_to_update = db_files
+            except Exception as db_error:
+                return jsonify({
+                    "error": f"Failed to get all songs from database: {str(db_error)}",
+                    "status": "error"
+                }), 500
+        else:
+            try:
+                db_files = db_manager.get_all_music_files()
+                for song_id in song_ids:
+                    for db_file in db_files:
+                        if str(db_file['id']) == str(song_id):
+                            songs_to_update.append(db_file)
+                            break
+            except Exception as db_error:
+                return jsonify({
+                    "error": f"Failed to get songs from database: {str(db_error)}",
+                    "status": "error"
+                }), 500
+        
+        if not songs_to_update:
+            return jsonify({"error": "No songs found to update"}), 404
+        
+        # Process each song
+        results = []
+        analyzer = MusicAnalyzer()
+        
+        for song in songs_to_update:
+            try:
+                song_data = {
+                    'filename': song['filename'],
+                    'file_path': song['file_path'],
+                    'key': song['key_signature'],
+                    'scale': song['scale'],
+                    'key_name': song['key_name'],
+                    'camelot_key': song['camelot_key'],
+                    'bpm': song['bpm'],
+                    'energy_level': song['energy_level'],
+                    'duration': song['duration'],
+                    'cue_points': json.loads(song['cue_points']) if song['cue_points'] else []
+                }
+                
+                # Update ID3 tags
+                tag_result = analyzer.write_id3_tags(song['file_path'], song_data)
+                
+                if tag_result.get('updated'):
+                    # Rename file with new metadata format
+                    rename_result = None
+                    try:
+                        if song_data.get('camelot_key') and song_data.get('bpm'):
+                            rename_result = rename_file_with_metadata(song['file_path'], song_data)
+                            if rename_result.get('renamed'):
+                                # Update database with new filename and path
+                                new_filename = rename_result['new_filename']
+                                new_path = rename_result['new_path']
+                                try:
+                                    db_manager.update_music_file_path(song['id'], new_path)
+                                    song_data['filename'] = new_filename
+                                    song_data['file_path'] = new_path
+                                except Exception as db_update_error:
+                                    print(f"⚠️ Failed to update database for song {song['id']}: {str(db_update_error)}")
+                    except Exception as rename_error:
+                        print(f"Warning: Failed to rename file for song {song['id']}: {str(rename_error)}")
+                    
+                    results.append({
+                        'song_id': song['id'],
+                        'filename': song_data['filename'],
+                        'status': 'success',
+                        'tag_result': tag_result,
+                        'rename_result': rename_result
+                    })
+                else:
+                    results.append({
+                        'song_id': song['id'],
+                        'filename': song['filename'],
+                        'status': 'failed',
+                        'error': tag_result.get('error', 'Unknown error')
+                    })
+                    
+            except Exception as song_error:
+                results.append({
+                    'song_id': song['id'],
+                    'filename': song['filename'],
+                    'status': 'error',
+                    'error': str(song_error)
+                })
+        
+        # Count results
+        successful = len([r for r in results if r['status'] == 'success'])
+        failed = len([r for r in results if r['status'] in ['failed', 'error']])
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Batch update completed: {successful} successful, {failed} failed',
+            'total_processed': len(results),
+            'successful': successful,
+            'failed': failed,
+            'results': results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to batch update song tags: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/force-update-tags', methods=['POST'])
+def force_update_song_tags():
+    """Force update ID3 tags for existing songs using their current analysis data."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        song_id = request_json.get('song_id')
+        file_path = request_json.get('file_path')
+        force_rename = request_json.get('force_rename', True)
+        
+        if not song_id and not file_path:
+            return jsonify({"error": "Either song_id or file_path must be provided"}), 400
+        
+        # Get song data from database if song_id provided
+        song_data = None
+        if song_id:
+            try:
+                db_files = db_manager.get_all_music_files()
+                for db_file in db_files:
+                    if str(db_file['id']) == str(song_id):
+                        song_data = {
+                            'filename': db_file['filename'],
+                            'file_path': db_file['file_path'],
+                            'key': db_file['key_signature'],
+                            'scale': db_file['scale'],
+                            'key_name': db_file['key_name'],
+                            'camelot_key': db_file['camelot_key'],
+                            'bpm': db_file['bpm'],
+                            'energy_level': db_file['energy_level'],
+                            'duration': db_file['duration'],
+                            'cue_points': json.loads(db_file['cue_points']) if db_file['cue_points'] else []
+                        }
+                        break
+            except Exception as db_error:
+                print(f"⚠️ Failed to get song data from database: {str(db_error)}")
+        
+        # If no song_data from database, try to analyze the file directly
+        if not song_data and file_path:
+            if not os.path.exists(file_path):
+                return jsonify({"error": "File not found"}), 404
+            
+            try:
+                song_data = analyze_music_file(file_path)
+            except Exception as analysis_error:
+                return jsonify({
+                    "error": f"Failed to analyze file: {str(analysis_error)}",
+                    "status": "error"
+                }), 500
+        
+        if not song_data:
+            return jsonify({"error": "Could not retrieve song data"}), 404
+        
+        # Check if we have the required data for ID3 updates
+        if not song_data.get('camelot_key') or not song_data.get('bpm'):
+            return jsonify({
+                "error": "Song missing required data (camelot_key or bpm) for ID3 updates",
+                "status": "error",
+                "missing_data": {
+                    "camelot_key": bool(song_data.get('camelot_key')),
+                    "bpm": bool(song_data.get('bpm'))
+                }
+            }), 400
+        
+        # Update ID3 tags
+        try:
+            analyzer = MusicAnalyzer()
+            tag_result = analyzer.write_id3_tags(file_path or song_data['file_path'], song_data)
+            
+            if tag_result.get('updated'):
+                # Rename file with new metadata format if requested
+                rename_result = None
+                if force_rename:
+                    try:
+                        rename_result = rename_file_with_metadata(file_path or song_data['file_path'], song_data)
+                        if rename_result.get('renamed'):
+                            # Update database with new filename and path
+                            new_filename = rename_result['new_filename']
+                            new_path = rename_result['new_path']
+                            try:
+                                if song_id:
+                                    db_manager.update_music_file_path(song_id, new_path)
+                                song_data['filename'] = new_filename
+                                song_data['file_path'] = new_path
+                                print(f"✅ Updated database with new filename: {new_filename}")
+                            except Exception as db_update_error:
+                                print(f"⚠️ Failed to update database: {str(db_update_error)}")
+                    except Exception as rename_error:
+                        print(f"Warning: Failed to rename file: {str(rename_error)}")
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': 'ID3 tags updated successfully',
+                    'tag_result': tag_result,
+                    'rename_result': rename_result,
+                    'song_data': song_data,
+                    'force_rename': force_rename
+                })
+            else:
+                return jsonify({
+                    'error': f'Failed to update ID3 tags: {tag_result.get("error", "Unknown error")}',
+                    'status': 'error'
+                }), 500
+                
+        except Exception as tag_error:
+            return jsonify({
+                'error': f'Failed to update ID3 tags: {str(tag_error)}',
+                'status': 'error'
+            }), 500
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to force update song tags: {str(e)}",
             "status": "error"
         }), 500
 

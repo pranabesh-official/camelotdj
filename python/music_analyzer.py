@@ -539,7 +539,7 @@ class MusicAnalyzer:
         return metadata
 
     def write_id3_tags(self, file_path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Write comprehensive metadata to ID3 tags."""
+        """Write comprehensive metadata to ID3 tags with specific format requirements."""
         try:
             # Initialize or load existing ID3 tags
             try:
@@ -549,40 +549,96 @@ class MusicAnalyzer:
                 tags.save(file_path)
                 tags = EasyID3(file_path)
 
-            # Write basic metadata
-            if analysis.get('key_name'):
-                tags['initialkey'] = [analysis['key_name']]
+            # Get original metadata to preserve
+            original_title = tags.get('title', [''])[0] if tags.get('title') else ''
+            original_artist = tags.get('artist', [''])[0] if tags.get('artist') else ''
+            original_album = tags.get('album', [''])[0] if tags.get('album') else ''
+            original_genre = tags.get('genre', [''])[0] if tags.get('genre') else ''
             
+            # Create new title format: 100BPM_11A_songname
+            new_title = ""
+            if analysis.get('bpm') and analysis.get('camelot_key'):
+                bpm_value = int(round(float(analysis['bpm'])))
+                camelot_key = analysis['camelot_key']
+                
+                # Extract song name from original title or filename
+                song_name = original_title if original_title else os.path.splitext(os.path.basename(file_path))[0]
+                # Clean song name (remove artist prefix if present)
+                if ' - ' in song_name:
+                    song_name = song_name.split(' - ', 1)[1]
+                
+                new_title = f"{bpm_value}BPM_{camelot_key}_{song_name}"
+            else:
+                # Fallback if missing BPM or key
+                new_title = original_title if original_title else os.path.splitext(os.path.basename(file_path))[0]
+            
+            # Update title with new format
+            tags['title'] = [new_title]
+            
+            # Preserve original artist and album
+            if original_artist:
+                tags['artist'] = [original_artist]
+            if original_album:
+                tags['album'] = [original_album]
+            
+            # Preserve original genre
+            if original_genre:
+                tags['genre'] = [original_genre]
+            
+            # Write BPM
             if analysis.get('bpm') is not None:
                 bpm_value = int(round(float(analysis['bpm'])))
                 tags['bpm'] = [str(bpm_value)]
             
-            # Collect comments for writing to ID3
-            comments = []
-            
-            if analysis.get('energy_level') is not None:
+            # Create comment format: 8A - Energy 8
+            comment = ""
+            if analysis.get('camelot_key') and analysis.get('energy_level') is not None:
+                camelot_key = analysis['camelot_key']
                 energy_value = int(float(analysis['energy_level']))
-                comments.append(f"Energy Level: {energy_value}/10")
+                comment = f"{camelot_key} - Energy {energy_value}"
+            elif analysis.get('camelot_key'):
+                comment = f"{analysis['camelot_key']}"
+            elif analysis.get('energy_level') is not None:
+                energy_value = int(float(analysis['energy_level']))
+                comment = f"Energy {energy_value}"
             
-            # Add custom metadata fields
+            # Calculate track number based on harmonic key (Camelot position)
             if analysis.get('camelot_key'):
-                comments.append(f"Camelot: {analysis['camelot_key']}")
+                camelot_key = analysis['camelot_key']
+                try:
+                    # Extract number from camelot key (e.g., "8A" -> 8, "11B" -> 11)
+                    track_num = int(''.join(filter(str.isdigit, camelot_key)))
+                    # Ensure it's within valid range (1-12)
+                    track_num = max(1, min(12, track_num))
+                    tags['tracknumber'] = [str(track_num)]
+                except (ValueError, TypeError):
+                    # Fallback to track 1 if parsing fails
+                    tags['tracknumber'] = ['1']
+            
+            # Add analysis timestamp to grouping
+            from datetime import datetime
+            analysis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            analysis_info = f"Analyzed: {analysis_time}"
+            
+            # Add additional analysis info to grouping
+            grouping_parts = [analysis_info]
+            
+            # Add key information if available
+            if analysis.get('key_name'):
+                grouping_parts.append(f"Key: {analysis['key_name']}")
+            
+            # Add comment (camelot + energy) to grouping
+            if comment:
+                grouping_parts.append(comment)
             
             if analysis.get('duration') is not None:
                 duration_seconds = float(analysis['duration'])
                 duration_minutes = int(duration_seconds // 60)
                 duration_secs = int(duration_seconds % 60)
-                comments.append(f"Duration: {duration_minutes}:{duration_secs:02d}")
+                grouping_parts.append(f"Duration: {duration_minutes}:{duration_secs:02d}")
             
-            # Add analysis timestamp
-            from datetime import datetime
-            analysis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            comments.append(f"Analyzed: {analysis_time}")
-            
-            # Write comments if any - use a valid EasyID3 key
-            if comments:
-                # Use 'grouping' field to store analysis comments
-                tags['grouping'] = [' | '.join(comments)]
+            # Write grouping with analysis info
+            tags['grouping'] = [' | '.join(grouping_parts)]
             
             # Clean up common junk tags
             for junk in ['encodedby', 'lyricist', 'composer']:
@@ -605,14 +661,24 @@ class MusicAnalyzer:
                 id3.save(file_path)
             
             print(f"✅ Successfully updated ID3 tags for: {os.path.basename(file_path)}")
+            print(f"📝 New title: {new_title}")
+            print(f"💬 Comment: {comment}")
+            print(f"🎵 Track number: {tags.get('tracknumber', ['N/A'])[0]}")
+            
             return { 
                 'updated': True, 
                 'cue_points': cue_points,
                 'metadata_written': {
+                    'title': new_title,
+                    'artist': original_artist,
+                    'album': original_album,
+                    'genre': original_genre,
                     'key': analysis.get('key_name'),
                     'bpm': analysis.get('bpm'),
                     'energy': analysis.get('energy_level'),
                     'camelot': analysis.get('camelot_key'),
+                    'comment': comment,
+                    'track_number': tags.get('tracknumber', ['N/A'])[0],
                     'duration': analysis.get('duration')
                 }
             }

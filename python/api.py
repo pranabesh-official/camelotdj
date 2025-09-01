@@ -218,13 +218,17 @@ def upload_and_analyze():
         if not file.filename or file.filename == '':
             return jsonify({"error": "No file selected"}), 400
         
+        print(f"📁 Received file: {file.filename} (size: {file.content_length} bytes)")
+        
         # Save uploaded file permanently for audio serving
         upload_dir = os.path.join(tempfile.gettempdir(), 'mixed_in_key_uploads')
         if not os.path.exists(upload_dir):
             os.makedirs(upload_dir)
         
         permanent_path = os.path.join(upload_dir, file.filename)
+        print(f"💾 Saving file to: {permanent_path}")
         file.save(permanent_path)
+        print(f"✅ File saved successfully")
         
         # Store file path for audio serving
         uploaded_files[file.filename] = permanent_path
@@ -325,7 +329,10 @@ def upload_and_analyze():
             
         except Exception as e:
             # Keep file for potential retry but log the error
-            print(f"Analysis failed for {file.filename}: {str(e)}")
+            import traceback
+            print(f"❌ Analysis failed for {file.filename}: {str(e)}")
+            print(f"📋 Full error traceback:")
+            traceback.print_exc()
             return jsonify({
                 "error": f"Analysis failed: {str(e)}",
                 "status": "error",
@@ -334,6 +341,10 @@ def upload_and_analyze():
             }), 500
             
     except Exception as e:
+        import traceback
+        print(f"❌ Upload and analysis failed: {str(e)}")
+        print(f"📋 Full error traceback:")
+        traceback.print_exc()
         return jsonify({
             "error": f"Upload and analysis failed: {str(e)}",
             "status": "error"
@@ -2860,6 +2871,239 @@ def get_song_by_track_id(track_id):
         print(f"❌ Error getting song by track ID: {str(e)}")
         return jsonify({
             "error": f"Failed to get song: {str(e)}",
+            "status": "error"
+        }), 500
+
+# Playlist Management Endpoints
+
+@app.route('/playlists', methods=['GET'])
+def get_playlists():
+    """Get all playlists."""
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        playlists = db_manager.get_all_playlists()
+        
+        # Get songs for each playlist
+        for playlist in playlists:
+            playlist['songs'] = db_manager.get_playlist_songs(playlist['id'])
+        
+        return jsonify({
+            'status': 'success',
+            'playlists': playlists
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting playlists: {str(e)}")
+        return jsonify({
+            "error": f"Failed to get playlists: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists', methods=['POST'])
+def create_playlist():
+    """Create a new playlist."""
+    signing_key = request.headers.get('X-Signing-Key')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        description = data.get('description')
+        color = data.get('color')
+        is_query_based = data.get('is_query_based', False)
+        query_criteria = data.get('query_criteria')
+        songs = data.get('songs', [])
+        
+        if not name:
+            return jsonify({"error": "Playlist name is required"}), 400
+        
+        # Create playlist
+        playlist_id = db_manager.create_playlist(
+            name=name,
+            description=description,
+            color=color,
+            is_query_based=is_query_based,
+            query_criteria=query_criteria
+        )
+        
+        if not playlist_id:
+            return jsonify({"error": "Failed to create playlist"}), 500
+        
+        # Add songs to playlist if provided
+        for song in songs:
+            if isinstance(song, dict) and 'id' in song:
+                # Song object with id
+                db_manager.add_song_to_playlist(playlist_id, int(song['id']))
+            elif isinstance(song, (int, str)):
+                # Just song ID
+                db_manager.add_song_to_playlist(playlist_id, int(song))
+        
+        # Get the created playlist with songs
+        playlist = db_manager.get_playlist(playlist_id)
+        if playlist:
+            playlist['songs'] = db_manager.get_playlist_songs(playlist_id)
+        
+        return jsonify({
+            'status': 'success',
+            'playlist': playlist,
+            'playlist_id': playlist_id
+        })
+        
+    except Exception as e:
+        print(f"❌ Error creating playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to create playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists/<int:playlist_id>', methods=['GET'])
+def get_playlist(playlist_id):
+    """Get a specific playlist."""
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        playlist = db_manager.get_playlist(playlist_id)
+        if not playlist:
+            return jsonify({"error": "Playlist not found"}), 404
+        
+        playlist['songs'] = db_manager.get_playlist_songs(playlist_id)
+        
+        return jsonify({
+            'status': 'success',
+            'playlist': playlist
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to get playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists/<int:playlist_id>', methods=['PUT'])
+def update_playlist(playlist_id):
+    """Update a playlist."""
+    signing_key = request.headers.get('X-Signing-Key')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request.get_json()
+        
+        success = db_manager.update_playlist(
+            playlist_id=playlist_id,
+            name=data.get('name'),
+            description=data.get('description'),
+            color=data.get('color'),
+            is_query_based=data.get('is_query_based'),
+            query_criteria=data.get('query_criteria')
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to update playlist"}), 500
+        
+        # Get updated playlist
+        playlist = db_manager.get_playlist(playlist_id)
+        if playlist:
+            playlist['songs'] = db_manager.get_playlist_songs(playlist_id)
+        
+        return jsonify({
+            'status': 'success',
+            'playlist': playlist
+        })
+        
+    except Exception as e:
+        print(f"❌ Error updating playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to update playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists/<int:playlist_id>', methods=['DELETE'])
+def delete_playlist(playlist_id):
+    """Delete a playlist."""
+    signing_key = request.headers.get('X-Signing-Key')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        success = db_manager.delete_playlist(playlist_id)
+        
+        if not success:
+            return jsonify({"error": "Failed to delete playlist"}), 500
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Playlist deleted successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error deleting playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to delete playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists/<int:playlist_id>/songs', methods=['POST'])
+def add_song_to_playlist(playlist_id):
+    """Add a song to a playlist."""
+    signing_key = request.headers.get('X-Signing-Key')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request.get_json()
+        music_file_id = data.get('music_file_id')
+        position = data.get('position')
+        
+        if not music_file_id:
+            return jsonify({"error": "music_file_id is required"}), 400
+        
+        success = db_manager.add_song_to_playlist(playlist_id, int(music_file_id), position)
+        
+        if not success:
+            return jsonify({"error": "Failed to add song to playlist"}), 500
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Song added to playlist successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error adding song to playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to add song to playlist: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/playlists/<int:playlist_id>/songs/<int:music_file_id>', methods=['DELETE'])
+def remove_song_from_playlist(playlist_id, music_file_id):
+    """Remove a song from a playlist."""
+    signing_key = request.headers.get('X-Signing-Key')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        success = db_manager.remove_song_from_playlist(playlist_id, music_file_id)
+        
+        if not success:
+            return jsonify({"error": "Failed to remove song from playlist"}), 500
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Song removed from playlist successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error removing song from playlist: {str(e)}")
+        return jsonify({
+            "error": f"Failed to remove song from playlist: {str(e)}",
             "status": "error"
         }), 500
 

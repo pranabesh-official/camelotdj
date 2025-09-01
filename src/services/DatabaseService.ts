@@ -316,6 +316,152 @@ export class DatabaseService {
             throw error;
         }
     }
+
+    // Playlist Management Methods
+
+    /**
+     * Get all playlists from the database
+     */
+    async getPlaylists(): Promise<any[]> {
+        try {
+            const result = await this.makeRequest('/playlists');
+            
+            if (result.status === 'success') {
+                return result.playlists || [];
+            } else {
+                throw new Error(result.error || 'Failed to get playlists');
+            }
+        } catch (error) {
+            console.error('Error getting playlists:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Create a new playlist
+     */
+    async createPlaylist(playlistData: {
+        name: string;
+        description?: string;
+        color?: string;
+        is_query_based?: boolean;
+        query_criteria?: any;
+        songs?: any[];
+    }): Promise<any> {
+        try {
+            const result = await this.makeRequest('/playlists', {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...playlistData,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status === 'success') {
+                return result.playlist;
+            } else {
+                throw new Error(result.error || 'Failed to create playlist');
+            }
+        } catch (error) {
+            console.error('Error creating playlist:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update a playlist
+     */
+    async updatePlaylist(playlistId: string, updates: {
+        name?: string;
+        description?: string;
+        color?: string;
+        is_query_based?: boolean;
+        query_criteria?: any;
+    }): Promise<any> {
+        try {
+            const result = await this.makeRequest(`/playlists/${playlistId}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    ...updates,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status === 'success') {
+                return result.playlist;
+            } else {
+                throw new Error(result.error || 'Failed to update playlist');
+            }
+        } catch (error) {
+            console.error('Error updating playlist:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete a playlist
+     */
+    async deletePlaylist(playlistId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/playlists/${playlistId}`, {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to delete playlist');
+            }
+        } catch (error) {
+            console.error('Error deleting playlist:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Add a song to a playlist
+     */
+    async addSongToPlaylist(playlistId: string, musicFileId: string, position?: number): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/playlists/${playlistId}/songs`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    music_file_id: musicFileId,
+                    position: position,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to add song to playlist');
+            }
+        } catch (error) {
+            console.error('Error adding song to playlist:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Remove a song from a playlist
+     */
+    async removeSongFromPlaylist(playlistId: string, musicFileId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/playlists/${playlistId}/songs/${musicFileId}`, {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to remove song from playlist');
+            }
+        } catch (error) {
+            console.error('Error removing song from playlist:', error);
+            throw error;
+        }
+    }
 }
 
 export default DatabaseService;

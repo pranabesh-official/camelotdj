@@ -2,13 +2,14 @@ import './App.css';
 import FileUpload from './components/FileUpload';
 import CamelotWheel from './components/CamelotWheel';
 import AnalysisResults from './components/AnalysisResults';
+import AnalysisQueue, { QueuedFile } from './components/AnalysisQueue';
 import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
 import YouTubeMusic from './components/YouTubeMusic';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AuthGate from './components/AuthGate';
 import { useAuth } from './services/AuthContext';
 import { upsertUserTrack, upsertManyUserTracks, saveToAnalysisSongs } from './services/TrackSyncService';
@@ -80,6 +81,12 @@ const App: React.FC = () => {
     const [isDownloadPathSet, setIsDownloadPathSet] = useState(false);
     const [isLoadingSettings, setIsLoadingSettings] = useState(false);
     const [showSaveSuccess, setShowSaveSuccess] = useState(false);
+    
+    // Analysis Queue State
+    const [analysisQueue, setAnalysisQueue] = useState<QueuedFile[]>([]);
+    const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+    const [isQueuePaused, setIsQueuePaused] = useState(false);
+    const queueProcessingRef = useRef<boolean>(false);
 
     // Check if running in Electron and get API details
     useEffect(() => {
@@ -333,6 +340,41 @@ const App: React.FC = () => {
 
     const handleFileUpload = useCallback(async (file: File) => {
         console.log('Starting file upload:', file.name, 'to port:', apiPort);
+        
+        // Check for duplicates before starting analysis
+        const fileName = file.name.toLowerCase().trim();
+        const fileSize = file.size;
+        
+        // Debug: Log single file upload check
+        console.log('Single file upload check:', { fileName, fileSize });
+        
+        // Check if file is already in the queue
+        const isInQueue = analysisQueue.some(queueItem => {
+            const queueFileName = queueItem.file.name.toLowerCase().trim();
+            return queueFileName === fileName && queueItem.file.size === fileSize;
+        });
+        
+        // Check if file is already analyzed (in songs list)
+        const isAlreadyAnalyzed = songs.some(song => {
+            const songFileName = song.filename?.toLowerCase().trim();
+            return songFileName === fileName && song.file_size === fileSize;
+        });
+        
+        // Debug: Log single file check result
+        if (isInQueue || isAlreadyAnalyzed) {
+            console.log(`Single file check: isInQueue=${isInQueue}, isAlreadyAnalyzed=${isAlreadyAnalyzed}`);
+        }
+        
+        if (isInQueue) {
+            alert(`File "${file.name}" is already in the analysis queue.`);
+            return;
+        }
+        
+        if (isAlreadyAnalyzed) {
+            alert(`File "${file.name}" has already been analyzed.`);
+            return;
+        }
+        
         setIsAnalyzing(true);
         
         let retryCount = 0;
@@ -382,7 +424,7 @@ const App: React.FC = () => {
                 const result = await response.json();
                 console.log('Analysis result:', result);
                 
-                if (result.status === 'success') {
+                if (result.status === 'success' || result.status === 'existing_metadata') {
                     // Calculate estimated bitrate from file size and duration
                     let estimatedBitrate = result.bitrate;
                     if (!estimatedBitrate && result.file_size && result.duration) {
@@ -412,7 +454,20 @@ const App: React.FC = () => {
                         id3: sanitizeId3(result.id3 || result.metadata || result.tags)
                     };
                     
-                    setSongs(prevSongs => [...prevSongs, newSong]);
+                    setSongs(prevSongs => {
+                        // Check if song already exists
+                        const exists = prevSongs.some(song => 
+                            song.filename === newSong.filename && song.file_size === newSong.file_size
+                        );
+                        
+                        if (exists) {
+                            console.log(`Song ${newSong.filename} already exists in library, skipping add`);
+                            return prevSongs;
+                        }
+                        
+                        console.log(`Adding song to library: ${newSong.filename}`);
+                        return [...prevSongs, newSong];
+                    });
                     setSelectedSong(newSong);
                     setCurrentView('library');
                     console.log('Song added successfully:', newSong.filename);
@@ -442,7 +497,7 @@ const App: React.FC = () => {
                     }
                     break; // Success, exit retry loop
                 } else {
-                    const errorMsg = `Analysis failed: ${result.error || 'Unknown error'}`;
+                    const errorMsg = `Analysis failed: ${result.error || result.error_message || 'Unknown error'}`;
                     console.error(errorMsg);
                     alert(errorMsg);
                     break; // Analysis error, don't retry
@@ -481,123 +536,332 @@ const App: React.FC = () => {
         }
         
         setIsAnalyzing(false);
-    }, [apiSigningKey, apiPort, testBackendConnection]);
+    }, [apiSigningKey, apiPort, testBackendConnection, analysisQueue, songs]);
+
+    // Analysis Queue Functions
+    const addFilesToQueue = useCallback((files: File[]) => {
+        // Debug: Log queue state
+        console.log('Adding files to queue:', files.map(f => ({ name: f.name, size: f.size })));
+        
+        // Filter out duplicates
+        const filteredFiles = files.filter(file => {
+            const fileName = file.name.toLowerCase().trim();
+            const fileSize = file.size;
+            
+            // Check if file is already in the queue (any status)
+            const isInQueue = analysisQueue.some(queueItem => {
+                const queueFileName = queueItem.file.name.toLowerCase().trim();
+                return queueFileName === fileName && queueItem.file.size === fileSize;
+            });
+            
+            // Check if file is already analyzed (in songs list)
+            const isAlreadyAnalyzed = songs.some(song => {
+                const songFileName = song.filename?.toLowerCase().trim();
+                return songFileName === fileName && song.file_size === fileSize;
+            });
+            
+            // Debug: Log duplicate check result
+            if (isInQueue || isAlreadyAnalyzed) {
+                console.log(`File ${fileName}: isInQueue=${isInQueue}, isAlreadyAnalyzed=${isAlreadyAnalyzed}`);
+            }
+            
+            return !isInQueue && !isAlreadyAnalyzed;
+        });
+        
+        if (filteredFiles.length === 0) {
+            // All files are duplicates
+            const duplicateCount = files.length;
+            alert(`All ${duplicateCount} file(s) are already in the queue or have been analyzed.`);
+            return;
+        }
+        
+        if (filteredFiles.length < files.length) {
+            // Some files are duplicates
+            const duplicateCount = files.length - filteredFiles.length;
+            const addedCount = filteredFiles.length;
+            alert(`${addedCount} file(s) added to queue. ${duplicateCount} file(s) skipped (already in queue or analyzed).`);
+        }
+        
+        const newQueueItems: QueuedFile[] = filteredFiles.map(file => ({
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            file,
+            status: 'pending'
+        }));
+        
+        setAnalysisQueue(prev => [...prev, ...newQueueItems]);
+        
+        // Start processing if not already running
+        if (!queueProcessingRef.current) {
+            processQueue();
+        }
+    }, [analysisQueue, songs]);
 
     const handleFolderUpload = useCallback(async (files: FileList) => {
+        console.log('Folder upload - Total files:', files.length);
+        
         const musicFiles = Array.from(files).filter(file => 
             file.type.startsWith('audio/') || 
             /\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(file.name)
         );
+
+        console.log('Folder upload - Music files found:', musicFiles.length);
+        console.log('Music files:', musicFiles.map(f => ({ name: f.name, type: f.type, size: f.size })));
 
         if (musicFiles.length === 0) {
             alert('No valid audio files found in the selected folder.');
             return;
         }
 
-        setIsAnalyzing(true);
-        let successCount = 0;
-        let errorCount = 0;
-
-        const syncedTracks: Song[] = [];
-        for (let i = 0; i < musicFiles.length; i++) {
-            const file = musicFiles[i];
-            
+        // Process each file individually like single track upload
+        for (const file of musicFiles) {
             try {
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('signingkey', apiSigningKey);
+                console.log('Processing folder file:', file.name);
+                await handleFileUpload(file);
+                // Add a small delay between files to prevent overwhelming the backend
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (error) {
+                console.error('Error processing folder file:', file.name, error);
+                // Continue with next file even if one fails
+            }
+        }
+    }, [handleFileUpload]);
 
-                const response = await fetch(`http://127.0.0.1:${apiPort}/upload-analyze`, {
-                    method: 'POST',
-                    body: formData,
+    const processQueue = useCallback(async () => {
+        if (queueProcessingRef.current || isQueuePaused) {
+            return;
+        }
+
+        queueProcessingRef.current = true;
+        setIsProcessingQueue(true);
+
+        const processNextItem = async () => {
+            // Get current queue state
+            setAnalysisQueue(currentQueue => {
+                const pendingItems = currentQueue.filter(item => item.status === 'pending');
+                console.log('Queue processing - Total items:', currentQueue.length, 'Pending items:', pendingItems.length);
+                
+                if (pendingItems.length === 0) {
+                    console.log('No pending items, stopping queue processing');
+                    queueProcessingRef.current = false;
+                    setIsProcessingQueue(false);
+                    return currentQueue;
+                }
+
+                const currentItem = pendingItems[0];
+                
+                // Double-check: Make sure this file isn't already analyzed
+                const fileName = currentItem.file.name.toLowerCase().trim();
+                const fileSize = currentItem.file.size;
+                const isAlreadyAnalyzed = songs.some(song => {
+                    const songFileName = song.filename?.toLowerCase().trim();
+                    return songFileName === fileName && song.file_size === fileSize;
+                });
+                
+                if (isAlreadyAnalyzed) {
+                    console.log(`Skipping ${fileName} - already analyzed`);
+                    // Remove from queue and process next
+                    setTimeout(processNextItem, 100);
+                    return currentQueue.filter(item => item.id !== currentItem.id);
+                }
+                
+                console.log(`Processing queue item: ${fileName}`);
+                
+                // Update status to analyzing
+                const updatedQueue = currentQueue.map(item => 
+                    item.id === currentItem.id 
+                        ? { ...item, status: 'analyzing' as const, startTime: new Date() }
+                        : item
+                );
+                
+                // Process the item asynchronously
+                processQueueItem(currentItem).then(() => {
+                    // Process next item after a delay
+                    setTimeout(processNextItem, 500);
+                }).catch(() => {
+                    // Process next item even if this one failed
+                    setTimeout(processNextItem, 500);
+                });
+                
+                return updatedQueue;
+            });
+        };
+
+        // Start processing
+        processNextItem();
+    }, [isQueuePaused, apiSigningKey, apiPort, testBackendConnection, user, sanitizeId3, songs]);
+
+    const processQueueItem = useCallback(async (currentItem: QueuedFile) => {
+        try {
+            // Test backend connection first
+            const isConnected = await testBackendConnection();
+            if (!isConnected) {
+                throw new Error('Backend server is not responding');
+            }
+
+            const formData = new FormData();
+            formData.append('file', currentItem.file);
+            formData.append('signingkey', apiSigningKey);
+
+            const uploadUrl = `http://127.0.0.1:${apiPort}/upload-analyze`;
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+            const response = await fetch(uploadUrl, {
+                method: 'POST',
+                body: formData,
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            console.log('Queue item analysis result:', result);
+
+            if (result.status === 'success' || result.status === 'existing_metadata') {
+                // Calculate estimated bitrate
+                let estimatedBitrate = result.bitrate;
+                if (!estimatedBitrate && result.file_size && result.duration) {
+                    estimatedBitrate = Math.round((result.file_size * 8) / (result.duration * 1000));
+                }
+                if (!estimatedBitrate) {
+                    estimatedBitrate = 320;
+                }
+
+                const newSong: Song = {
+                    id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                    filename: result.filename,
+                    file_path: result.file_path,
+                    key: result.key,
+                    scale: result.scale,
+                    key_name: result.key_name,
+                    camelot_key: result.camelot_key,
+                    bpm: result.bpm,
+                    energy_level: result.energy_level,
+                    duration: result.duration,
+                    file_size: result.file_size,
+                    bitrate: estimatedBitrate,
+                    status: 'analyzed',
+                    analysis_date: new Date().toISOString(),
+                    cue_points: result.cue_points || [],
+                    track_id: result.track_id,
+                    id3: sanitizeId3(result.id3 || result.metadata || result.tags)
+                };
+
+                // Add to songs list (with duplicate check)
+                setSongs(prevSongs => {
+                    // Check if song already exists
+                    const exists = prevSongs.some(song => 
+                        song.filename === newSong.filename && song.file_size === newSong.file_size
+                    );
+                    
+                    if (exists) {
+                        console.log(`Song ${newSong.filename} already exists in library, skipping add`);
+                        return prevSongs;
+                    }
+                    
+                    console.log(`Adding song to library: ${newSong.filename}`);
+                    return [...prevSongs, newSong];
                 });
 
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    // Calculate estimated bitrate from file size and duration
-                    let estimatedBitrate = result.bitrate;
-                    if (!estimatedBitrate && result.file_size && result.duration) {
-                        estimatedBitrate = Math.round((result.file_size * 8) / (result.duration * 1000));
-                    }
-                    if (!estimatedBitrate) {
-                        estimatedBitrate = 320; // Default to high quality
-                    }
-                    
-                    const newSong: Song = {
-                        id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9) + i,
-                        filename: result.filename,
-                        file_path: result.file_path,
-                        key: result.key,
-                        scale: result.scale,
-                        key_name: result.key_name,
-                        camelot_key: result.camelot_key,
-                        bpm: result.bpm,
-                        energy_level: result.energy_level,
-                        duration: result.duration,
-                        file_size: result.file_size,
-                        bitrate: estimatedBitrate,
-                        status: 'analyzed',
-                        analysis_date: new Date().toISOString(),
-                        track_id: result.track_id, // Ensure track_id is included
-                        id3: sanitizeId3(result.id3 || result.metadata || result.tags)
-                    };
-                    
-                    setSongs(prevSongs => [...prevSongs, newSong]);
-                    successCount++;
+                // Update queue item as completed
+                setAnalysisQueue(prev => prev.map(item => 
+                    item.id === currentItem.id 
+                        ? { 
+                            ...item, 
+                            status: 'completed' as const, 
+                            result: newSong,
+                            endTime: new Date()
+                        }
+                        : item
+                ));
 
-                    // accumulate for batched sync
-                    syncedTracks.push(newSong);
-                } else {
-                    console.error(`Analysis failed for ${file.name}:`, result.error);
-                    errorCount++;
-                }
-            } catch (error) {
-                console.error(`Upload/analysis error for ${file.name}:`, error);
-                errorCount++;
-            }
-        }
-
-        setIsAnalyzing(false);
-        setCurrentView('library');
-        
-        // Firestore batch sync for folder uploads (offline-first)
-        try {
-            if (user?.uid && syncedTracks.length > 0) {
-                console.log('Batch syncing to Firestore:', { uid: user.uid, trackCount: syncedTracks.length });
-                // Ensure id3 tags are sanitized for each track
-                const sanitizedTracks = syncedTracks.map(track => ({
-                    ...track,
-                    id3: sanitizeId3(track.id3 || {})
-                }));
-                
-                // Save to user's tracks collection in batch
-                await upsertManyUserTracks(user.uid, sanitizedTracks as any);
-                
-                // Also save each track to global analysis_songs collection
-                for (const track of sanitizedTracks) {
-                    try {
-                        await saveToAnalysisSongs(user.uid, track as any);
-                    } catch (analysisSyncErr) {
-                        console.error('Failed to sync track to analysis_songs:', analysisSyncErr);
-                        // Continue with other tracks
+                // Firestore sync
+                try {
+                    if (user?.uid) {
+                        await upsertUserTrack(user.uid, {
+                            ...newSong,
+                            id3: sanitizeId3(newSong.id3 || {})
+                        } as any);
+                        
+                        await saveToAnalysisSongs(user.uid, {
+                            ...newSong,
+                            id3: sanitizeId3(newSong.id3 || {})
+                        } as any);
                     }
+                } catch (syncErr) {
+                    console.error('Firestore track sync failed:', syncErr);
                 }
-                
-                console.log('Firestore batch sync successful');
+
             } else {
-                console.warn('User not authenticated or no tracks to sync, skipping Firestore batch sync');
+                const errorMessage = result.error || result.error_message || 'Analysis failed';
+                console.error('Analysis failed for queue item:', {
+                    filename: currentItem.file.name,
+                    error: errorMessage,
+                    result: result
+                });
+                throw new Error(errorMessage);
             }
-        } catch (syncErr) {
-            console.error('Firestore batch track sync failed (folder) - will retry when online:', syncErr);
-        }
 
-        if (successCount > 0) {
-            alert(`Successfully processed ${successCount} files. ${errorCount > 0 ? `${errorCount} files failed.` : ''}`);
-        } else {
-            alert('No files were successfully processed.');
+        } catch (error) {
+            console.error('Queue item processing error:', error);
+            
+            // Update queue item as error
+            setAnalysisQueue(prev => prev.map(item => 
+                item.id === currentItem.id 
+                    ? { 
+                        ...item, 
+                        status: 'error' as const, 
+                        error: error instanceof Error ? error.message : String(error),
+                        endTime: new Date()
+                    }
+                    : item
+            ));
+            
+            // Continue processing the next item after a short delay
+            setTimeout(() => {
+                if (!queueProcessingRef.current) {
+                    processQueue();
+                }
+            }, 1000);
         }
-    }, [apiSigningKey, apiPort]);
+    }, [apiSigningKey, apiPort, testBackendConnection, user, sanitizeId3]);
+
+    const handleQueueCancel = useCallback((fileId: string) => {
+        setAnalysisQueue(prev => prev.filter(item => item.id !== fileId));
+    }, []);
+
+    const handleQueueClearCompleted = useCallback(() => {
+        setAnalysisQueue(prev => prev.filter(item => item.status !== 'completed'));
+    }, []);
+
+    const handleQueueClearAll = useCallback(() => {
+        setAnalysisQueue([]);
+        queueProcessingRef.current = false;
+        setIsProcessingQueue(false);
+    }, []);
+
+    const handleQueuePause = useCallback(() => {
+        setIsQueuePaused(true);
+    }, []);
+
+    const handleQueueResume = useCallback(() => {
+        setIsQueuePaused(false);
+        if (!queueProcessingRef.current) {
+            processQueue();
+        }
+    }, [processQueue]);
+
+    // Process queue when paused state changes
+    useEffect(() => {
+        if (!isQueuePaused && !queueProcessingRef.current && analysisQueue.some(item => item.status === 'pending')) {
+            processQueue();
+        }
+    }, [isQueuePaused, analysisQueue, processQueue]);
 
     const handleSongSelect = useCallback((song: Song) => {
         setSelectedSong(song);
@@ -666,54 +930,220 @@ const App: React.FC = () => {
         });
     }, [songs]);
 
-    // Playlist management functions
-    const handlePlaylistCreate = useCallback((playlist: { name: string; songs: Song[]; description?: string; color?: string }) => {
-        const newPlaylist: Playlist = {
-            ...playlist,
-            id: Date.now().toString(),
-            createdAt: new Date()
-        };
-        setPlaylists(prev => [...prev, newPlaylist]);
-    }, []);
-
-    const handlePlaylistUpdate = useCallback((playlistId: string, updates: { name?: string; songs?: Song[]; description?: string; color?: string }) => {
-        setPlaylists(prev => prev.map(playlist => 
-            playlist.id === playlistId ? { ...playlist, ...updates } : playlist
-        ));
-    }, []);
-
-    const handlePlaylistDelete = useCallback((playlistId: string) => {
-        setPlaylists(prev => prev.filter(playlist => playlist.id !== playlistId));
-        if (selectedPlaylist && selectedPlaylist.id === playlistId) {
-            setSelectedPlaylist(null);
+    // Load playlists from database
+    const loadPlaylistsFromDatabase = useCallback(async () => {
+        if (!databaseService) return;
+        
+        try {
+            console.log('🔄 Loading playlists from database...');
+            const dbPlaylists = await databaseService.getPlaylists();
+            
+            // Transform database playlists to match our interface
+            const transformedPlaylists: Playlist[] = dbPlaylists.map((dbPlaylist: any) => ({
+                id: dbPlaylist.id.toString(),
+                name: dbPlaylist.name,
+                description: dbPlaylist.description,
+                color: dbPlaylist.color,
+                isQueryBased: dbPlaylist.is_query_based || false,
+                queryCriteria: dbPlaylist.query_criteria,
+                createdAt: new Date(dbPlaylist.created_at),
+                songs: dbPlaylist.songs ? dbPlaylist.songs.map((song: any) => ({
+                    id: song.id.toString(),
+                    filename: song.filename,
+                    file_path: song.file_path,
+                    key: song.key_signature,
+                    scale: song.scale,
+                    key_name: song.key_name,
+                    camelot_key: song.camelot_key,
+                    bpm: song.bpm,
+                    energy_level: song.energy_level,
+                    duration: song.duration,
+                    file_size: song.file_size,
+                    bitrate: song.bitrate || 320,
+                    status: song.status || 'found',
+                    analysis_date: song.analysis_date,
+                    cue_points: song.cue_points || [],
+                    track_id: song.track_id
+                })) : []
+            }));
+            
+            setPlaylists(transformedPlaylists);
+            console.log(`✅ Loaded ${transformedPlaylists.length} playlists from database`);
+        } catch (error) {
+            console.error('❌ Failed to load playlists from database:', error);
         }
-    }, [selectedPlaylist]);
+    }, [databaseService]);
 
-    const handleAddToPlaylist = useCallback((playlistId: string, songsToAdd: Song[]) => {
-        setPlaylists(prev => prev.map(playlist => {
-            if (playlist.id === playlistId) {
-                const existingSongIds = playlist.songs.map(s => s.id);
-                const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
-                return {
-                    ...playlist,
-                    songs: [...playlist.songs, ...newSongs]
-                };
-            }
-            return playlist;
-        }));
-    }, []);
+    // Load playlists when database service is available
+    useEffect(() => {
+        if (databaseService && isLibraryLoaded) {
+            loadPlaylistsFromDatabase();
+        }
+    }, [databaseService, isLibraryLoaded, loadPlaylistsFromDatabase]);
 
-    const handleRemoveFromPlaylist = useCallback((playlistId: string, songIds: string[]) => {
-        setPlaylists(prev => prev.map(playlist => {
-            if (playlist.id === playlistId) {
-                return {
-                    ...playlist,
-                    songs: playlist.songs.filter(song => !songIds.includes(song.id))
+    // Playlist management functions
+    const handlePlaylistCreate = useCallback(async (playlist: { 
+        name: string; 
+        songs: Song[]; 
+        description?: string; 
+        color?: string;
+        isQueryBased?: boolean;
+        queryCriteria?: any;
+    }) => {
+        try {
+            if (databaseService) {
+                // Create playlist in database
+                const dbPlaylist = await databaseService.createPlaylist({
+                    name: playlist.name,
+                    description: playlist.description,
+                    color: playlist.color,
+                    is_query_based: playlist.isQueryBased || false,
+                    query_criteria: playlist.queryCriteria,
+                    songs: playlist.songs.map(song => ({ id: parseInt(song.id) }))
+                });
+                
+                // Transform to our interface
+                const newPlaylist: Playlist = {
+                    id: dbPlaylist.id.toString(),
+                    name: dbPlaylist.name,
+                    description: dbPlaylist.description,
+                    color: dbPlaylist.color,
+                    isQueryBased: dbPlaylist.is_query_based || false,
+                    queryCriteria: dbPlaylist.query_criteria,
+                    createdAt: new Date(dbPlaylist.created_at),
+                    songs: playlist.songs
                 };
+                
+                setPlaylists(prev => [...prev, newPlaylist]);
+                console.log('✅ Playlist created in database:', newPlaylist.name);
+            } else {
+                // Fallback to local state only
+                const newPlaylist: Playlist = {
+                    ...playlist,
+                    id: Date.now().toString(),
+                    createdAt: new Date()
+                };
+                setPlaylists(prev => [...prev, newPlaylist]);
             }
-            return playlist;
-        }));
-    }, []);
+        } catch (error) {
+            console.error('❌ Failed to create playlist:', error);
+            // Fallback to local state
+            const newPlaylist: Playlist = {
+                ...playlist,
+                id: Date.now().toString(),
+                createdAt: new Date()
+            };
+            setPlaylists(prev => [...prev, newPlaylist]);
+        }
+    }, [databaseService]);
+
+    const handlePlaylistUpdate = useCallback(async (playlistId: string, updates: { name?: string; songs?: Song[]; description?: string; color?: string }) => {
+        try {
+            if (databaseService) {
+                await databaseService.updatePlaylist(playlistId, updates);
+            }
+            
+            setPlaylists(prev => prev.map(playlist => 
+                playlist.id === playlistId ? { ...playlist, ...updates } : playlist
+            ));
+        } catch (error) {
+            console.error('❌ Failed to update playlist:', error);
+            // Still update local state
+            setPlaylists(prev => prev.map(playlist => 
+                playlist.id === playlistId ? { ...playlist, ...updates } : playlist
+            ));
+        }
+    }, [databaseService]);
+
+    const handlePlaylistDelete = useCallback(async (playlistId: string) => {
+        try {
+            if (databaseService) {
+                await databaseService.deletePlaylist(playlistId);
+            }
+            
+            setPlaylists(prev => prev.filter(playlist => playlist.id !== playlistId));
+            if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+                setSelectedPlaylist(null);
+            }
+        } catch (error) {
+            console.error('❌ Failed to delete playlist:', error);
+            // Still update local state
+            setPlaylists(prev => prev.filter(playlist => playlist.id !== playlistId));
+            if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+                setSelectedPlaylist(null);
+            }
+        }
+    }, [selectedPlaylist, databaseService]);
+
+    const handleAddToPlaylist = useCallback(async (playlistId: string, songsToAdd: Song[]) => {
+        try {
+            if (databaseService) {
+                // Add songs to database
+                for (const song of songsToAdd) {
+                    await databaseService.addSongToPlaylist(playlistId, song.id);
+                }
+            }
+            
+            setPlaylists(prev => prev.map(playlist => {
+                if (playlist.id === playlistId) {
+                    const existingSongIds = playlist.songs.map(s => s.id);
+                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
+                    return {
+                        ...playlist,
+                        songs: [...playlist.songs, ...newSongs]
+                    };
+                }
+                return playlist;
+            }));
+        } catch (error) {
+            console.error('❌ Failed to add songs to playlist:', error);
+            // Still update local state
+            setPlaylists(prev => prev.map(playlist => {
+                if (playlist.id === playlistId) {
+                    const existingSongIds = playlist.songs.map(s => s.id);
+                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
+                    return {
+                        ...playlist,
+                        songs: [...playlist.songs, ...newSongs]
+                    };
+                }
+                return playlist;
+            }));
+        }
+    }, [databaseService]);
+
+    const handleRemoveFromPlaylist = useCallback(async (playlistId: string, songIds: string[]) => {
+        try {
+            if (databaseService) {
+                // Remove songs from database
+                for (const songId of songIds) {
+                    await databaseService.removeSongFromPlaylist(playlistId, songId);
+                }
+            }
+            
+            setPlaylists(prev => prev.map(playlist => {
+                if (playlist.id === playlistId) {
+                    return {
+                        ...playlist,
+                        songs: playlist.songs.filter(song => !songIds.includes(song.id))
+                    };
+                }
+                return playlist;
+            }));
+        } catch (error) {
+            console.error('❌ Failed to remove songs from playlist:', error);
+            // Still update local state
+            setPlaylists(prev => prev.map(playlist => {
+                if (playlist.id === playlistId) {
+                    return {
+                        ...playlist,
+                        songs: playlist.songs.filter(song => !songIds.includes(song.id))
+                    };
+                }
+                return playlist;
+            }));
+        }
+    }, [databaseService]);
 
     // Audio player functions
     const handleSongPlay = useCallback((song: Song) => {
@@ -1032,8 +1462,9 @@ const App: React.FC = () => {
                             onAddToPlaylist={handleAddToPlaylist}
                             onRemoveFromPlaylist={handleRemoveFromPlaylist}
                             onFileUpload={handleFileUpload}
+                            onMultiFileUpload={addFilesToQueue}
                             onFolderUpload={handleFolderUpload}
-                            isAnalyzing={isAnalyzing}
+                            isAnalyzing={isAnalyzing || isProcessingQueue}
                         />
                     </div>
                 </aside>
@@ -1118,8 +1549,20 @@ const App: React.FC = () => {
                         <div className="upload-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
                             <FileUpload 
                                 onFileUpload={handleFileUpload}
+                                onMultiFileUpload={addFilesToQueue}
                                 onFolderUpload={handleFolderUpload}
-                                isAnalyzing={isAnalyzing}
+                                isAnalyzing={isAnalyzing || isProcessingQueue}
+                            />
+                            
+                            <AnalysisQueue
+                                queue={analysisQueue}
+                                isProcessing={isProcessingQueue}
+                                onCancel={handleQueueCancel}
+                                onClearCompleted={handleQueueClearCompleted}
+                                onClearAll={handleQueueClearAll}
+                                onPause={handleQueuePause}
+                                onResume={handleQueueResume}
+                                isPaused={isQueuePaused}
                             />
                         </div>
                     )}

@@ -9,6 +9,12 @@ export interface Playlist {
   description?: string;
   createdAt: Date;
   color?: string;
+  isQueryBased?: boolean;
+  queryCriteria?: {
+    bpmRange?: { min: number; max: number };
+    energyRange?: { min: number; max: number };
+    genres?: string[];
+  };
 }
 
 interface PlaylistManagerProps {
@@ -22,6 +28,7 @@ interface PlaylistManagerProps {
   onAddToPlaylist: (playlistId: string, songs: Song[]) => void;
   onRemoveFromPlaylist: (playlistId: string, songIds: string[]) => void;
   onFileUpload?: (file: File) => void;
+  onMultiFileUpload?: (files: File[]) => void;
   onFolderUpload?: (files: FileList) => void;
   isAnalyzing?: boolean;
 }
@@ -31,6 +38,12 @@ const PlusIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <line x1="12" y1="5" x2="12" y2="19"></line>
     <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>
+);
+
+const FolderIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
   </svg>
 );
 
@@ -47,12 +60,6 @@ const PlaylistIcon = () => (
     <path d="21 15V6"></path>
     <path d="3 17a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3"></path>
     <path d="21 6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v11"></path>
-  </svg>
-);
-
-const FolderIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
   </svg>
 );
 
@@ -87,9 +94,253 @@ const ExportIcon = () => (
 
 const LoadingIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="loading-icon">
-    <path d="21 12a9 9 0 11-6.219-8.56"/>
+    <path d="M21 12a9 9 0 11-6.219-8.56"/>
   </svg>
 );
+
+const FilterIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46 22,3"/>
+  </svg>
+);
+
+// Query Playlist Modal Component
+interface QueryPlaylistModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreate: (playlist: { 
+    name: string; 
+    description?: string; 
+    color?: string;
+    isQueryBased: boolean;
+    queryCriteria: {
+      bpmRange?: { min: number; max: number };
+      energyRange?: { min: number; max: number };
+      genres?: string[];
+    };
+  }) => void;
+  songs: Song[];
+}
+
+const QueryPlaylistModal: React.FC<QueryPlaylistModalProps> = ({
+  isOpen,
+  onClose,
+  onCreate,
+  songs
+}) => {
+  const [playlistName, setPlaylistName] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [bpmRange, setBpmRange] = useState({ min: 60, max: 200 });
+  const [energyRange, setEnergyRange] = useState({ min: 1, max: 10 });
+  const [useBpmFilter, setUseBpmFilter] = useState(false);
+  const [useEnergyFilter, setUseEnergyFilter] = useState(false);
+  const [useGenreFilter, setUseGenreFilter] = useState(false);
+
+  const availableGenres = ['House', 'Techno', 'Hip-Hop', 'Jazz', 'Rock', 'Pop', 'Reggae', 'Ambient', 'Electronic', 'Drum & Bass', 'Trance', 'Dubstep'];
+
+  const handleGenreToggle = (genre: string) => {
+    setSelectedGenres(prev => 
+      prev.includes(genre) 
+        ? prev.filter(g => g !== genre)
+        : [...prev, genre]
+    );
+  };
+
+  const handleCreate = () => {
+    if (!playlistName.trim()) {
+      alert('Please enter a playlist name');
+      return;
+    }
+
+    const queryCriteria: any = {};
+    
+    if (useBpmFilter) {
+      queryCriteria.bpmRange = bpmRange;
+    }
+    
+    if (useEnergyFilter) {
+      queryCriteria.energyRange = energyRange;
+    }
+    
+    if (useGenreFilter && selectedGenres.length > 0) {
+      queryCriteria.genres = selectedGenres;
+    }
+
+    onCreate({
+      name: playlistName.trim(),
+      description: description.trim() || undefined,
+      isQueryBased: true,
+      queryCriteria
+    });
+
+    // Reset form
+    setPlaylistName('');
+    setDescription('');
+    setSelectedGenres([]);
+    setBpmRange({ min: 60, max: 200 });
+    setEnergyRange({ min: 1, max: 10 });
+    setUseBpmFilter(false);
+    setUseEnergyFilter(false);
+    setUseGenreFilter(false);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="query-playlist-modal">
+      <div className="modal-content">
+        <div className="modal-header">
+          <h3>Create Playlist</h3>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </div>
+        
+        <div className="modal-body">
+          <div className="form-group">
+            <label>Playlist Name *</label>
+            <input
+              type="text"
+              value={playlistName}
+              onChange={(e) => setPlaylistName(e.target.value)}
+              placeholder="Enter playlist name..."
+              autoFocus
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Description</label>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional description..."
+            />
+          </div>
+
+          <div className="filters-section">
+            <h4>Filter Criteria</h4>
+            
+            {/* BPM Filter */}
+            <div className="filter-group">
+              <label className="filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={useBpmFilter}
+                  onChange={(e) => setUseBpmFilter(e.target.checked)}
+                />
+                BPM Range
+              </label>
+              {useBpmFilter && (
+                <div className="range-inputs">
+                  <div className="range-input">
+                    <label>Min BPM</label>
+                    <input
+                      type="number"
+                      min="60"
+                      max="200"
+                      value={bpmRange.min}
+                      onChange={(e) => {
+                        e.persist();
+                        setBpmRange(prev => ({ ...prev, min: parseInt(e.target.value) || 60 }));
+                      }}
+                    />
+                  </div>
+                  <div className="range-input">
+                    <label>Max BPM</label>
+                    <input
+                      type="number"
+                      min="60"
+                      max="200"
+                      value={bpmRange.max}
+                      onChange={(e) => {
+                        e.persist();
+                        setBpmRange(prev => ({ ...prev, max: parseInt(e.target.value) || 200 }));
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Energy Filter */}
+            <div className="filter-group">
+              <label className="filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={useEnergyFilter}
+                  onChange={(e) => setUseEnergyFilter(e.target.checked)}
+                />
+                Energy Level Range
+              </label>
+              {useEnergyFilter && (
+                <div className="range-inputs">
+                  <div className="range-input">
+                    <label>Min Energy</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={energyRange.min}
+                      onChange={(e) => {
+                        e.persist();
+                        setEnergyRange(prev => ({ ...prev, min: parseInt(e.target.value) || 1 }));
+                      }}
+                    />
+                  </div>
+                  <div className="range-input">
+                    <label>Max Energy</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={energyRange.max}
+                      onChange={(e) => {
+                        e.persist();
+                        setEnergyRange(prev => ({ ...prev, max: parseInt(e.target.value) || 10 }));
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Genre Filter */}
+            <div className="filter-group">
+              <label className="filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={useGenreFilter}
+                  onChange={(e) => setUseGenreFilter(e.target.checked)}
+                />
+                Genres
+              </label>
+              {useGenreFilter && (
+                <div className="genre-checkboxes">
+                  {availableGenres.map(genre => (
+                    <label key={genre} className="genre-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selectedGenres.includes(genre)}
+                        onChange={() => handleGenreToggle(genre)}
+                      />
+                      {genre}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button onClick={onClose} className="cancel-btn">Cancel</button>
+          <button onClick={handleCreate} className="create-btn">Create Playlist</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   playlists,
@@ -102,14 +353,14 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   onAddToPlaylist,
   onRemoveFromPlaylist,
   onFileUpload,
+  onMultiFileUpload,
   onFolderUpload,
   isAnalyzing = false
 }) => {
-  const [isCreating, setIsCreating] = useState(false);
-  const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showAddSongs, setShowAddSongs] = useState(false);
   const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
   const [playlistSearch, setPlaylistSearch] = useState('');
+  const [showQueryModal, setShowQueryModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const playlistColors = [
@@ -117,18 +368,80 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     '#dda0dd', '#98d8c8', '#f7dc6f', '#bb8fce', '#85c1e9'
   ];
 
-  const handleCreatePlaylist = () => {
-    if (newPlaylistName.trim()) {
-      const newPlaylist: { name: string; songs: Song[]; description?: string; color?: string } = {
-        name: newPlaylistName.trim(),
-        songs: [],
-        description: '',
-        color: playlistColors[playlists.length % playlistColors.length]
-      };
-      onPlaylistCreate(newPlaylist);
-      setNewPlaylistName('');
-      setIsCreating(false);
-    }
+
+
+  const filterSongsByQuery = (queryCriteria: any): Song[] => {
+    return songs.filter(song => {
+      // BPM filter
+      if (queryCriteria.bpmRange && song.bpm) {
+        const { min, max } = queryCriteria.bpmRange;
+        if (song.bpm < min || song.bpm > max) {
+          return false;
+        }
+      }
+
+      // Energy filter
+      if (queryCriteria.energyRange && song.energy_level) {
+        const { min, max } = queryCriteria.energyRange;
+        if (song.energy_level < min || song.energy_level > max) {
+          return false;
+        }
+      }
+
+      // Genre filter (based on energy level and BPM patterns)
+      if (queryCriteria.genres && queryCriteria.genres.length > 0) {
+        const matchesGenre = queryCriteria.genres.some((genre: string) => {
+          if (!song.bpm || !song.energy_level) return false;
+          
+          switch(genre) {
+            case 'House': return song.energy_level >= 5 && song.energy_level <= 7 && song.bpm >= 120 && song.bpm <= 130;
+            case 'Techno': return song.energy_level > 7 && song.bpm >= 120 && song.bpm <= 140;
+            case 'Hip-Hop': return song.energy_level <= 4 && song.bpm >= 70 && song.bpm <= 100;
+            case 'Jazz': return song.energy_level <= 3 && song.bpm >= 60 && song.bpm <= 120;
+            case 'Rock': return song.energy_level >= 6 && song.bpm >= 100 && song.bpm <= 140;
+            case 'Pop': return song.energy_level >= 4 && song.energy_level <= 6 && song.bpm >= 100 && song.bpm <= 130;
+            case 'Reggae': return song.energy_level >= 3 && song.energy_level <= 5 && song.bpm >= 60 && song.bpm <= 90;
+            case 'Ambient': return song.energy_level <= 2 && song.bpm <= 80;
+            case 'Electronic': return song.energy_level >= 5 && song.bpm >= 120;
+            case 'Drum & Bass': return song.energy_level >= 7 && song.bpm >= 160 && song.bpm <= 180;
+            case 'Trance': return song.energy_level >= 6 && song.bpm >= 130 && song.bpm <= 140;
+            case 'Dubstep': return song.energy_level >= 7 && song.bpm >= 140 && song.bpm <= 160;
+            default: return false;
+          }
+        });
+        
+        if (!matchesGenre) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  };
+
+  const handleQueryPlaylistCreate = (playlistData: { 
+    name: string; 
+    description?: string; 
+    color?: string;
+    isQueryBased: boolean;
+    queryCriteria: any;
+  }) => {
+    const filteredSongs = filterSongsByQuery(playlistData.queryCriteria);
+    
+    const newPlaylist: { 
+      name: string; 
+      songs: Song[]; 
+      description?: string; 
+      color?: string;
+      isQueryBased: boolean;
+      queryCriteria: any;
+    } = {
+      ...playlistData,
+      songs: filteredSongs,
+      color: playlistData.color || playlistColors[playlists.length % playlistColors.length]
+    };
+    
+    onPlaylistCreate(newPlaylist);
   };
 
   const handleAddSongs = () => {
@@ -226,22 +539,54 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
             Analyzing...
           </button>
         ) : (
-          <label className="add-tracks-btn">
-            <input 
-              type="file" 
-              accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file && onFileUpload) {
-                  onFileUpload(file);
-                }
-                e.target.value = '';
-              }}
-              style={{ display: 'none' }}
-            />
-            <PlusIcon />
-            Add Tracks
-          </label>
+          <div className="add-tracks-buttons">
+            <label className="add-tracks-btn primary">
+              <input 
+                type="file" 
+                multiple
+                accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files && files.length > 0) {
+                    const fileArray = Array.from(files);
+                    if (fileArray.length === 1 && onFileUpload) {
+                      onFileUpload(fileArray[0]);
+                    } else if (fileArray.length > 1 && onMultiFileUpload) {
+                      onMultiFileUpload(fileArray);
+                    } else if (fileArray.length > 1 && onFileUpload) {
+                      // Fallback to single file upload for the first file
+                      onFileUpload(fileArray[0]);
+                    }
+                  }
+                  e.target.value = '';
+                }}
+                style={{ display: 'none' }}
+              />
+              <PlusIcon />
+              Add Tracks
+            </label>
+            
+            {/* {onFolderUpload && (
+              <label className="add-tracks-btn secondary">
+                <input 
+                  type="file" 
+                  {...({ webkitdirectory: "", directory: "" } as any)}
+                  multiple
+                  accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
+                  onChange={(e) => {
+                    const files = e.target.files;
+                    if (files && files.length > 0 && onFolderUpload) {
+                      onFolderUpload(files);
+                    }
+                    e.target.value = '';
+                  }}
+                  style={{ display: 'none' }}
+                />
+                <FolderIcon />
+                Add Folder
+              </label>
+            )} */}
+          </div>
         )}
       </div>
 
@@ -303,14 +648,17 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 key={playlist.id}
                 className={`playlist-item-row user-playlist ${
                   selectedPlaylist?.id === playlist.id ? 'selected' : ''
-                }`}
+                } ${playlist.isQueryBased ? 'query-playlist' : ''}`}
                 onClick={() => onPlaylistSelect(playlist)}
               >
                 <div className="playlist-item-icon">
-                  <PlaylistIcon />
+                  {playlist.isQueryBased ? <FilterIcon /> : <PlaylistIcon />}
                 </div>
                 <div className="playlist-item-info">
-                  <span className="playlist-item-name">{playlist.name}</span>
+                  <span className="playlist-item-name">
+                    {playlist.name}
+                    {playlist.isQueryBased && <span className="query-indicator">🔍</span>}
+                  </span>
                   <span className="playlist-item-count">({stats.tracks})</span>
                 </div>
                 <div className="playlist-actions">
@@ -344,41 +692,15 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
       {/* Create Playlist Button */}
       <div className="create-playlist-footer">
         <button 
-          className="create-playlist-btn"
-          onClick={() => setIsCreating(true)}
+          className="create-playlist-btn query-btn"
+          onClick={() => setShowQueryModal(true)}
         >
-          <PlusIcon />
-          New Playlist
+          <FilterIcon />
+          Create Playlist
         </button>
       </div>
 
-      {/* Inline Create Form */}
-      {isCreating && (
-        <div className="create-playlist-inline">
-          <input
-            type="text"
-            placeholder="Playlist name..."
-            value={newPlaylistName}
-            onChange={(e) => setNewPlaylistName(e.target.value)}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                handleCreatePlaylist();
-              } else if (e.key === 'Escape') {
-                setIsCreating(false);
-                setNewPlaylistName('');
-              }
-            }}
-            onBlur={() => {
-              if (!newPlaylistName.trim()) {
-                setIsCreating(false);
-              } else {
-                handleCreatePlaylist();
-              }
-            }}
-            autoFocus
-          />
-        </div>
-      )}
+
 
       {/* Add Songs Modal */}
       {showAddSongs && selectedPlaylist && (
@@ -452,6 +774,14 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           }
           e.target.value = '';
         }}
+      />
+
+      {/* Query Playlist Modal */}
+      <QueryPlaylistModal
+        isOpen={showQueryModal}
+        onClose={() => setShowQueryModal(false)}
+        onCreate={handleQueryPlaylistCreate}
+        songs={songs}
       />
     </div>
   );

@@ -70,8 +70,10 @@ class MusicAnalyzer:
             Dict[str, Any]: Analysis results including key, BPM, energy, etc.
         """
         try:
-            # Load audio file
+            # Load audio file with better error handling
+            print(f"🎵 Loading audio file: {file_path}")
             audio, sr = librosa.load(file_path, sr=44100)
+            print(f"✅ Audio loaded successfully - Duration: {len(audio)/sr:.2f}s, Sample rate: {sr}Hz")
             
             # Perform all analyses
             key_info = self._analyze_key(audio, sr)
@@ -96,6 +98,10 @@ class MusicAnalyzer:
             }
             
         except Exception as e:
+            import traceback
+            print(f"❌ Music analysis failed for {file_path}: {str(e)}")
+            print(f"📋 Full error traceback:")
+            traceback.print_exc()
             return {
                 'status': 'error',
                 'error_message': str(e),

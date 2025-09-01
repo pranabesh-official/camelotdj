@@ -119,10 +119,26 @@ class DatabaseManager:
                     name TEXT NOT NULL,
                     description TEXT,
                     color TEXT,
+                    is_query_based BOOLEAN DEFAULT 0,
+                    query_criteria TEXT,  -- JSON string for query criteria
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add new columns for query-based playlists if they don't exist
+            try:
+                cursor.execute('ALTER TABLE playlists ADD COLUMN is_query_based BOOLEAN DEFAULT 0')
+                print("✅ Added is_query_based column to playlists table")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+            try:
+                cursor.execute('ALTER TABLE playlists ADD COLUMN query_criteria TEXT')
+                print("✅ Added query_criteria column to playlists table")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Playlist items table (many-to-many relationship)
             cursor.execute('''
@@ -798,4 +814,248 @@ class DatabaseManager:
                 
         except Exception as e:
             print(f"Error updating track ID: {str(e)}")
+            return False
+
+    # Playlist Management Methods
+    
+    def create_playlist(self, name: str, description: str = None, color: str = None, 
+                       is_query_based: bool = False, query_criteria: dict = None) -> int:
+        """Create a new playlist and return its ID."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                query_criteria_json = json.dumps(query_criteria) if query_criteria else None
+                
+                cursor.execute("""
+                    INSERT INTO playlists (name, description, color, is_query_based, query_criteria)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (name, description, color, is_query_based, query_criteria_json))
+                
+                playlist_id = cursor.lastrowid
+                conn.commit()
+                
+                print(f"✅ Created playlist: {name} (ID: {playlist_id})")
+                return playlist_id
+                
+        except Exception as e:
+            print(f"Error creating playlist: {str(e)}")
+            return None
+
+    def get_all_playlists(self) -> List[dict]:
+        """Get all playlists with their metadata."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT * FROM playlists 
+                    ORDER BY created_at DESC
+                """)
+                
+                rows = cursor.fetchall()
+                columns = [description[0] for description in cursor.description]
+                
+                playlists = []
+                for row in rows:
+                    playlist = dict(zip(columns, row))
+                    # Parse query criteria JSON if it exists
+                    if playlist.get('query_criteria'):
+                        try:
+                            playlist['query_criteria'] = json.loads(playlist['query_criteria'])
+                        except json.JSONDecodeError:
+                            playlist['query_criteria'] = None
+                    playlists.append(playlist)
+                
+                return playlists
+                
+        except Exception as e:
+            print(f"Error getting playlists: {str(e)}")
+            return []
+
+    def get_playlist(self, playlist_id: int) -> Optional[dict]:
+        """Get a specific playlist by ID."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT * FROM playlists 
+                    WHERE id = ?
+                """, (playlist_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    playlist = dict(zip(columns, row))
+                    
+                    # Parse query criteria JSON if it exists
+                    if playlist.get('query_criteria'):
+                        try:
+                            playlist['query_criteria'] = json.loads(playlist['query_criteria'])
+                        except json.JSONDecodeError:
+                            playlist['query_criteria'] = None
+                    
+                    return playlist
+                else:
+                    return None
+                    
+        except Exception as e:
+            print(f"Error getting playlist: {str(e)}")
+            return None
+
+    def update_playlist(self, playlist_id: int, name: str = None, description: str = None, 
+                       color: str = None, is_query_based: bool = None, query_criteria: dict = None) -> bool:
+        """Update playlist metadata."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Build dynamic update query
+                updates = []
+                params = []
+                
+                if name is not None:
+                    updates.append("name = ?")
+                    params.append(name)
+                if description is not None:
+                    updates.append("description = ?")
+                    params.append(description)
+                if color is not None:
+                    updates.append("color = ?")
+                    params.append(color)
+                if is_query_based is not None:
+                    updates.append("is_query_based = ?")
+                    params.append(is_query_based)
+                if query_criteria is not None:
+                    updates.append("query_criteria = ?")
+                    params.append(json.dumps(query_criteria))
+                
+                if not updates:
+                    return True  # Nothing to update
+                
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+                params.append(playlist_id)
+                
+                query = f"UPDATE playlists SET {', '.join(updates)} WHERE id = ?"
+                cursor.execute(query, params)
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error updating playlist: {str(e)}")
+            return False
+
+    def delete_playlist(self, playlist_id: int) -> bool:
+        """Delete a playlist and all its items."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Delete playlist items first (CASCADE should handle this, but being explicit)
+                cursor.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+                
+                # Delete the playlist
+                cursor.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error deleting playlist: {str(e)}")
+            return False
+
+    def add_song_to_playlist(self, playlist_id: int, music_file_id: int, position: int = None) -> bool:
+        """Add a song to a playlist."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # If no position specified, add to end
+                if position is None:
+                    cursor.execute("""
+                        SELECT COALESCE(MAX(position), 0) + 1 
+                        FROM playlist_items 
+                        WHERE playlist_id = ?
+                    """, (playlist_id,))
+                    position = cursor.fetchone()[0]
+                
+                cursor.execute("""
+                    INSERT INTO playlist_items (playlist_id, music_file_id, position)
+                    VALUES (?, ?, ?)
+                """, (playlist_id, music_file_id, position))
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            print(f"Error adding song to playlist: {str(e)}")
+            return False
+
+    def remove_song_from_playlist(self, playlist_id: int, music_file_id: int) -> bool:
+        """Remove a song from a playlist."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    DELETE FROM playlist_items 
+                    WHERE playlist_id = ? AND music_file_id = ?
+                """, (playlist_id, music_file_id))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error removing song from playlist: {str(e)}")
+            return False
+
+    def get_playlist_songs(self, playlist_id: int) -> List[dict]:
+        """Get all songs in a playlist with their metadata."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT mf.*, pi.position, pi.added_at
+                    FROM music_files mf
+                    JOIN playlist_items pi ON mf.id = pi.music_file_id
+                    WHERE pi.playlist_id = ?
+                    ORDER BY pi.position ASC
+                """, (playlist_id,))
+                
+                rows = cursor.fetchall()
+                columns = [description[0] for description in cursor.description]
+                
+                songs = []
+                for row in rows:
+                    song = dict(zip(columns, row))
+                    # Parse cue points JSON if it exists
+                    if song.get('cue_points'):
+                        try:
+                            song['cue_points'] = json.loads(song['cue_points'])
+                        except json.JSONDecodeError:
+                            song['cue_points'] = []
+                    songs.append(song)
+                
+                return songs
+                
+        except Exception as e:
+            print(f"Error getting playlist songs: {str(e)}")
+            return []
+
+    def clear_playlist(self, playlist_id: int) -> bool:
+        """Remove all songs from a playlist."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            print(f"Error clearing playlist: {str(e)}")
             return False

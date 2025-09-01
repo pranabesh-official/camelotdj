@@ -41,6 +41,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformData = useRef<number[]>([]);
+  const [animationFrame, setAnimationFrame] = useState<number | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -149,18 +150,40 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
   };
 
   const generateFallbackWaveform = () => {
-    // Generate simple fallback waveform data
+    // Generate enhanced fallback waveform data with more realistic patterns
     const samples = 1000;
     const data = [];
     
+    // Create multiple frequency components for more realistic sound
+    const baseFreq = 0.02;
+    const highFreq = 0.1;
+    const midFreq = 0.05;
+    
     for (let i = 0; i < samples; i++) {
-      // Create simple sine wave pattern as fallback
-      const value = Math.abs(Math.sin(i * 0.02)) * 0.5 + Math.random() * 0.1;
+      // Combine multiple sine waves for more realistic audio representation
+      const baseWave = Math.abs(Math.sin(i * baseFreq)) * 0.4;
+      const highWave = Math.abs(Math.sin(i * highFreq)) * 0.2;
+      const midWave = Math.abs(Math.sin(i * midFreq)) * 0.3;
+      
+      // Add some randomness for natural variation
+      const randomFactor = (Math.random() - 0.5) * 0.1;
+      
+      // Combine all components
+      let value = baseWave + highWave + midWave + randomFactor;
+      
+      // Add some rhythmic patterns (like beats)
+      if (i % 50 < 25) {
+        value *= 1.2; // Emphasize certain sections
+      }
+      
+      // Ensure values are within bounds
+      value = Math.max(0.1, Math.min(0.9, value));
+      
       data.push(value);
     }
     
     waveformData.current = data;
-    console.log('📊 Using fallback waveform data');
+    console.log('📊 Using enhanced fallback waveform data');
   };
 
   const drawWaveform = useCallback(() => {
@@ -174,16 +197,39 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     const height = canvas.height;
     const data = waveformData.current;
 
-    // Clear canvas
-    ctx.fillStyle = '#1a1a1a';
+    // Clear canvas with subtle gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, '#1a1a1a');
+    gradient.addColorStop(1, '#0f0f0f');
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
     if (isLoading || isLoadingWaveform) {
-      // Show loading state
-      ctx.fillStyle = '#666';
-      ctx.font = '14px Arial';
+      // Enhanced loading state with animated bars
+      const loadingBars = 20;
+      const barWidth = width / loadingBars;
+      const time = Date.now() * 0.005;
+      
+      for (let i = 0; i < loadingBars; i++) {
+        const barHeight = Math.sin(time + i * 0.3) * 0.5 + 0.5;
+        const x = i * barWidth;
+        const y = (height - barHeight * height * 0.6) / 2;
+        
+        // Create gradient for loading bars
+        const barGradient = ctx.createLinearGradient(x, y, x, y + barHeight * height * 0.6);
+        barGradient.addColorStop(0, '#1db954');
+        barGradient.addColorStop(0.5, '#1ed760');
+        barGradient.addColorStop(1, '#1db954');
+        
+        ctx.fillStyle = barGradient;
+        ctx.fillRect(x + 1, y, Math.max(barWidth - 2, 1), barHeight * height * 0.6);
+      }
+      
+      // Loading text with better styling
+      ctx.fillStyle = '#888';
+      ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(isLoadingWaveform ? 'Loading waveform...' : 'Loading...', width / 2, height / 2);
+      ctx.fillText(isLoadingWaveform ? 'Loading waveform...' : 'Loading audio...', width / 2, height - 8);
       return;
     }
 
@@ -213,7 +259,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       return;
     }
 
-    // Draw waveform bars
+    // Enhanced waveform bars with gradients and better visual effects
     const barWidth = Math.max(width / data.length, 1);
     const progress = currentTime / duration;
 
@@ -223,14 +269,52 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       const y = (height - barHeight) / 2;
 
       const isPlayed = index / data.length < progress;
+      const progressInBar = Math.max(0, Math.min(1, (progress - index / data.length) / (1 / data.length)));
       
-      // Simple two-tone waveform
-      ctx.fillStyle = isPlayed ? '#1db954' : '#404040';
-      ctx.fillRect(x, y, Math.max(barWidth - 0.5, 0.5), barHeight);
+      if (isPlayed) {
+        // Played bars with gradient
+        const playedGradient = ctx.createLinearGradient(x, y, x, y + barHeight);
+        playedGradient.addColorStop(0, '#1db954');
+        playedGradient.addColorStop(0.5, '#1ed760');
+        playedGradient.addColorStop(1, '#1db954');
+        ctx.fillStyle = playedGradient;
+      } else {
+        // Unplayed bars with subtle gradient
+        const unplayedGradient = ctx.createLinearGradient(x, y, x, y + barHeight);
+        unplayedGradient.addColorStop(0, '#404040');
+        unplayedGradient.addColorStop(0.5, '#505050');
+        unplayedGradient.addColorStop(1, '#404040');
+        ctx.fillStyle = unplayedGradient;
+      }
+      
+      // Draw main bar
+      ctx.fillRect(x + 0.5, y, Math.max(barWidth - 1, 0.5), barHeight);
+      
+      // Add subtle highlight for played bars
+      if (isPlayed && progressInBar > 0) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        const highlightHeight = barHeight * progressInBar;
+        ctx.fillRect(x + 0.5, y, Math.max(barWidth - 1, 0.5), highlightHeight);
+      }
     });
 
-    // Draw progress line
+    // Enhanced progress line with glow effect
     const progressX = progress * width;
+    
+    // Glow effect
+    ctx.shadowColor = '#1db954';
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = '#1db954';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(progressX, 0);
+    ctx.lineTo(progressX, height);
+    ctx.stroke();
+    
+    // Reset shadow
+    ctx.shadowBlur = 0;
+    
+    // Main progress line
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -238,16 +322,53 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     ctx.lineTo(progressX, height);
     ctx.stroke();
     
-    // Progress indicator circle
+    // Enhanced progress indicator circle with glow
+    ctx.shadowColor = '#1db954';
+    ctx.shadowBlur = 6;
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(progressX, height / 2, 3, 0, 2 * Math.PI);
+    ctx.arc(progressX, height / 2, 4, 0, 2 * Math.PI);
     ctx.fill();
-  }, [currentTime, duration, isLoading, audioError, isLoadingWaveform, waveformError]);
+    
+        // Reset shadow
+    ctx.shadowBlur = 0;
+    
+    // Add subtle grid lines for better visual reference
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 0.5;
+    for (let i = 1; i < 4; i++) {
+      const gridY = (height / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(0, gridY);
+      ctx.lineTo(width, gridY);
+      ctx.stroke();
+    }
+}, [currentTime, duration, isLoading, audioError, isLoadingWaveform, waveformError]);
 
   useEffect(() => {
     drawWaveform();
   }, [drawWaveform]);
+
+  // Add smooth animation loop for loading state
+  useEffect(() => {
+    if (isLoading || isLoadingWaveform) {
+      const animate = () => {
+        drawWaveform();
+        const frame = requestAnimationFrame(animate);
+        setAnimationFrame(frame);
+      };
+      animate();
+    } else if (animationFrame) {
+      cancelAnimationFrame(animationFrame);
+      setAnimationFrame(null);
+    }
+
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [isLoading, isLoadingWaveform, drawWaveform, animationFrame]);
 
   const togglePlayPause = async () => {
     const audio = audioRef.current;

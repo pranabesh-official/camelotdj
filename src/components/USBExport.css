@@ -95,7 +95,7 @@
 }
 
 .modal-body {
-  padding: var(--space-xl, 20px);
+  padding: var(--space-lg, 16px);
   overflow-y: auto;
   flex: 1;
   background: var(--card-bg, #323232);
@@ -103,10 +103,10 @@
 
 .playlist-info {
   background: var(--elevated-bg, #3a3a3a);
-  padding: var(--space-lg, 16px);
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
   border-radius: var(--radius-md, 6px);
   border-left: 3px solid var(--brand-blue, #4a90e2);
-  margin-bottom: var(--space-xl, 20px);
+  margin-bottom: var(--space-lg, 16px);
 }
 
 .playlist-info h4 {
@@ -125,14 +125,14 @@
 }
 
 .usb-devices-section {
-  margin-bottom: var(--space-xl, 20px);
+  margin-bottom: var(--space-lg, 16px);
 }
 
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-md, 12px);
+  margin-bottom: var(--space-sm, 8px);
 }
 
 .section-header h4 {
@@ -219,7 +219,7 @@
 .device-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm, 8px);
+  gap: var(--space-xs, 4px);
 }
 
 .device-item {
@@ -365,7 +365,7 @@
 }
 
 .modal-actions {
-  padding: var(--space-lg, 16px) var(--space-xl, 20px);
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
   border-top: 1px solid var(--border-color, #454545);
   display: flex;
   gap: var(--space-md, 12px);
@@ -377,7 +377,7 @@
   background: var(--surface-bg, #2f2f2f);
   color: var(--text-secondary, #cccccc);
   border: 1px solid var(--border-color, #454545);
-  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  padding: var(--space-sm, 8px) var(--space-md, 12px);
   border-radius: var(--radius-md, 6px);
   cursor: pointer;
   font-size: 0.85rem;
@@ -387,7 +387,7 @@
   align-items: center;
   gap: var(--space-sm, 8px);
   font-family: var(--font-primary, 'Inter', sans-serif);
-  min-width: 100px;
+  min-width: 90px;
   justify-content: center;
 }
 
@@ -408,7 +408,7 @@
   background: var(--brand-blue, #4a90e2);
   color: var(--text-primary, #ffffff);
   border: none;
-  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  padding: var(--space-sm, 8px) var(--space-md, 12px);
   border-radius: var(--radius-md, 6px);
   cursor: pointer;
   font-size: 0.85rem;
@@ -418,7 +418,7 @@
   align-items: center;
   gap: var(--space-sm, 8px);
   font-family: var(--font-primary, 'Inter', sans-serif);
-  min-width: 120px;
+  min-width: 110px;
   justify-content: center;
 }
 

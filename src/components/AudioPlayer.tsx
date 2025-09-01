@@ -1,5 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { 
+  Play, 
+  Pause, 
+  SkipBack, 
+  SkipForward, 
+  Loader2, 
+  AlertCircle, 
+  Music2,
+  Clock,
+  Zap,
+  Music
+} from 'lucide-react';
 import { Song } from '../App';
+import './AudioPlayer.css';
 
 interface CuePoint {
   id: string;
@@ -289,7 +302,9 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     return (
       <div className="audio-player no-song">
         <div className="player-placeholder">
-          <div className="placeholder-icon">🎵</div>
+          <div className="placeholder-icon">
+            <Music2 size={48} className="text-gray-400" />
+          </div>
           <p className="placeholder-text">Select a track to start playing</p>
         </div>
       </div>
@@ -308,7 +323,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
         {/* Transport Controls */}
         <div className="transport-controls">
           <button className="control-btn" onClick={onPrevious} disabled={!onPrevious} title="Previous track">
-            ⏮
+            <SkipBack size={20} />
           </button>
           <button 
             className="control-btn play-btn" 
@@ -316,10 +331,18 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
             disabled={isLoading || !!audioError}
             title={isLoading ? 'Loading...' : audioError ? 'Audio Error' : isPlaying ? 'Pause' : 'Play'}
           >
-            {isLoading ? '⏳' : audioError ? '❌' : isPlaying ? '⏸' : '▶'}
+            {isLoading ? (
+              <Loader2 size={24} className="animate-spin" />
+            ) : audioError ? (
+              <AlertCircle size={24} className="text-red-500" />
+            ) : isPlaying ? (
+              <Pause size={24} />
+            ) : (
+              <Play size={24} />
+            )}
           </button>
           <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
-            ⏭
+            <SkipForward size={20} />
           </button>
         </div>
 
@@ -334,8 +357,18 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           <div className="track-artist">
             {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'}
           </div>
-          {isLoading && <div className="loading-indicator">Loading audio...</div>}
-          {audioError && <div className="error-indicator">Error: {audioError}</div>}
+          {isLoading && (
+            <div className="loading-indicator">
+              <Loader2 size={16} className="animate-spin mr-2" />
+              Loading audio...
+            </div>
+          )}
+          {audioError && (
+            <div className="error-indicator">
+              <AlertCircle size={16} className="mr-2" />
+              Error: {audioError}
+            </div>
+          )}
         </div>
 
         {/* Waveform */}
@@ -353,6 +386,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
 
         {/* Time Display */}
         <div className="time-display">
+          <Clock size={16} className="mr-1 text-gray-400" />
           <span className="current-time">{formatTime(currentTime)}</span>
           <span className="time-separator"> / </span>
           <span className="total-time">{formatTime(duration)}</span>
@@ -361,16 +395,19 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
         {/* Track Analysis */}
         <div className="track-analysis">
           <div className="analysis-item">
+            <Music size={16} className="mr-1 text-gray-400" />
             <span className="analysis-label">Key</span>
             <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key) }}>
               {song.camelot_key || 'N/A'}
             </span>
           </div>
           <div className="analysis-item">
+            <Clock size={16} className="mr-1 text-gray-400" />
             <span className="analysis-label">BPM</span>
             <span className="bpm-value">{song.bpm ? Math.round(song.bpm) : '--'}</span>
           </div>
           <div className="analysis-item">
+            <Zap size={16} className="mr-1 text-gray-400" />
             <span className="analysis-label">Energy</span>
             <span className="energy-badge" style={{ backgroundColor: getEnergyColor(song.energy_level) }}>
               {song.energy_level || '--'}

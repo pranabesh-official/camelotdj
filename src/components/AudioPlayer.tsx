@@ -184,6 +184,11 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     
     waveformData.current = data;
     console.log('📊 Using enhanced fallback waveform data');
+    
+    // Force a redraw of the waveform immediately
+    setTimeout(() => {
+      drawWaveform();
+    }, 0);
   };
 
   const drawWaveform = useCallback(() => {
@@ -250,7 +255,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       ctx.fillText('Using fallback waveform', width / 2, height / 2);
     }
 
-    if (!duration || data.length === 0) {
+    if (data.length === 0) {
       // Show no data state
       ctx.fillStyle = '#666';
       ctx.font = '14px Arial';
@@ -261,7 +266,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
 
     // Enhanced waveform bars with gradients and better visual effects
     const barWidth = Math.max(width / data.length, 1);
-    const progress = currentTime / duration;
+    // If no duration yet, use a default progress of 0, otherwise use current progress
+    const progress = duration ? currentTime / duration : 0;
 
     data.forEach((value, index) => {
       const barHeight = Math.max(value * height * 0.8, 2);
@@ -465,25 +471,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
             <SkipForward size={20} />
           </button>
-          <button 
-            className="control-btn" 
-            onClick={() => {
-              const audio = audioRef.current;
-              if (audio) {
-                console.log('Audio element state:', {
-                  src: audio.src,
-                  readyState: audio.readyState,
-                  networkState: audio.networkState,
-                  error: audio.error,
-                  duration: audio.duration,
-                  currentTime: audio.currentTime
-                });
-              }
-            }}
-            title="Debug Audio"
-          >
-            🐛
-          </button>
+
         </div>
 
         {/* Track Info */}

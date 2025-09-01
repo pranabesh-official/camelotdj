@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Song } from '../App';
 import './PlaylistManager.css';
+import USBExport from './USBExport';
 
 export interface Playlist {
   id: string;
@@ -361,6 +362,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [showQueryModal, setShowQueryModal] = useState(false);
+  const [showUSBExport, setShowUSBExport] = useState(false);
+  const [playlistToExport, setPlaylistToExport] = useState<Playlist | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const playlistColors = [
@@ -470,6 +473,12 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleUSBExport = (playlist: Playlist) => {
+    console.log('🔌 USB Export clicked for playlist:', playlist);
+    setPlaylistToExport(playlist);
+    setShowUSBExport(true);
   };
 
   const exportPlaylistAsFolder = async (playlist: Playlist) => {
@@ -638,10 +647,11 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
 
         {/* User Playlists */}
         <div className="user-playlists">
-          {filteredPlaylists.map(playlist => {
-            const stats = {
-              tracks: playlist.songs.length
-            };
+                  {filteredPlaylists.map(playlist => {
+          const stats = {
+            tracks: playlist.songs.length
+          };
+          console.log('🔍 Rendering playlist:', playlist.name, 'with songs:', playlist.songs.length, 'playlist object:', playlist);
             
             return (
               <div
@@ -662,6 +672,27 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   <span className="playlist-item-count">({stats.tracks})</span>
                 </div>
                 <div className="playlist-actions">
+                  <button
+                    onClick={(e) => {
+                      console.log('🔌 USB Export button clicked!');
+                      e.stopPropagation();
+                      handleUSBExport(playlist);
+                    }}
+                    title="Export to USB"
+                    className="usb-export-btn"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10 2v7.31"/>
+                      <path d="M15 2v7.31"/>
+                      <path d="M8 9.31V2"/>
+                      <path d="M17 9.31V2"/>
+                      <path d="M12 9.31V2"/>
+                      <path d="M2 9.31V2"/>
+                      <path d="M20 9.31V2"/>
+                      <path d="M2 9.31h20"/>
+                      <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
+                    </svg>
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -783,6 +814,17 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
         onCreate={handleQueryPlaylistCreate}
         songs={songs}
       />
+
+      {/* USB Export Modal */}
+      {showUSBExport && (
+        <USBExport
+          playlist={playlistToExport}
+          onClose={() => {
+            setShowUSBExport(false);
+            setPlaylistToExport(null);
+          }}
+        />
+      )}
     </div>
   );
 };

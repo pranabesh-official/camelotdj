@@ -219,6 +219,31 @@
   color: var(--text-primary);
 }
 
+.usb-export-btn {
+  background: var(--brand-blue, #667eea);
+  color: white;
+  border: none;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--transition-normal);
+  margin-right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.usb-export-btn:hover {
+  background: var(--brand-blue-light, #5a6fd8);
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.usb-export-btn svg {
+  stroke-width: 2;
+}
+
 /* Create Playlist Footer */
 .create-playlist-footer {
   flex-shrink: 0;

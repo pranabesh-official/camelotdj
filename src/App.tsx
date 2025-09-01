@@ -1011,18 +1011,27 @@ const App: React.FC = () => {
                     isQueryBased: dbPlaylist.is_query_based || false,
                     queryCriteria: dbPlaylist.query_criteria,
                     createdAt: new Date(dbPlaylist.created_at),
-                    songs: playlist.songs
+                    songs: playlist.songs.map(song => ({
+                        ...song,
+                        // Ensure file_path is available
+                        file_path: song.file_path || songs.find(s => s.id === song.id)?.file_path
+                    }))
                 };
                 
                 setPlaylists(prev => [...prev, newPlaylist]);
                 console.log('✅ Playlist created in database:', newPlaylist.name);
             } else {
-                // Fallback to local state only
-                const newPlaylist: Playlist = {
-                    ...playlist,
-                    id: Date.now().toString(),
-                    createdAt: new Date()
-                };
+                            // Fallback to local state only
+            const newPlaylist: Playlist = {
+                ...playlist,
+                id: Date.now().toString(),
+                createdAt: new Date(),
+                songs: playlist.songs.map(song => ({
+                    ...song,
+                    // Ensure file_path is available
+                    file_path: song.file_path || songs.find(s => s.id === song.id)?.file_path
+                }))
+            };
                 setPlaylists(prev => [...prev, newPlaylist]);
             }
         } catch (error) {
@@ -1031,7 +1040,12 @@ const App: React.FC = () => {
             const newPlaylist: Playlist = {
                 ...playlist,
                 id: Date.now().toString(),
-                createdAt: new Date()
+                createdAt: new Date(),
+                songs: playlist.songs.map(song => ({
+                    ...song,
+                    // Ensure file_path is available
+                    file_path: song.file_path || songs.find(s => s.id === song.id)?.file_path
+                }))
             };
             setPlaylists(prev => [...prev, newPlaylist]);
         }

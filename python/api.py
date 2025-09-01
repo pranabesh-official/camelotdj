@@ -27,6 +27,8 @@ from mutagen.id3._frames import APIC, TIT2, TPE1, TALB, TDRC
 import requests
 from PIL import Image
 import io
+import platform
+import psutil
 
 #
 # Notes on setting up a flask GraphQL server
@@ -189,6 +191,21 @@ def handle_test_message(data):
     except Exception as e:
         print(f"⚠️ Test message handler error: {str(e)}")
 
+@socketio.on('get_usb_devices')
+def handle_get_usb_devices():
+    """Handle WebSocket request for USB devices"""
+    try:
+        client_id = getattr(request, 'sid', 'unknown')
+        print(f"🔌 Client {client_id} requested USB devices")
+        
+        devices = get_usb_devices()
+        emit('usb_devices', {'devices': devices})
+        print(f"✅ Sent {len(devices)} USB devices to client {client_id}")
+        
+    except Exception as e:
+        print(f"⚠️ Error handling USB devices request: {e}")
+        emit('usb_devices_error', {'error': str(e)})
+
 def emit_progress(download_id, progress_data):
     """Emit download progress to all connected clients"""
     print(f"📡 Emitting progress for {download_id}: {progress_data}")
@@ -198,6 +215,406 @@ def emit_progress(download_id, progress_data):
         **progress_data
     })
     print(f"✅ Progress emitted for {download_id}")
+
+# USB device detection and management
+def get_usb_devices():
+    """Detect USB devices and return their information"""
+    devices = []
+    
+    try:
+        system = platform.system()
+        
+        if system == "Darwin":  # macOS
+            # Use system_profiler to get USB device information
+            try:
+                result = subprocess.run(['system_profiler', 'SPUSBDataType'], 
+                                     capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    current_device = {}
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith('Product ID:'):
+                            if current_device:
+                                devices.append(current_device)
+                            current_device = {'product_id': line.split(':')[1].strip()}
+                        elif line.startswith('Vendor ID:'):
+                            current_device['vendor_id'] = line.split(':')[1].strip()
+                        elif line.startswith('Manufacturer:'):
+                            current_device['manufacturer'] = line.split(':')[1].strip()
+                        elif line.startswith('Product:'):
+                            current_device['product'] = line.split(':')[1].strip()
+                        elif line.startswith('Serial Number:'):
+                            current_device['serial'] = line.split(':')[1].strip()
+                        elif line.startswith('Speed:'):
+                            current_device['speed'] = line.split(':')[1].strip()
+                    
+                    if current_device:
+                        devices.append(current_device)
+                        
+            except subprocess.TimeoutExpired:
+                print("⚠️ USB detection timed out on macOS")
+            except Exception as e:
+                print(f"⚠️ Error detecting USB devices on macOS: {e}")
+                
+        elif system == "Windows":
+            # Use wmic to get USB device information
+            try:
+                result = subprocess.run(['wmic', 'path', 'Win32_USBHub', 'get', 'DeviceID,Name,Description'], 
+                                     capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')[1:]  # Skip header
+                    for line in lines:
+                        if line.strip():
+                            parts = line.strip().split()
+                            if len(parts) >= 2:
+                                devices.append({
+                                    'device_id': parts[0],
+                                    'name': ' '.join(parts[1:]),
+                                    'description': ' '.join(parts[1:])
+                                })
+            except subprocess.TimeoutExpired:
+                print("⚠️ USB detection timed out on Windows")
+            except Exception as e:
+                print(f"⚠️ Error detecting USB devices on Windows: {e}")
+                
+        elif system == "Linux":
+            # Use lsusb to get USB device information
+            try:
+                result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if line.strip():
+                            parts = line.split()
+                            if len(parts) >= 6:
+                                devices.append({
+                                    'bus': parts[1],
+                                    'device': parts[3],
+                                    'vendor_id': parts[5].split(':')[0],
+                                    'product_id': parts[5].split(':')[1],
+                                    'description': ' '.join(parts[6:])
+                                })
+            except subprocess.TimeoutExpired:
+                print("⚠️ USB detection timed out on Linux")
+            except Exception as e:
+                print(f"⚠️ Error detecting USB devices on Linux: {e}")
+        
+        # Get disk usage information for mounted USB drives
+        mounted_devices = get_mounted_usb_devices()
+        devices.extend(mounted_devices)
+        
+    except Exception as e:
+        print(f"⚠️ Error in USB device detection: {e}")
+    
+    return devices
+
+def get_mounted_usb_devices():
+    """Get information about mounted USB storage devices"""
+    mounted_devices = []
+    
+    try:
+        system = platform.system()
+        
+        if system == "Darwin":  # macOS
+            # Check /Volumes for mounted devices
+            volumes_dir = "/Volumes"
+            if os.path.exists(volumes_dir):
+                for item in os.listdir(volumes_dir):
+                    volume_path = os.path.join(volumes_dir, item)
+                    if os.path.ismount(volume_path):
+                        try:
+                            # Get disk usage information
+                            statvfs = os.statvfs(volume_path)
+                            total_space = statvfs.f_frsize * statvfs.f_blocks
+                            free_space = statvfs.f_frsize * statvfs.f_bavail
+                            used_space = total_space - free_space
+                            
+                            # Convert to GB
+                            total_gb = total_space / (1024**3)
+                            free_gb = free_space / (1024**3)
+                            used_gb = used_space / (1024**3)
+                            
+                            mounted_devices.append({
+                                'name': item,
+                                'path': volume_path,
+                                'total_space_gb': round(total_gb, 2),
+                                'free_space_gb': round(free_gb, 2),
+                                'used_space_gb': round(used_gb, 2),
+                                'free_space_percent': round((free_space / total_space) * 100, 1),
+                                'type': 'usb_storage'
+                            })
+                        except Exception as e:
+                            print(f"⚠️ Error getting disk usage for {volume_path}: {e}")
+                            
+        elif system == "Windows":
+            # Use wmic to get disk information
+            try:
+                result = subprocess.run(['wmic', 'logicaldisk', 'get', 'DeviceID,Size,FreeSpace,VolumeName'], 
+                                     capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')[1:]  # Skip header
+                    for line in lines:
+                        if line.strip():
+                            parts = line.strip().split()
+                            if len(parts) >= 4:
+                                try:
+                                    total_space = int(parts[1]) if parts[1].isdigit() else 0
+                                    free_space = int(parts[2]) if parts[2].isdigit() else 0
+                                    used_space = total_space - free_space
+                                    
+                                    # Convert to GB
+                                    total_gb = total_space / (1024**3)
+                                    free_gb = free_space / (1024**3)
+                                    used_gb = used_space / (1024**3)
+                                    
+                                    mounted_devices.append({
+                                        'name': parts[3] if parts[3] != 'None' else f"Drive {parts[0]}",
+                                        'path': f"{parts[0]}\\",
+                                        'total_space_gb': round(total_gb, 2),
+                                        'free_space_gb': round(free_gb, 2),
+                                        'used_space_gb': round(used_gb, 2),
+                                        'free_space_percent': round((free_space / total_space) * 100, 1) if total_space > 0 else 0,
+                                        'type': 'usb_storage'
+                                    })
+                                except (ValueError, IndexError):
+                                    continue
+            except subprocess.TimeoutExpired:
+                print("⚠️ Disk usage detection timed out on Windows")
+            except Exception as e:
+                print(f"⚠️ Error detecting disk usage on Windows: {e}")
+                
+        elif system == "Linux":
+            # Use df command to get disk usage
+            try:
+                result = subprocess.run(['df', '-h'], capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')[1:]  # Skip header
+                    for line in lines:
+                        if line.strip():
+                            parts = line.split()
+                            if len(parts) >= 6:
+                                try:
+                                    # Parse size strings like "100G", "1.5T"
+                                    total_str = parts[1]
+                                    used_str = parts[2]
+                                    available_str = parts[3]
+                                    
+                                    # Convert to GB (simplified conversion)
+                                    def parse_size(size_str):
+                                        if 'G' in size_str:
+                                            return float(size_str.replace('G', ''))
+                                        elif 'T' in size_str:
+                                            return float(size_str.replace('T', '')) * 1024
+                                        elif 'M' in size_str:
+                                            return float(size_str.replace('M', '')) / 1024
+                                        else:
+                                            return 0
+                                    
+                                    total_gb = parse_size(total_str)
+                                    used_gb = parse_size(used_str)
+                                    available_gb = parse_size(available_str)
+                                    
+                                    mounted_devices.append({
+                                        'name': parts[5] if len(parts) > 5 else parts[0],
+                                        'path': parts[5] if len(parts) > 5 else parts[0],
+                                        'total_space_gb': total_gb,
+                                        'free_space_gb': available_gb,
+                                        'used_space_gb': used_gb,
+                                        'free_space_percent': round((available_gb / total_gb) * 100, 1) if total_gb > 0 else 0,
+                                        'type': 'usb_storage'
+                                    })
+                                except (ValueError, IndexError):
+                                    continue
+            except subprocess.TimeoutExpired:
+                print("⚠️ Disk usage detection timed out on Linux")
+            except Exception as e:
+                print(f"⚠️ Error detecting disk usage on Linux: {e}")
+                
+    except Exception as e:
+        print(f"⚠️ Error in mounted USB device detection: {e}")
+    
+    return mounted_devices
+
+def export_playlist_to_usb(playlist_data, usb_path, progress_callback=None):
+    """Export playlist to USB device with real-time progress updates"""
+    try:
+        playlist_name = playlist_data.get('name', 'Unknown Playlist')
+        songs = playlist_data.get('songs', [])
+        
+        # Create playlist folder on USB
+        playlist_folder = os.path.join(usb_path, playlist_name)
+        if not os.path.exists(playlist_folder):
+            os.makedirs(playlist_folder)
+        
+        total_files = len(songs)
+        copied_files = 0
+        
+        # Create M3U playlist file
+        m3u_content = ['#EXTM3U']
+        
+        for song in songs:
+            try:
+                if progress_callback:
+                    progress_callback({
+                        'status': 'copying',
+                        'current_file': song.get('filename', 'Unknown'),
+                        'progress': (copied_files / total_files) * 100,
+                        'copied_files': copied_files,
+                        'total_files': total_files
+                    })
+                
+                # Copy song file to USB
+                source_path = song.get('file_path')
+                if source_path and os.path.exists(source_path):
+                    filename = song.get('filename', 'unknown.mp3')
+                    dest_path = os.path.join(playlist_folder, filename)
+                    
+                    # Copy file with progress
+                    shutil.copy2(source_path, dest_path)
+                    
+                    # Add to M3U playlist
+                    m3u_content.append(f'#EXTINF:0,{filename}')
+                    m3u_content.append(filename)
+                    
+                    copied_files += 1
+                    
+                    if progress_callback:
+                        progress_callback({
+                            'status': 'copying',
+                            'current_file': filename,
+                            'progress': (copied_files / total_files) * 100,
+                            'copied_files': copied_files,
+                            'total_files': total_files
+                        })
+                else:
+                    print(f"⚠️ Source file not found: {source_path}")
+                    
+            except Exception as e:
+                print(f"⚠️ Error copying file {song.get('filename', 'Unknown')}: {e}")
+                if progress_callback:
+                    progress_callback({
+                        'status': 'error',
+                        'error': f"Failed to copy {song.get('filename', 'Unknown')}: {str(e)}",
+                        'progress': (copied_files / total_files) * 100,
+                        'copied_files': copied_files,
+                        'total_files': total_files
+                    })
+        
+        # Write M3U playlist file
+        m3u_path = os.path.join(playlist_folder, f"{playlist_name}.m3u")
+        with open(m3u_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(m3u_content))
+        
+        if progress_callback:
+            progress_callback({
+                'status': 'completed',
+                'progress': 100,
+                'copied_files': copied_files,
+                'total_files': total_files,
+                'playlist_path': playlist_folder
+            })
+        
+        return {
+            'success': True,
+            'playlist_path': playlist_folder,
+            'copied_files': copied_files,
+            'total_files': total_files
+        }
+        
+    except Exception as e:
+        error_msg = f"Export failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        if progress_callback:
+            progress_callback({
+                'status': 'error',
+                'error': error_msg,
+                'progress': 0
+            })
+        return {
+            'success': False,
+            'error': error_msg
+        }
+
+# REST endpoints for USB device management
+@app.route('/api/usb/devices', methods=['GET'])
+def get_usb_devices_rest():
+    """REST endpoint to get USB devices"""
+    try:
+        # Check signing key
+        signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+        if signing_key != apiSigningKey:
+            return jsonify({"error": "invalid signature"}), 401
+        
+        devices = get_usb_devices()
+        return jsonify({
+            'success': True,
+            'devices': devices,
+            'count': len(devices)
+        })
+        
+    except Exception as e:
+        print(f"❌ Error in USB devices REST endpoint: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/usb/export', methods=['POST'])
+def export_playlist_to_usb_rest():
+    """REST endpoint to export playlist to USB"""
+    try:
+        # Check signing key
+        signing_key = request.headers.get('X-Signing-Key') or request.form.get('signingkey')
+        if signing_key != apiSigningKey:
+            return jsonify({"error": "invalid signature"}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        playlist_data = data.get('playlist')
+        usb_path = data.get('usb_path')
+        
+        if not playlist_data or not usb_path:
+            return jsonify({"error": "Missing playlist data or USB path"}), 400
+        
+        print(f"📤 REST export request for playlist '{playlist_data.get('name', 'Unknown')}' to USB: {usb_path}")
+        
+        # Perform the actual export
+        try:
+            result = export_playlist_to_usb(playlist_data, usb_path)
+            
+            if result['success']:
+                print(f"✅ Export completed successfully: {result}")
+                return jsonify({
+                    'success': True,
+                    'status': 'Export completed',
+                    'playlist_name': playlist_data.get('name', 'Unknown'),
+                    'usb_path': usb_path,
+                    'result': result
+                })
+            else:
+                print(f"❌ Export failed: {result.get('error', 'Unknown error')}")
+                return jsonify({
+                    'success': False,
+                    'error': result.get('error', 'Export failed')
+                }), 500
+                
+        except Exception as e:
+            print(f"❌ Export error: {e}")
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+        
+    except Exception as e:
+        print(f"❌ Error in USB export REST endpoint: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 # REST endpoints for file upload and music analysis
 @app.route('/upload-analyze', methods=['POST'])

@@ -476,7 +476,6 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   };
 
   const handleUSBExport = (playlist: Playlist) => {
-    console.log('🔌 USB Export clicked for playlist:', playlist);
     setPlaylistToExport(playlist);
     setShowUSBExport(true);
   };
@@ -647,13 +646,12 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
 
         {/* User Playlists */}
         <div className="user-playlists">
-                  {filteredPlaylists.map(playlist => {
+                          {filteredPlaylists.map(playlist => {
           const stats = {
             tracks: playlist.songs.length
           };
-          console.log('🔍 Rendering playlist:', playlist.name, 'with songs:', playlist.songs.length, 'playlist object:', playlist);
-            
-            return (
+          
+          return (
               <div
                 key={playlist.id}
                 className={`playlist-item-row user-playlist ${
@@ -674,7 +672,6 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 <div className="playlist-actions">
                   <button
                     onClick={(e) => {
-                      console.log('🔌 USB Export button clicked!');
                       e.stopPropagation();
                       handleUSBExport(playlist);
                     }}

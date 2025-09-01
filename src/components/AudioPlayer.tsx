@@ -133,6 +133,13 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       if (waveformResponse.status === 'success' && waveformResponse.waveform_data) {
         waveformData.current = waveformResponse.waveform_data;
         console.log(`📊 Successfully loaded waveform data: ${waveformResponse.waveform_data.length} samples`);
+        setIsLoadingWaveform(false);
+        
+        // Force a redraw of the waveform immediately after loading
+        setTimeout(() => {
+          console.log('🎨 Redrawing waveform after successful load...');
+          drawWaveform();
+        }, 0);
       } else {
         throw new Error(waveformResponse.error || 'Invalid waveform response');
       }

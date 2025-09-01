@@ -179,16 +179,16 @@
 }
 
 .device-selection-hint {
-  background: var(--brand-blue, #4a90e2);
-  color: var(--text-primary, #ffffff);
+  background: var(--elevated-bg, #3a3a3a);
+  color: var(--text-secondary, #cccccc);
   padding: var(--space-sm, 8px) var(--space-md, 12px);
   border-radius: var(--radius-sm, 4px);
   margin-bottom: var(--space-md, 12px);
   font-size: 0.8rem;
   text-align: center;
-  border: none;
+  border: 1px solid var(--border-color, #454545);
   font-family: var(--font-primary, 'Inter', sans-serif);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .loading {
@@ -353,15 +353,15 @@
 }
 
 .error-message {
-  background: var(--accent-red, #ff3b30);
-  color: var(--text-primary, #ffffff);
+  background: var(--elevated-bg, #3a3a3a);
+  color: var(--accent-red, #ff3b30);
   padding: var(--space-md, 12px) var(--space-lg, 16px);
   border-radius: var(--radius-md, 6px);
-  border: none;
+  border: 1px solid var(--accent-red, #ff3b30);
   margin-bottom: var(--space-lg, 16px);
   font-size: 0.85rem;
   font-family: var(--font-primary, 'Inter', sans-serif);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .modal-actions {

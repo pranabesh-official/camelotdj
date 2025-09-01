@@ -86,26 +86,21 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
       setIsLoading(true);
       setError(null);
       
-      console.log('🔌 Fetching USB devices...');
       const response = await fetch('http://localhost:5002/api/usb/devices?signingkey=devkey');
-      console.log('📡 Response status:', response.status);
       
       if (response.ok) {
         const data = await response.json();
-        console.log('📊 USB devices data:', data);
         if (data.success) {
           setUsbDevices(data.devices);
-          console.log('✅ USB devices loaded:', data.devices.length);
+          console.log('USB devices loaded:', data.devices.length);
         } else {
           setError(data.error || 'Failed to get USB devices');
-          console.error('❌ USB devices error:', data.error);
         }
       } else {
         setError('Failed to get USB devices');
-        console.error('❌ HTTP error:', response.status);
       }
     } catch (err) {
-      console.error('❌ Error getting USB devices:', err);
+      console.error('Error getting USB devices:', err);
       setError('Failed to get USB devices');
     } finally {
       setIsLoading(false);
@@ -119,10 +114,6 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
       setIsLoading(true);
       setError(null);
       
-      // Debug: Log the full playlist object
-      console.log('🔍 Full playlist object:', playlist);
-      console.log('🔍 Playlist songs:', playlist.songs);
-      
       const exportData = {
         playlist: {
           name: playlist.name,
@@ -134,9 +125,6 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
         usb_path: selectedDevice.path
       };
       
-      console.log('📤 Exporting playlist:', exportData);
-      
-      // Call the export API
       const response = await fetch('http://localhost:5002/api/usb/export', {
         method: 'POST',
         headers: {
@@ -146,25 +134,19 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
         body: JSON.stringify(exportData)
       });
       
-      console.log('📡 Export response status:', response.status);
-      
       if (response.ok) {
         const data = await response.json();
-        console.log('📊 Export response data:', data);
         if (data.success) {
-          // Show success message
-          alert(`✅ Playlist "${playlist.name}" exported successfully to ${selectedDevice.name}!`);
+          alert(`Playlist "${playlist.name}" exported successfully to ${selectedDevice.name}`);
           onClose();
         } else {
           setError(data.error || 'Export failed');
-          console.error('❌ Export failed:', data.error);
         }
       } else {
         setError('Export failed - server error');
-        console.error('❌ HTTP error:', response.status);
       }
     } catch (err) {
-      console.error('❌ Export error:', err);
+      console.error('Export error:', err);
       setError('Export failed - network error');
     } finally {
       setIsLoading(false);
@@ -175,8 +157,6 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
 
   // Filter USB storage devices
   const storageDevices = usbDevices.filter(device => device.type === 'usb_storage');
-  console.log('🔍 All USB devices:', usbDevices);
-  console.log('🔍 Storage devices only:', storageDevices);
 
   return (
     <div className="usb-export-overlay">
@@ -207,13 +187,13 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
                 title="Refresh USB devices"
               >
                 <RefreshIcon />
-                {isLoading ? 'Refreshing' : 'Refresh'}
+                {isLoading ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
             
             {!selectedDevice && (
               <div className="device-selection-hint">
-                <p>💡 Select a USB device to export your playlist</p>
+                <p>Select a USB device to export your playlist</p>
               </div>
             )}
             
@@ -226,53 +206,47 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
               </div>
             ) : (
               <div className="device-list">
-                {storageDevices.map((device, index) => {
-                  console.log('🔍 Rendering device:', device);
-                  return (
-                    <div
-                      key={index}
-                      className={`device-item ${selectedDevice?.path === device.path ? 'selected' : ''}`}
-                      onClick={() => {
-                        console.log('🔍 Device selected:', device);
-                        setSelectedDevice(device);
-                      }}
-                    >
-                      <div className="device-info">
-                        <div className="device-name">{device.name}</div>
-                        <div className="device-path">{device.path}</div>
-                      </div>
-                      <div className="device-status">
-                        <div className="device-space">
-                          <span className="free-space">
-                            {device.free_space_gb.toFixed(1)} GB free
-                          </span>
-                          <span className="total-space">
-                            of {device.total_space_gb.toFixed(1)} GB
-                          </span>
-                        </div>
-                        <div className="space-bar">
-                          <div 
-                            className="space-used"
-                            style={{ width: `${100 - device.free_space_percent}%` }}
-                          />
-                        </div>
-                        <span className="space-percent">
-                          {device.free_space_percent.toFixed(1)}% free
-                        </span>
-                        {selectedDevice?.path === device.path && (
-                          <div className="selected-indicator">✓</div>
-                        )}
-                      </div>
+                {storageDevices.map((device, index) => (
+                  <div
+                    key={index}
+                    className={`device-item ${selectedDevice?.path === device.path ? 'selected' : ''}`}
+                    onClick={() => setSelectedDevice(device)}
+                  >
+                    <div className="device-info">
+                      <div className="device-name">{device.name}</div>
+                      <div className="device-path">{device.path}</div>
                     </div>
-                  );
-                })}
+                    <div className="device-status">
+                      <div className="device-space">
+                        <span className="free-space">
+                          {device.free_space_gb.toFixed(1)} GB free
+                        </span>
+                        <span className="total-space">
+                          of {device.total_space_gb.toFixed(1)} GB
+                        </span>
+                      </div>
+                      <div className="space-bar">
+                        <div 
+                          className="space-used"
+                          style={{ width: `${100 - device.free_space_percent}%` }}
+                        />
+                      </div>
+                      <span className="space-percent">
+                        {device.free_space_percent.toFixed(1)}% free
+                      </span>
+                      {selectedDevice?.path === device.path && (
+                        <div className="selected-indicator">✓</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
           
           {error && (
             <div className="error-message">
-              ❌ {error}
+              {error}
             </div>
           )}
         </div>

@@ -133,18 +133,19 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       if (waveformResponse.status === 'success' && waveformResponse.waveform_data) {
         waveformData.current = waveformResponse.waveform_data;
         console.log(`📊 Successfully loaded waveform data: ${waveformResponse.waveform_data.length} samples`);
+        
+        // Clear loading state and force redraw
         setIsLoadingWaveform(false);
+        setWaveformError(null);
         
         // Force a redraw of the waveform immediately after loading
-        setTimeout(() => {
+        requestAnimationFrame(() => {
           console.log('🎨 Redrawing waveform after successful load...');
           drawWaveform();
-        }, 0);
+        });
       } else {
         throw new Error(waveformResponse.error || 'Invalid waveform response');
       }
-      
-      setIsLoadingWaveform(false);
       
     } catch (error) {
       console.error('Failed to fetch waveform:', error);
@@ -198,9 +199,10 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     console.log('📊 Using enhanced fallback waveform data');
     
     // Force a redraw of the waveform immediately
-    setTimeout(() => {
+    requestAnimationFrame(() => {
+      console.log('🎨 Redrawing waveform after fallback generation...');
       drawWaveform();
-    }, 0);
+    });
   };
 
   const drawWaveform = useCallback(() => {
@@ -387,6 +389,16 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       }
     };
   }, [isLoading, isLoadingWaveform, drawWaveform, animationFrame]);
+
+  // Redraw waveform when data changes
+  useEffect(() => {
+    if (!isLoadingWaveform && waveformData.current.length > 0) {
+      console.log('🔄 Waveform data changed, redrawing...');
+      requestAnimationFrame(() => {
+        drawWaveform();
+      });
+    }
+  }, [isLoadingWaveform, drawWaveform]);
 
   const togglePlayPause = async () => {
     const audio = audioRef.current;

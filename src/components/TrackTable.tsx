@@ -173,7 +173,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
     setEditingValue('');
   };
 
-  const saveEdit = (song: Song) => {
+  const saveEdit = async (song: Song) => {
     if (!editingCell || !onSongUpdate) return;
     
     const { field } = editingCell;
@@ -190,7 +190,25 @@ const TrackTable: React.FC<TrackTableProps> = ({
       [field]: newValue
     };
     
+    // Update local state via parent component
     onSongUpdate(updatedSong);
+    
+    // Also update backend API
+    try {
+      await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
+        body: JSON.stringify({ 
+          song_id: song.id, 
+          filename: song.filename, 
+          file_path: song.file_path, 
+          metadata: { [field]: newValue } 
+        })
+      });
+    } catch (err) {
+      console.error(`Failed to persist ${field} update to backend:`, err);
+    }
+    
     cancelEditing();
   };
 
@@ -242,6 +260,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // Handle metadata editor save
   const handleMetadataSave = async (updatedSong: Song, renameFile: boolean) => {
     if (onSongUpdate) {
+      // onSongUpdate will handle both local state update and Firestore sync
       await onSongUpdate(updatedSong);
     }
     
@@ -250,8 +269,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
       s.id === updatedSong.id ? updatedSong : s
     );
     
-    // Note: The parent component should handle the songs state update
-    // This is just for local state management
+    // Note: The parent component (App.tsx) now handles both local state update
+    // and Firestore database synchronization via the onSongUpdate function
   };
 
   // SVG Icon components for professional look
@@ -523,8 +542,13 @@ const TrackTable: React.FC<TrackTableProps> = ({
                           style={{ cursor: 'pointer', color: filled ? '#FFD700' : undefined }}
                           onClick={async (e) => {
                             e.stopPropagation();
+                            // Create updated song with new rating
                             const optimistic = { ...song, rating: star } as any;
+                            
+                            // Update local state via parent component (which now also updates Firestore)
                             onSongUpdate && onSongUpdate(optimistic);
+                            
+                            // Also update backend API
                             try {
                               await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
                                 method: 'PUT',

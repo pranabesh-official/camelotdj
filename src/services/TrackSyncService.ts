@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { doc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, writeBatch, collection } from 'firebase/firestore';
 
 export interface TrackMetadataPayload {
     id: string;
@@ -23,31 +23,73 @@ export interface TrackMetadataPayload {
 export async function upsertUserTrack(userId: string, track: TrackMetadataPayload): Promise<void> {
     // Store per-user track under users/{uid}/tracks/{track_id}
     const tid = track.track_id || track.id;
+    if (!tid) {
+        console.error('[FS] Error: No track_id or id provided for track', track.filename);
+        throw new Error('No track_id or id provided for Firestore sync');
+    }
+    
     const ref = doc(db, 'users', userId, 'tracks', String(tid));
     try {
-        console.log('[FS] Upsert track', { userId, trackId: String(tid), online: typeof navigator !== 'undefined' ? navigator.onLine : undefined });
-        await setDoc(ref, {
+        console.log('[FS] Upsert track', { 
+            userId, 
+            trackId: String(tid), 
+            filename: track.filename,
+            path: `users/${userId}/tracks/${String(tid)}`,
+            online: typeof navigator !== 'undefined' ? navigator.onLine : undefined 
+        });
+        
+        // Ensure we have a valid object to save
+        const trackToSave = {
             ...track,
             updatedAt: serverTimestamp(),
-        }, { merge: true });
-        console.log('[FS] Upsert OK');
+        };
+        
+        await setDoc(ref, trackToSave, { merge: true });
+        console.log('[FS] Upsert OK for track:', track.filename);
     } catch (e) {
         console.error('[FS] Upsert error:', e);
         throw e;
     }
-
 }
 
 export async function upsertManyUserTracks(userId: string, tracks: TrackMetadataPayload[]): Promise<void> {
-    if (!tracks || tracks.length === 0) return;
+    if (!tracks || tracks.length === 0) {
+        console.log('[FS] No tracks to batch upsert');
+        return;
+    }
+    
+    // Filter out tracks without track_id or id
+    const validTracks = tracks.filter(track => {
+        const tid = track.track_id || track.id;
+        if (!tid) {
+            console.error('[FS] Skipping track with no track_id or id:', track.filename);
+            return false;
+        }
+        return true;
+    });
+    
+    if (validTracks.length === 0) {
+        console.error('[FS] No valid tracks to batch upsert after filtering');
+        return;
+    }
+    
     const batch = writeBatch(db);
-    tracks.forEach((track) => {
+    const trackIds: string[] = [];
+    
+    validTracks.forEach((track) => {
         const tid = track.track_id || track.id;
         const ref = doc(db, 'users', userId, 'tracks', String(tid));
         batch.set(ref, { ...track, updatedAt: serverTimestamp() }, { merge: true });
+        trackIds.push(String(tid));
     });
+    
     try {
-        console.log('[FS] Batch upsert', { count: tracks.length, userId, online: typeof navigator !== 'undefined' ? navigator.onLine : undefined });
+        console.log('[FS] Batch upsert', { 
+            count: validTracks.length, 
+            userId, 
+            trackIds,
+            online: typeof navigator !== 'undefined' ? navigator.onLine : undefined 
+        });
         await batch.commit();
         console.log('[FS] Batch upsert OK');
     } catch (e) {
@@ -65,6 +107,50 @@ export async function writeAuthHealth(userId: string): Promise<void> {
         console.log('[FS] Health check OK');
     } catch (e) {
         console.error('[FS] Health check error:', e);
+        throw e;
+    }
+}
+
+/**
+ * Save song analysis data to the global analysis_songs collection
+ * This allows sharing analysis data across users
+ */
+export async function saveToAnalysisSongs(userId: string, track: TrackMetadataPayload): Promise<void> {
+    // Use track_id or id as the document ID in analysis_songs collection
+    const tid = track.track_id || track.id;
+    if (!tid) {
+        console.error('[FS] Error: No track_id or id provided for analysis_songs', track.filename);
+        throw new Error('No track_id or id provided for analysis_songs sync');
+    }
+    
+    const ref = doc(db, 'analysis_songs', String(tid));
+    try {
+        console.log('[FS] Saving to analysis_songs', { 
+            userId, 
+            trackId: String(tid), 
+            filename: track.filename,
+            path: `analysis_songs/${String(tid)}`,
+            online: typeof navigator !== 'undefined' ? navigator.onLine : undefined 
+        });
+        
+        // Prepare data to save - include user info and metadata
+        const dataToSave = {
+            ...track,
+            user_id: userId,
+            username: track.id3?.artist || 'Unknown',
+            title: track.id3?.title || track.filename,
+            artist: track.id3?.artist || 'Unknown',
+            album: track.id3?.album || 'Unknown',
+            genre: track.id3?.genre || 'Unknown',
+            year: track.id3?.year || '',
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp()
+        };
+        
+        await setDoc(ref, dataToSave, { merge: true });
+        console.log('[FS] Save to analysis_songs OK for track:', track.filename);
+    } catch (e) {
+        console.error('[FS] Save to analysis_songs error:', e);
         throw e;
     }
 }

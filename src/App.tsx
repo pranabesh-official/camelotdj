@@ -11,7 +11,7 @@ import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import AuthGate from './components/AuthGate';
 import { useAuth } from './services/AuthContext';
-import { upsertUserTrack, upsertManyUserTracks } from './services/TrackSyncService';
+import { upsertUserTrack, upsertManyUserTracks, saveToAnalysisSongs } from './services/TrackSyncService';
 import logoWhite from './assets/logwhite.png';
 
 export interface Song {
@@ -420,12 +420,25 @@ const App: React.FC = () => {
                     // Firestore sync (offline-first; will upload when online)
                     try {
                         if (user?.uid) {
+                            console.log('Syncing to Firestore:', { uid: user.uid, track_id: newSong.track_id });
+                            // Save to user's tracks collection
                             await upsertUserTrack(user.uid, {
                                 ...newSong,
+                                id3: sanitizeId3(newSong.id3 || {})
                             } as any);
+                            
+                            // Also save to global analysis_songs collection
+                            await saveToAnalysisSongs(user.uid, {
+                                ...newSong,
+                                id3: sanitizeId3(newSong.id3 || {})
+                            } as any);
+                            
+                            console.log('Firestore sync successful');
+                        } else {
+                            console.warn('User not authenticated, skipping Firestore sync');
                         }
                     } catch (syncErr) {
-                        console.warn('Firestore track sync failed (will retry when online):', syncErr);
+                        console.error('Firestore track sync failed (will retry when online):', syncErr);
                     }
                     break; // Success, exit retry loop
                 } else {
@@ -551,10 +564,32 @@ const App: React.FC = () => {
         // Firestore batch sync for folder uploads (offline-first)
         try {
             if (user?.uid && syncedTracks.length > 0) {
-                await upsertManyUserTracks(user.uid, syncedTracks as any);
+                console.log('Batch syncing to Firestore:', { uid: user.uid, trackCount: syncedTracks.length });
+                // Ensure id3 tags are sanitized for each track
+                const sanitizedTracks = syncedTracks.map(track => ({
+                    ...track,
+                    id3: sanitizeId3(track.id3 || {})
+                }));
+                
+                // Save to user's tracks collection in batch
+                await upsertManyUserTracks(user.uid, sanitizedTracks as any);
+                
+                // Also save each track to global analysis_songs collection
+                for (const track of sanitizedTracks) {
+                    try {
+                        await saveToAnalysisSongs(user.uid, track as any);
+                    } catch (analysisSyncErr) {
+                        console.error('Failed to sync track to analysis_songs:', analysisSyncErr);
+                        // Continue with other tracks
+                    }
+                }
+                
+                console.log('Firestore batch sync successful');
+            } else {
+                console.warn('User not authenticated or no tracks to sync, skipping Firestore batch sync');
             }
         } catch (syncErr) {
-            console.warn('Firestore batch track sync failed (folder) - will retry when online:', syncErr);
+            console.error('Firestore batch track sync failed (folder) - will retry when online:', syncErr);
         }
 
         if (successCount > 0) {
@@ -868,7 +903,13 @@ const App: React.FC = () => {
         (async () => {
             try {
                 if (user?.uid) {
+                    // Save to user's tracks collection
                     await upsertUserTrack(user.uid, {
+                        ...newSong,
+                    } as any);
+                    
+                    // Also save to global analysis_songs collection
+                    await saveToAnalysisSongs(user.uid, {
                         ...newSong,
                     } as any);
                 }
@@ -896,6 +937,27 @@ const App: React.FC = () => {
             // Update currently playing if it's the one being edited
             if (currentlyPlaying && currentlyPlaying.id === updatedSong.id) {
                 setCurrentlyPlaying(updatedSong);
+            }
+            
+            // Sync updated metadata to Firestore
+            if (user?.uid) {
+                try {
+                    // Update in user's tracks collection
+                    await upsertUserTrack(user.uid, {
+                        ...updatedSong,
+                        id3: sanitizeId3(updatedSong.id3 || {})
+                    } as any);
+                    
+                    // Also update in global analysis_songs collection
+                    await saveToAnalysisSongs(user.uid, {
+                        ...updatedSong,
+                        id3: sanitizeId3(updatedSong.id3 || {})
+                    } as any);
+                    
+                    console.log('Metadata synced to Firestore successfully');
+                } catch (syncErr) {
+                    console.warn('Firestore metadata sync failed - will retry when online:', syncErr);
+                }
             }
             
             console.log('Song updated successfully:', updatedSong.filename);

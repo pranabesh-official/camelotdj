@@ -109,6 +109,7 @@ const MetadataEditor: React.FC<MetadataEditorProps> = ({
         updatedSong = { ...updatedSong, filename: renameJson.song.filename, file_path: renameJson.song.file_path } as Song;
       }
 
+      // Call parent component's onSave which will update local state and Firestore
       await onSave(updatedSong, renameFile);
       setSuccess('Saved successfully');
       setTimeout(() => { onClose(); }, 1200);

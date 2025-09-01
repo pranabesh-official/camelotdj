@@ -143,6 +143,12 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
           console.log('🎨 Redrawing waveform after successful load...');
           drawWaveform();
         });
+        
+        // Also redraw after a short delay to ensure it's visible
+        setTimeout(() => {
+          console.log('🎨 Delayed redraw to ensure visibility...');
+          drawWaveform();
+        }, 100);
       } else {
         throw new Error(waveformResponse.error || 'Invalid waveform response');
       }
@@ -223,7 +229,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    if (isLoading || isLoadingWaveform) {
+    if (isLoadingWaveform) {
       // Enhanced loading state with animated bars
       const loadingBars = 20;
       const barWidth = width / loadingBars;
@@ -248,7 +254,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       ctx.fillStyle = '#888';
       ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(isLoadingWaveform ? '' : '', width / 2, height - 8);
+      ctx.fillText('Loading waveform...', width / 2, height - 8);
       return;
     }
 

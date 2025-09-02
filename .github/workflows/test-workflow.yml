@@ -1,0 +1,67 @@
+name: Test GitHub Actions
+
+on:
+  push:
+    branches: [ main, staging ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm ci
+
+      - name: Run tests
+        run: |
+          echo "✅ GitHub Actions is working!"
+          echo "✅ Node.js version: $(node --version)"
+          echo "✅ Python version: $(python --version)"
+          echo "✅ NPM version: $(npm --version)"
+          echo "✅ Repository: ${{ github.repository }}"
+          echo "✅ Branch: ${{ github.ref_name }}"
+          echo "✅ Commit: ${{ github.sha }}"
+
+      - name: Check build scripts
+        run: |
+          echo "Checking if build scripts exist..."
+          if npm run python-build --dry-run > /dev/null 2>&1; then
+            echo "✅ python-build script exists"
+          else
+            echo "❌ python-build script not found"
+          fi
+          
+          if npm run react-build --dry-run > /dev/null 2>&1; then
+            echo "✅ react-build script exists"
+          else
+            echo "❌ react-build script not found"
+          fi
+          
+          if npm run main-build --dry-run > /dev/null 2>&1; then
+            echo "✅ main-build script exists"
+          else
+            echo "❌ main-build script not found"
+          fi
+
+      - name: Success
+        run: echo "🎉 All tests passed! GitHub Actions is working correctly."

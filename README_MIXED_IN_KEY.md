@@ -1,6 +1,12 @@
-# Mixed In Key - Music Analyzer
+# CamelotDJ - Open Source Music Analyzer
 
-A powerful desktop application for analyzing music files and providing harmonic mixing capabilities for DJs and music enthusiasts. Built with Electron, React, and Python for comprehensive music analysis.
+**An open-source desktop application for analyzing music files and providing harmonic mixing capabilities for DJs and music enthusiasts, inspired by [Mixed In Key](https://mixedinkey.com/).**
+
+Built with Electron, React, TypeScript, and Python for comprehensive music analysis. This project aims to provide the powerful music analysis capabilities of Mixed In Key as a free, open-source alternative.
+
+## 🎯 Project Mission
+
+CamelotDJ is designed to democratize access to professional-grade music analysis tools. While [Mixed In Key](https://mixedinkey.com/) offers excellent commercial software, this open-source project provides similar functionality for the community, allowing DJs and producers to analyze their music without financial barriers.
 
 ## ✨ Features
 
@@ -34,11 +40,20 @@ A powerful desktop application for analyzing music files and providing harmonic 
 
 1. **Clone and setup**
    ```bash
-   git clone <repository-url>
-   cd mixed_in_key
+   git clone https://github.com/pranabesh-official/camelotdj.git
+   cd camelotdj
    ```
 
-2. **Install dependencies**
+2. **Environment Setup**
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit .env with your Firebase configuration
+   # Get Firebase config from: https://console.firebase.google.com/
+   ```
+
+3. **Install dependencies**
    ```bash
    # Python dependencies
    pip3 install -r requirements.txt
@@ -47,14 +62,33 @@ A powerful desktop application for analyzing music files and providing harmonic 
    npm install
    ```
 
-3. **Run the application**
+4. **Run the application**
    ```bash
    npm run start
    ```
 
+## 🔐 Firebase Configuration
+
+This application uses Firebase for authentication and data storage. You'll need to:
+
+1. **Create a Firebase project** at [Firebase Console](https://console.firebase.google.com/)
+2. **Enable Authentication** with Google sign-in
+3. **Create a Firestore database**
+4. **Copy your config** to the `.env` file
+
+Your `.env` file should look like this:
+```bash
+REACT_APP_FIREBASE_API_KEY=your_actual_api_key
+REACT_APP_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=your_project_id
+# ... other Firebase config values
+```
+
+**⚠️ Important**: Never commit your `.env` file to version control. It's already excluded in `.gitignore`.
+
 ## 🎯 How to Use
 
-1. **Upload Music**: Drag and drop audio files or use the \"Add Songs\" tab
+1. **Upload Music**: Drag and drop audio files or use the "Add Songs" tab
 2. **View Analysis**: Check the results in your Music Library
 3. **Find Compatible Songs**: Use the Camelot Wheel to find harmonic matches
 4. **Sort and Filter**: Organize by key, BPM, or energy level
@@ -66,6 +100,7 @@ A powerful desktop application for analyzing music files and providing harmonic 
 - **Backend**: Python Flask with GraphQL and REST APIs
 - **Desktop**: Electron for cross-platform desktop application
 - **Analysis**: Librosa and Essentia for music analysis
+- **Database**: Firebase Firestore with offline persistence
 
 ### Music Analysis Engine
 - **Key Detection**: Combined Essentia KeyExtractor and Librosa chroma analysis
@@ -97,15 +132,17 @@ The Camelot Wheel system simplifies harmonic mixing:
 
 ### Project Structure
 ```
-mixed_in_key/
+camelotdj/
 ├── src/                 # React frontend
 │   ├── components/      # UI components
+│   ├── services/        # Firebase and API services
 │   ├── App.tsx         # Main application
 │   └── App.css         # Styling
 ├── python/             # Python backend
 │   ├── api.py          # Flask server
 │   └── music_analyzer.py # Analysis engine
 ├── main/               # Electron main process
+├── .env.example        # Environment variables template
 └── package.json        # Configuration
 ```
 
@@ -123,7 +160,7 @@ Visit `http://127.0.0.1:5000/graphiql/` for GraphQL interface.
 
 1. **OpenSSL Error (Node.js 17+)**
    ```bash
-   export NODE_OPTIONS=\"--openssl-legacy-provider\"
+   export NODE_OPTIONS="--openssl-legacy-provider"
    npm run start
    ```
 
@@ -132,11 +169,16 @@ Visit `http://127.0.0.1:5000/graphiql/` for GraphQL interface.
    pip3 install librosa essentia mutagen flask flask-cors flask-graphql
    ```
 
-3. **Port 5000 in Use**
+3. **Firebase Configuration Error**
+   - Ensure all environment variables are set in `.env`
+   - Check Firebase project settings and permissions
+   - Verify API keys are correct
+
+4. **Port 5000 in Use**
    - The backend will automatically find an available port
    - Or manually specify: `python3 api.py --apiport 5001`
 
-4. **Audio File Not Supported**
+5. **Audio File Not Supported**
    - Supported: MP3, WAV, FLAC, AAC, OGG, M4A
    - Try converting with audio conversion software
 
@@ -166,11 +208,19 @@ This creates:
 
 ## 🤝 Contributing
 
+We welcome contributions! This is an open-source project inspired by Mixed In Key, and we'd love your help to make it even better.
+
 1. Fork the repository
 2. Create a feature branch
 3. Add your improvements
 4. Test thoroughly
 5. Submit a pull request
+
+### Development Guidelines
+- Follow TypeScript best practices
+- Add tests for new features
+- Update documentation as needed
+- Ensure Firebase security rules are maintained
 
 ## 📄 License
 
@@ -178,27 +228,36 @@ MIT License - see LICENSE.txt for details
 
 ## 🙏 Acknowledgments
 
-- Built on [electron-python](https://github.com/yoDon/electron-python) boilerplate
-- Inspired by [Mixed In Key](https://mixedinkey.com/) software
-- Music analysis by [Librosa](https://librosa.org/) and [Essentia](https://essentia.upf.edu/)
-- Harmonic mixing concepts from the Camelot Wheel system
+- **Inspired by**: [Mixed In Key](https://mixedinkey.com/) - The industry standard for harmonic mixing software
+- **Built on**: [electron-python](https://github.com/yoDon/electron-python) boilerplate
+- **Music analysis**: [Librosa](https://librosa.org/) and [Essentia](https://essentia.upf.edu/)
+- **Harmonic mixing concepts**: From the Camelot Wheel system and DJ community
+
+## 🔗 Related Projects
+
+- [Mixed In Key](https://mixedinkey.com/) - Commercial software that inspired this project
+- [Camelot Wheel](https://en.wikipedia.org/wiki/Circle_of_fifths) - Harmonic mixing system
+- [Essentia](https://essentia.upf.edu/) - Music analysis library
+- [Librosa](https://librosa.org/) - Audio analysis library
 
 ## 📊 Example Output
 
 ```json
 {
-  \"filename\": \"track.mp3\",
-  \"key\": \"A\",
-  \"scale\": \"minor\", 
-  \"key_name\": \"A minor\",
-  \"camelot_key\": \"8A\",
-  \"bpm\": 128,
-  \"energy_level\": 7,
-  \"duration\": 240.5,
-  \"status\": \"success\"
+  "filename": "track.mp3",
+  "key": "A",
+  "scale": "minor", 
+  "key_name": "A minor",
+  "camelot_key": "8A",
+  "bpm": 128,
+  "energy_level": 7,
+  "duration": 240.5,
+  "status": "success"
 }
 ```
 
 ---
 
 **Ready to mix harmonically? Upload your first track and discover the magic of musical key analysis!** 🎶
+
+*This project is not affiliated with Mixed In Key LLC. It's an open-source alternative inspired by their excellent software.*

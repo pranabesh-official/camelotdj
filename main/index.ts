@@ -267,7 +267,71 @@ function createWindow() {
     const serveStatic = require('serve-static');
     const getPort = require('get-port');
 
-    const buildDir = path.join(__dirname, '/../build');
+    // Fix the build directory path for production builds
+    let buildDir = path.join(__dirname, '/../build');
+    
+    // Check if we're in a packaged app and adjust the path accordingly
+    if (__dirname.includes('.asar')) {
+        // We're in a packaged app, the build directory is in the app.asar.unpacked or resources
+        buildDir = path.join(__dirname, '/../../build');
+        
+        // Alternative paths to try
+        const possibleBuildPaths = [
+            buildDir,
+            path.join(__dirname, '/../build'),
+            path.join(__dirname, '/../../build'),
+            path.join(process.resourcesPath, 'build'),
+            path.join(process.resourcesPath, 'app.asar.unpacked/build'),
+            path.join(__dirname, '/../app.asar.unpacked/build')
+        ];
+        
+        console.log('🔍 Searching for build directory in packaged app...');
+        console.log('Current __dirname:', __dirname);
+        console.log('Process resources path:', process.resourcesPath);
+        
+        // Find the first existing build directory
+        for (const testPath of possibleBuildPaths) {
+            console.log('Testing path:', testPath, 'exists:', fs.existsSync(testPath));
+            if (fs.existsSync(testPath)) {
+                buildDir = testPath;
+                console.log('✅ Found build directory at:', buildDir);
+                
+                // List contents of the build directory
+                try {
+                    const buildContents = fs.readdirSync(buildDir);
+                    console.log('📁 Build directory contents:', buildContents);
+                    
+                    // Check if index.html exists
+                    const indexPath = path.join(buildDir, 'index.html');
+                    if (fs.existsSync(indexPath)) {
+                        console.log('✅ index.html found at:', indexPath);
+                    } else {
+                        console.log('❌ index.html not found in build directory');
+                    }
+                } catch (err) {
+                    console.error('❌ Error reading build directory:', err);
+                }
+                break;
+            }
+        }
+        
+        if (!fs.existsSync(buildDir)) {
+            console.error('❌ Build directory not found at any expected location');
+            console.log('Searched paths:', possibleBuildPaths);
+            dialog.showErrorBox('Build Error', 'React build directory not found. Please rebuild the application.');
+            return;
+        }
+    } else {
+        console.log('🔍 Running in development mode, using build directory:', buildDir);
+        if (fs.existsSync(buildDir)) {
+            const buildContents = fs.readdirSync(buildDir);
+            console.log('📁 Build directory contents:', buildContents);
+        } else {
+            console.log('❌ Build directory not found in development mode');
+        }
+    }
+    
+    console.log('📁 Using build directory:', buildDir);
     const serve = serveStatic(buildDir, { index: ['index.html'] });
 
     (async () => {

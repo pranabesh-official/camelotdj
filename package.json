@@ -88,10 +88,14 @@
         "asarUnpack": [
             "pythondist/**",
             "python/**",
+            "build/**",
+            "build/static/**",
+            "build/static/css/**",
+            "build/static/js/**",
+            "build/static/media/**",
             "build/logwhite.png",
             "build/applogo.png",
-            "logwhite.png",
-            "build/static/logwhite.png"
+            "logwhite.png"
         ],
         "icon": "applogo.icns",
         "directories": {
@@ -108,13 +112,20 @@
             "python/**",
             "build/**"
         ],
-        "extraResources": [],
+        "extraResources": [
+            {
+                "from": "build",
+                "to": "build",
+                "filter": ["**/*"]
+            }
+        ],
         "extraFiles": [],
         "mac": {
             "target": [
                 {
                     "target": "zip",
                     "arch": [
+                        "x64",
                         "arm64"
                     ]
                 }
@@ -124,7 +135,15 @@
         "dmg": {},
         "pkg": {},
         "win": {
-            "target": "nsis"
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                }
+            ]
         },
         "nsis": {},
         "nsisWeb": {},

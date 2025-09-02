@@ -149,12 +149,12 @@ npm run python-start
 - Check that `src/firebase.ts` file is present
 - Verify environment variables are loaded correctly
 
-#### 2. **Port 3001 Already in Use**
-**Problem**: `Something is already running on port 3001`
+#### 2. **Port 3002 Already in Use**
+**Problem**: `Something is already running on port 3002`
 **Solution**:
 ```bash
-# Kill processes using port 3001
-lsof -ti:3001 | xargs kill -9
+# Kill processes using port 3002
+lsof -ti:3002 | xargs kill -9
 
 # Or change the port in package.json
 # Edit the react-start script to use a different port

@@ -23,6 +23,8 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
+.cursor/rules/
+.kilocode/rules/
 *.swp
 *.swo
 *~

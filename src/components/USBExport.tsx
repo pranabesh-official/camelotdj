@@ -157,6 +157,7 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
 
   // Filter USB storage devices
   const storageDevices = usbDevices.filter(device => device.type === 'usb_storage');
+  const otherDevices = usbDevices.filter(device => device.type !== 'usb_storage');
 
   return (
     <div className="usb-export-overlay">
@@ -201,8 +202,15 @@ const USBExport: React.FC<USBExportProps> = ({ playlist, onClose }) => {
               <div className="loading">Loading USB devices...</div>
             ) : storageDevices.length === 0 ? (
               <div className="no-devices">
-                <p>No USB devices detected</p>
-                <p className="hint">Connect a USB drive and click Refresh</p>
+                <p>No USB storage devices detected</p>
+                <p className="hint">Connect a USB drive or external hard drive and click Refresh</p>
+                {otherDevices.length > 0 && (
+                  <div className="other-devices-info">
+                    <p className="info-text">
+                      Found {otherDevices.length} other USB devices (mouse, keyboard, etc.) but no storage devices.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="device-list">

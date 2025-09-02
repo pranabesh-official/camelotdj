@@ -230,31 +230,37 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     ctx.fillRect(0, 0, width, height);
 
     if (isLoadingWaveform) {
-      // Enhanced loading state with animated bars
-      const loadingBars = 20;
-      const barWidth = width / loadingBars;
-      const time = Date.now() * 0.005;
-      
-      for (let i = 0; i < loadingBars; i++) {
-        const barHeight = Math.sin(time + i * 0.3) * 0.5 + 0.5;
+      // Professional shimmer skeleton for waveform loading
+      const skeletonBars = 120;
+      const barWidth = Math.max(2, width / skeletonBars);
+
+      // Base neutral bars (subtle variation, deterministic per index)
+      for (let i = 0; i < skeletonBars; i++) {
         const x = i * barWidth;
-        const y = (height - barHeight * height * 0.6) / 2;
-        
-        // Create gradient for loading bars
-        const barGradient = ctx.createLinearGradient(x, y, x, y + barHeight * height * 0.6);
-        barGradient.addColorStop(0, '#1db954');
-        barGradient.addColorStop(0.5, '#1ed760');
-        barGradient.addColorStop(1, '#1db954');
-        
-        ctx.fillStyle = barGradient;
-        ctx.fillRect(x + 1, y, Math.max(barWidth - 2, 1), barHeight * height * 0.6);
+        // Deterministic pseudo-random height between 35% and 65%
+        const rand = Math.abs(Math.sin(i * 12.9898) * 43758.5453) % 1;
+        const base = 0.35 + rand * 0.30;
+        const barHeight = Math.max(2, base * height * 0.8);
+        const y = (height - barHeight) / 2;
+
+        const neutral = ctx.createLinearGradient(x, y, x, y + barHeight);
+        neutral.addColorStop(0, '#3a3a3a');
+        neutral.addColorStop(1, '#2e2e2e');
+        ctx.fillStyle = neutral;
+        ctx.fillRect(x + 0.5, y, Math.max(barWidth - 1, 1), barHeight);
       }
-      
-      // Loading text with better styling
-      ctx.fillStyle = '#888';
-      ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Loading waveform...', width / 2, height - 8);
+
+      // Shimmer sweep overlay
+      const shimmerWidth = Math.max(width * 0.18, 80);
+      const t = (Date.now() * 0.4) % (width + shimmerWidth);
+      const shimmerX = t - shimmerWidth;
+      const shimmerGradient = ctx.createLinearGradient(shimmerX, 0, shimmerX + shimmerWidth, 0);
+      shimmerGradient.addColorStop(0, 'rgba(255,255,255,0)');
+      shimmerGradient.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+      shimmerGradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = shimmerGradient;
+      ctx.fillRect(0, 0, width, height);
+
       return;
     }
 

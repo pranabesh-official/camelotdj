@@ -132,7 +132,11 @@ parser.add_argument("--apiport", type=int, default=5000)
 parser.add_argument("--signingkey", type=str, default="")
 args = parser.parse_args()
 
-apiSigningKey = args.signingkey
+# Resolve signing key with safe fallbacks for development
+apiSigningKey = args.signingkey or os.environ.get('API_SIGNING_KEY', '')
+if not apiSigningKey:
+    # In dev environments the Electron main process and npm scripts use 'devkey'
+    apiSigningKey = 'devkey'
 
 # Initialize database manager
 db_manager = DatabaseManager()
@@ -140,10 +144,30 @@ db_manager = DatabaseManager()
 app = Flask(__name__)
 app.add_url_rule("/graphql/", view_func=view_func)
 app.add_url_rule("/graphiql/", view_func=view_func) # for compatibility with other samples
-CORS(app) # Allows all domains to access the flask server via CORS
+# Allow cross-origin requests from the embedded renderer with credentials and custom headers
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": "*"}}, expose_headers=["X-Signing-Key"]) 
 
 # Initialize SocketIO for real-time communication
 socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+# Utility: get signing key from any common location
+def get_request_signing_key():
+    try:
+        # Prefer explicit header; fall back to query, form, JSON body, or cookie
+        request_json = None
+        try:
+            request_json = request.get_json(silent=True) or {}
+        except Exception:
+            request_json = {}
+        return (
+            request.headers.get('X-Signing-Key')
+            or request.args.get('signingkey')
+            or request.form.get('signingkey')
+            or (request_json.get('signingkey') if isinstance(request_json, dict) else None)
+            or request.cookies.get('signingkey')
+        )
+    except Exception:
+        return None
+
 
 # Global store for active downloads
 active_downloads = {}
@@ -2740,8 +2764,12 @@ def clear_download_path():
 def serve_waveform(filename):
     """Generate and serve waveform data for audio files."""
     
-    # Check signing key
-    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    # Check signing key (header, query, or cookie for media element compatibility)
+    signing_key = (
+        request.headers.get('X-Signing-Key')
+        or request.args.get('signingkey')
+        or request.cookies.get('signingkey')
+    )
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -2812,8 +2840,12 @@ def serve_waveform(filename):
 def serve_audio(filename):
     """Serve audio files for playback with Range support."""
     
-    # Check signing key
-    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    # Check signing key (header, query, or cookie for media element compatibility)
+    signing_key = (
+        request.headers.get('X-Signing-Key')
+        or request.args.get('signingkey')
+        or request.cookies.get('signingkey')
+    )
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3317,7 +3349,7 @@ def get_song_by_track_id(track_id):
 @app.route('/playlists', methods=['GET'])
 def get_playlists():
     """Get all playlists."""
-    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3343,7 +3375,7 @@ def get_playlists():
 @app.route('/playlists', methods=['POST'])
 def create_playlist():
     """Create a new playlist."""
-    signing_key = request.headers.get('X-Signing-Key')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3401,7 +3433,7 @@ def create_playlist():
 @app.route('/playlists/<int:playlist_id>', methods=['GET'])
 def get_playlist(playlist_id):
     """Get a specific playlist."""
-    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3427,7 +3459,7 @@ def get_playlist(playlist_id):
 @app.route('/playlists/<int:playlist_id>', methods=['PUT'])
 def update_playlist(playlist_id):
     """Update a playlist."""
-    signing_key = request.headers.get('X-Signing-Key')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3466,7 +3498,7 @@ def update_playlist(playlist_id):
 @app.route('/playlists/<int:playlist_id>', methods=['DELETE'])
 def delete_playlist(playlist_id):
     """Delete a playlist."""
-    signing_key = request.headers.get('X-Signing-Key')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3491,7 +3523,7 @@ def delete_playlist(playlist_id):
 @app.route('/playlists/<int:playlist_id>/songs', methods=['POST'])
 def add_song_to_playlist(playlist_id):
     """Add a song to a playlist."""
-    signing_key = request.headers.get('X-Signing-Key')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     
@@ -3523,7 +3555,7 @@ def add_song_to_playlist(playlist_id):
 @app.route('/playlists/<int:playlist_id>/songs/<int:music_file_id>', methods=['DELETE'])
 def remove_song_from_playlist(playlist_id, music_file_id):
     """Remove a song from a playlist."""
-    signing_key = request.headers.get('X-Signing-Key')
+    signing_key = get_request_signing_key()
     if signing_key != apiSigningKey:
         return jsonify({"error": "invalid signature"}), 401
     

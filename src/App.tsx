@@ -107,6 +107,13 @@ const App: React.FC = () => {
                         console.log(' Received API details from Electron:', apiInfo);
                         setApiPort(apiInfo.port);
                         setApiSigningKey(apiInfo.signingKey);
+
+                        // Also expose signing key via cookie so <audio> range requests include it
+                        try {
+                            document.cookie = `signingkey=${apiInfo.signingKey}; path=/; SameSite=Lax`;
+                        } catch (e) {
+                            console.warn('Failed to set signing key cookie', e);
+                        }
                         
                         // Initialize database service with API details
                         const dbService = new DatabaseService(apiInfo.port, apiInfo.signingKey);
@@ -128,11 +135,20 @@ const App: React.FC = () => {
                     initializeDatabaseService();
                 });
                 
-                // Timeout fallback in case IPC doesn't respond
+                // Timeout fallback in case IPC doesn't respond quickly
+                // Give the backend more time on cold start and keep listening for late replies
                 const ipcTimeout = setTimeout(() => {
-                    console.warn('⚠️ IPC timeout, falling back to default database service');
+                    console.warn('⚠️ IPC timeout, initializing with defaults while still waiting for apiDetails');
                     initializeDatabaseService();
-                }, 3000);
+                    // Proactively retry asking for details once more after a short delay
+                    setTimeout(() => {
+                        try {
+                            ipcRenderer.send('getApiDetails');
+                        } catch (e) {
+                            console.warn('Retry getApiDetails failed', e);
+                        }
+                    }, 1500);
+                }, 8000);
                 
                 // Cleanup listeners and timeout
                 return () => {
@@ -150,6 +166,15 @@ const App: React.FC = () => {
             initializeDatabaseService();
         }
     }, []);
+
+    // Keep cookie in sync if key changes for any reason
+    useEffect(() => {
+        try {
+            document.cookie = `signingkey=${apiSigningKey}; path=/; SameSite=Lax`;
+        } catch (e) {
+            console.warn('Failed to update signing key cookie', e);
+        }
+    }, [apiSigningKey]);
 
     // Helper function to initialize database service with defaults
     const initializeDatabaseService = () => {

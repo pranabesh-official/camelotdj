@@ -28,7 +28,23 @@ export class DatabaseService {
     }
 
     private async makeRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-        const url = `http://127.0.0.1:${this.apiPort}${endpoint}`;
+        // Always include signing key in both header and query to satisfy all server handlers
+        const baseUrl = `http://127.0.0.1:${this.apiPort}`;
+        // Preserve existing query params and append signingkey if missing
+        let url: string;
+        try {
+            const hasProtocol = endpoint.startsWith('http://') || endpoint.startsWith('https://');
+            const fullUrl = hasProtocol ? endpoint : `${baseUrl}${endpoint}`;
+            const u = new URL(fullUrl);
+            if (!u.searchParams.has('signingkey')) {
+                u.searchParams.set('signingkey', this.apiSigningKey);
+            }
+            url = u.toString();
+        } catch {
+            // Fallback if URL parsing fails for any reason
+            const join = endpoint.includes('?') ? '&' : '?';
+            url = `${baseUrl}${endpoint}${join}signingkey=${encodeURIComponent(this.apiSigningKey)}`;
+        }
         
         const defaultHeaders = {
             'Content-Type': 'application/json',

@@ -1,306 +1,276 @@
 # CamelotDJ - Music Analyzer
 
-An open-source platform inspired by [Mixed In Key](https://mixedinkey.com/), designed for harmonic mixing and music analysis. CamelotDJ helps DJs and music producers analyze tracks, find compatible keys, and create harmonious mixes.
+An open-source music analysis platform inspired by [Mixed In Key](https://mixedinkey.com/), designed to help DJs and music producers discover the key, BPM, and energy level of their tracks for harmonic mixing.
 
-## 🎯 Features
+## 🎵 Features
 
-- **Harmonic Key Detection**: Automatically detects musical keys using advanced algorithms
-- **Camelot Wheel Integration**: Visual representation of musical keys and compatibility
-- **Track Analysis**: Analyze individual tracks for key, BPM, and musical characteristics
-- **Playlist Management**: Create and manage playlists with harmonic compatibility
-- **USB Export**: Export analyzed tracks to USB devices for live performance
-- **Cross-Platform**: Works on macOS and Windows
-- **Open Source**: Fully open-source with community-driven development
+- **Key Detection**: Automatically detect musical keys using advanced audio analysis
+- **BPM Analysis**: Accurate BPM detection for beat matching
+- **Energy Level Rating**: Unique energy level ratings to help create dynamic DJ sets
+- **Harmonic Mixing**: Use the Camelot Wheel system for seamless track transitions
+- **Cross-Platform**: Built with Electron for Windows, macOS, and Linux
+- **Python Backend**: Powerful audio analysis engine built with Python
+- **React Frontend**: Modern, responsive user interface
+- **Firebase Integration**: Cloud-based user authentication and data storage
+- **USB Export**: Export analyzed tracks to USB devices for DJ software
 
-## 🔧 Prerequisites
+## 🎯 What is Harmonic Mixing?
 
-- **Node.js** 16.x or higher
-- **Python** 3.8 or higher
-- **npm** or **yarn** package manager
-- **Git** for version control
+Harmonic mixing is a technique used by professional DJs to create seamless transitions between tracks by matching their musical keys. When tracks are in compatible keys, they blend together naturally, creating a more professional and enjoyable listening experience.
 
-## 📦 Installation
+CamelotDJ helps you:
+- Identify the key of any track in your music library
+- Find tracks that will mix harmonically together
+- Create playlists that flow seamlessly from one track to the next
+- Understand the energy progression of your sets
 
-### 1. Clone the Repository
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Node.js** (v14 or higher)
+- **Python 3.8+** (Anaconda recommended)
+- **Git**
+- **Firebase Account** (for authentication and data storage)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/pranabesh-official/camelotdj.git
+   cd camelotdj
+   ```
+
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   npm rebuild
+   ```
+
+3. **Set up Python environment**
+   ```bash
+   # On Windows, use cmd instead of PowerShell
+   conda env create -f environment.yml
+   conda activate camelotdj
+   
+   # Or use pip directly
+   pip install -r requirements.txt
+   ```
+
+4. **Configure environment variables**
+   ```bash
+   # Copy the example environment file
+   cp env.example .env.local
+   
+   # Edit .env.local with your Firebase credentials
+   # The file should contain:
+   REACT_APP_FIREBASE_API_KEY=your_api_key_here
+   REACT_APP_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+   REACT_APP_FIREBASE_DATABASE_URL=https://your_project-default-rtdb.region.firebasedatabase.app
+   REACT_APP_FIREBASE_PROJECT_ID=your_project_id
+   REACT_APP_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
+   REACT_APP_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   REACT_APP_FIREBASE_APP_ID=your_app_id
+   REACT_APP_FIREBASE_MEASUREMENT_ID=your_measurement_id
+   ```
+
+5. **Start the development server**
+   ```bash
+   npm run start
+   ```
+
+## 🔧 Configuration
+
+### Firebase Setup
+
+1. **Create a Firebase project** at [Firebase Console](https://console.firebase.google.com/)
+2. **Enable services**:
+   - Authentication (with Google sign-in)
+   - Firestore Database
+   - Realtime Database
+   - Storage
+   - Analytics (optional)
+3. **Get your configuration**:
+   - Go to Project Settings → General → Your apps
+   - Click the web app icon (</>) to add a web app
+   - Copy the config object
+4. **Update `.env.local`** with your Firebase credentials
+
+### Google OAuth Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. **Enable APIs**:
+   - Google+ API
+   - Google Identity Toolkit API
+3. **Create OAuth 2.0 credentials**:
+   - Go to APIs & Services → Credentials
+   - Click "Create Credentials" → "OAuth 2.0 Client IDs"
+   - Set application type to "Web application"
+   - Add authorized origins: `http://localhost:3001`, `http://127.0.0.1:3001`
+   - Add authorized redirect URIs: `http://localhost:3001/auth/callback`
+4. **Copy credentials** to `.env.local`:
+   ```
+   GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=your_client_secret
+   ```
+
+## 🚨 Troubleshooting
+
+### Common Issues
+
+#### 1. **Firebase Configuration Errors**
+If you see "Missing required Firebase environment variables":
 ```bash
-git clone https://github.com/pranabesh-official/camelotdj.git
-cd camelotdj
-```
+# Check if .env.local exists and has correct content
+cat .env.local
 
-### 2. Install Dependencies
-```bash
-# Install Node.js dependencies
-npm install
+# Ensure all REACT_APP_FIREBASE_* variables are set
+grep "REACT_APP_FIREBASE" .env.local
 
-# Install Python dependencies
-pip install -r requirements.txt
-```
-
-### 3. Environment Configuration
-Create a `.env.local` file in the project root with your Firebase configuration:
-
-```bash
-# Copy the example environment file
-cp env.example .env.local
-
-# Edit .env.local with your actual Firebase credentials
-nano .env.local
-```
-
-**Required Firebase Configuration:**
-```bash
-# Firebase Configuration
-REACT_APP_FIREBASE_API_KEY=your_api_key_here
-REACT_APP_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-REACT_APP_FIREBASE_DATABASE_URL=https://your_project.firebaseio.com
-REACT_APP_FIREBASE_PROJECT_ID=your_project_id
-REACT_APP_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-REACT_APP_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-REACT_APP_FIREBASE_APP_ID=your_app_id
-REACT_APP_FIREBASE_MEASUREMENT_ID=your_measurement_id
-
-# Google OAuth (Optional)
-GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=your_client_secret
-
-# Development Settings
-NODE_ENV=development
-REACT_APP_IS_ELECTRON=true
-```
-
-## 🚀 Development
-
-### Start Development Server
-```bash
-# Start both React frontend and Electron main process
+# Restart the development server after making changes
 npm run start
-
-# Start only React development server
-npm run react-start
-
-# Start only Electron main process
-npm run main-start
 ```
 
-### Build for Production
+#### 2. **Port Conflicts**
+If you see "Something is already running on port 3001":
 ```bash
-# Build for all platforms
+# Check what's using port 3001
+lsof -i :3001
+
+# Kill conflicting processes
+pkill -f "react-scripts"
+pkill -f "craco"
+
+# Or use a different port
+PORT=3002 npm run start
+```
+
+#### 3. **Blank Screen in Production Build**
+If the app shows a blank screen after building:
+```bash
+# Clean and rebuild
 npm run build
+npm run main-build
 
-# Build for macOS (ARM64)
-npm run build:mac
+# Check the console for build directory errors
+# Ensure all build files are properly unpacked
 ```
-
-### Development Scripts
-```bash
-# Lint code
-npm run lint
-
-# Watch for changes
-npm run watch
-
-# Python backend
-npm run python-start
-```
-
-## 🎵 How to Use
-
-### 1. **Initial Setup**
-- Launch the application
-- Sign in with your Google account (Firebase authentication)
-- Configure your music library path
-
-### 2. **Adding Music**
-- Use the **File Upload** component to add individual tracks
-- Drag and drop MP3 files into the application
-- The system will automatically analyze each track for:
-  - Musical key (Camelot notation)
-  - BPM (Beats Per Minute)
-  - Audio quality metrics
-
-### 3. **Track Analysis**
-- **Analysis Queue**: View tracks being processed
-- **Analysis Results**: See detailed information about each track
-- **Metadata Editor**: Modify track information if needed
-
-### 4. **Harmonic Mixing**
-- **Camelot Wheel**: Visual representation of musical keys
-- **Compatible Keys**: Find tracks that will mix harmonically
-- **Key Transitions**: Plan smooth key changes between tracks
-
-### 5. **Playlist Management**
-- Create playlists based on harmonic compatibility
-- Organize tracks by key, BPM, or genre
-- Export playlists for different performance scenarios
-
-### 6. **USB Export**
-- Prepare tracks for live performance
-- Export analyzed tracks to USB devices
-- Maintain all metadata and analysis results
-
-## 🔍 Troubleshooting
-
-### Common Issues and Solutions
-
-#### 1. **Blank Screen After Build**
-**Problem**: Application shows blank screen after `npm run build`
-**Solution**: 
-- Ensure `.env.local` file exists with Firebase configuration
-- Check that `src/firebase.ts` file is present
-- Verify environment variables are loaded correctly
-
-#### 2. **Port 3002 Already in Use**
-**Problem**: `Something is already running on port 3002`
-**Solution**:
-```bash
-# Kill processes using port 3002
-lsof -ti:3002 | xargs kill -9
-
-# Or change the port in package.json
-# Edit the react-start script to use a different port
-```
-
-#### 3. **Firebase Configuration Errors**
-**Problem**: `Missing required Firebase environment variables`
-**Solution**:
-- Verify `.env.local` file exists and contains all required variables
-- Ensure file is in the project root directory
-- Restart the development server after making changes
 
 #### 4. **Python Backend Issues**
-**Problem**: Python API not responding
-**Solution**:
-- Check if Python dependencies are installed: `pip install -r requirements.txt`
-- Verify Python version: `python3 --version`
-- Check API logs in the terminal output
-
-#### 5. **Environment Variables Not Loading**
-**Problem**: Firebase config shows "❌ Missing" for all variables
-**Solution**:
-- Ensure `.env.local` file exists (not just `.env`)
-- Check file permissions: `ls -la .env*`
-- Restart the development server
-- Verify the file contains the correct variable names (REACT_APP_ prefix)
-
-### Debug Mode
-
-Enable debug logging by checking the browser console for:
-- 🔍 Environment Variables Debug
-- 🔥 Firebase Config status
-- 📱 Environment detection
-- 🔧 Development mode status
-
-## 🏗️ Project Structure
-
-```
-mixed_in_key/
-├── src/                    # React frontend source
-│   ├── components/        # React components
-│   ├── services/          # Firebase and API services
-│   ├── firebase.ts        # Firebase configuration
-│   └── App.tsx           # Main application component
-├── main/                  # Electron main process
-│   └── index.ts          # Main process entry point
-├── python/                # Python backend
-│   ├── api.py            # Flask API server
-│   └── music_analyzer.py # Music analysis logic
-├── .env.local            # Environment variables (create this)
-├── env.example           # Environment template
-├── package.json          # Node.js dependencies
-└── requirements.txt      # Python dependencies
-```
-
-## 🔐 Firebase Setup
-
-### 1. Create Firebase Project
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Create a new project
-3. Enable Authentication, Firestore, and Storage
-
-### 2. Configure Authentication
-1. Go to Authentication > Sign-in method
-2. Enable Google sign-in
-3. Add your domain to authorized domains
-
-### 3. Get Configuration
-1. Go to Project Settings > General
-2. Scroll down to "Your apps"
-3. Copy the Firebase configuration object
-4. Update your `.env.local` file
-
-## 🚀 Deployment
-
-### Build for Distribution
+If the Python backend fails to start:
 ```bash
-# Build for macOS
-npm run build:mac
+# Check Python environment
+conda activate camelotdj
+python --version
 
-# Build for Windows
-npm run build:win
+# Install missing dependencies
+pip install -r requirements.txt
 
-# Build for Linux
-npm run build:linux
+# Test Python API directly
+cd python
+python api.py --apiport 5002 --signingkey devkey
 ```
 
-### Distribution Files
-Built applications are available in the `dist/` directory:
-- **macOS**: `.app` bundle and `.dmg` installer
-- **Windows**: `.exe` installer
-- **Linux**: AppImage and other formats
+### Environment Variable Debugging
+
+The app includes comprehensive debugging for environment variables. Check the console for:
+```
+🔍 Environment Variables Debug:
+REACT_APP_FIREBASE_API_KEY: ✅ Set
+REACT_APP_FIREBASE_AUTH_DOMAIN: ✅ Set
+🔥 Firebase Config: { apiKey: "✅ Set", ... }
+```
+
+If you see ❌ Missing, check your `.env.local` file.
+
+## 🏗️ Development
+
+### Available Scripts
+
+```bash
+# Development
+npm run start          # Start both React and Electron
+npm run react-start    # Start only React development server
+npm run main-start     # Start only Electron main process
+npm run dev            # Start Python backend + React
+
+# Building
+npm run build          # Build React app
+npm run python-build   # Build Python backend
+npm run main-build     # Build Electron app
+npm run build:mac      # Build for macOS
+
+# Linting
+npm run lint           # Lint all code
+npm run react-lint     # Lint React code
+npm run main-lint      # Lint Electron code
+```
+
+### Project Structure
+
+```
+camelotdj/
+├── main/              # Electron main process
+│   ├── index.ts      # Main process entry point
+│   └── with-python.ts # Python integration
+├── src/               # React frontend
+│   ├── components/    # React components
+│   ├── services/      # Firebase and API services
+│   ├── firebase.ts    # Firebase configuration
+│   └── App.tsx        # Main React app
+├── python/            # Python backend
+│   ├── api.py         # FastAPI server
+│   ├── music_analyzer.py # Audio analysis engine
+│   └── calc.py        # Key detection algorithms
+├── build/             # React build output
+├── buildMain/         # Electron build output
+├── pythondist/        # Python build output
+├── .env.local         # Environment variables (not in git)
+├── env.example        # Environment variables template
+└── package.json       # Project configuration
+```
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `REACT_APP_FIREBASE_API_KEY` | Firebase API key | ✅ |
+| `REACT_APP_FIREBASE_AUTH_DOMAIN` | Firebase auth domain | ✅ |
+| `REACT_APP_FIREBASE_PROJECT_ID` | Firebase project ID | ✅ |
+| `REACT_APP_FIREBASE_STORAGE_BUCKET` | Firebase storage bucket | ✅ |
+| `REACT_APP_FIREBASE_MESSAGING_SENDER_ID` | Firebase sender ID | ✅ |
+| `REACT_APP_FIREBASE_APP_ID` | Firebase app ID | ✅ |
+| `REACT_APP_FIREBASE_DATABASE_URL` | Realtime database URL | ❌ |
+| `REACT_APP_FIREBASE_MEASUREMENT_ID` | Analytics measurement ID | ❌ |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client ID | ❌ |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth client secret | ❌ |
+
+## 🎧 How It Works
+
+1. **Audio Analysis**: Python backend analyzes audio files using advanced signal processing
+2. **Key Detection**: Identifies musical keys using the Camelot Wheel system
+3. **BPM Analysis**: Detects tempo and beat patterns
+4. **Energy Rating**: Assigns energy levels based on audio characteristics
+5. **Harmonic Matching**: Suggests compatible tracks for mixing
+6. **Export**: Generate playlists compatible with major DJ software
+
+## 🌟 Why Open Source?
+
+This project is inspired by the amazing work of Mixed In Key, but built as an open-source alternative. We believe that powerful music analysis tools should be accessible to everyone in the music community.
 
 ## 🤝 Contributing
 
-We welcome contributions! Here's how to get started:
+We welcome contributions! Please see our contributing guidelines and feel free to submit pull requests or open issues.
 
-### 1. Fork the Repository
-1. Fork the project on GitHub
-2. Clone your fork locally
-3. Create a feature branch
+### Development Setup
 
-### 2. Development Workflow
-```bash
-# Create feature branch
-git checkout -b feature/your-feature-name
-
-# Make changes and test
-npm run start
-
-# Commit changes
-git add .
-git commit -m "feat: add your feature description"
-
-# Push to your fork
-git push origin feature/your-feature-name
-```
-
-### 3. Submit Pull Request
-1. Create a pull request from your feature branch
-2. Describe your changes clearly
-3. Include any relevant issue numbers
-
-### 4. Code Standards
-- Follow existing code style
-- Add tests for new features
-- Update documentation as needed
-- Ensure all tests pass
-
-## 🐛 Reporting Issues
-
-When reporting issues, please include:
-- **Operating System**: macOS/Windows/Linux version
-- **Node.js Version**: `node --version`
-- **Python Version**: `python3 --version`
-- **Steps to Reproduce**: Detailed steps to trigger the issue
-- **Expected vs Actual Behavior**: What you expected vs what happened
-- **Console Logs**: Any error messages or console output
-- **Screenshots**: Visual evidence of the issue
-
-## 📚 Additional Resources
-
-- **Harmonic Mixing Guide**: Learn about musical key compatibility
-- **Camelot Wheel Explanation**: Understanding the circle of fifths
-- **DJ Techniques**: Advanced mixing strategies
-- **Music Theory**: Basic music theory for DJs
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes
+4. Test thoroughly: `npm run lint && npm run build`
+5. Commit: `git commit -m 'Add amazing feature'`
+6. Push: `git push origin feature/amazing-feature`
+7. Open a Pull Request
 
 ## 📄 License
 
@@ -308,27 +278,32 @@ This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.t
 
 ## 🙏 Acknowledgments
 
-- **Mixed In Key**: Inspiration for this open-source platform
-- **Firebase**: Backend services and authentication
-- **Electron**: Cross-platform desktop application framework
-- **React**: Frontend user interface
-- **Python**: Music analysis and backend services
+- Inspired by [Mixed In Key](https://mixedinkey.com/)
+- Built with Electron, React, and Python
+- Audio analysis powered by advanced signal processing libraries
 
-## 💬 Support
+## 📞 Support
 
-- **GitHub Issues**: [Report bugs and request features](https://github.com/pranabesh-official/camelotdj/issues)
-- **Discussions**: [Join community discussions](https://github.com/pranabesh-official/camelotdj/discussions)
-- **Documentation**: [Read the full documentation](https://github.com/pranabesh-official/camelotdj/wiki)
+If you encounter any issues or have questions, please:
 
-## 🔄 Changelog
+1. **Check the troubleshooting section** above
+2. **Check the documentation** in the `docs/` folder
+3. **Search existing issues** on GitHub
+4. **Create a new issue** with:
+   - Detailed error description
+   - Console output/logs
+   - Steps to reproduce
+   - Environment details (OS, Node.js version, Python version)
 
-### Version 1.0.0
-- Initial release with core music analysis features
-- Firebase integration for authentication and data storage
-- Cross-platform Electron application
-- Python backend for music processing
-- Comprehensive user interface for track management
+### Quick Support Checklist
+
+- [ ] Environment variables are set in `.env.local`
+- [ ] Firebase project is configured correctly
+- [ ] Python environment is activated
+- [ ] All dependencies are installed
+- [ ] No port conflicts (3001, 5002)
+- [ ] Console shows no Firebase errors
 
 ---
 
-**Happy Mixing! 🎧🎵**
+**Note**: This is an open-source project inspired by Mixed In Key. For the original commercial software, please visit [mixedinkey.com](https://mixedinkey.com/).

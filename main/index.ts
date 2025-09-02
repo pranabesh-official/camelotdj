@@ -272,7 +272,7 @@ function createWindow() {
 
     (async () => {
         try {
-            const port = await getPort({ host: '127.0.0.1', port: 3002 });
+            const port = await getPort({ host: '127.0.0.1', port: 3001 });
             const server = http.createServer((req: any, res: any) => {
                 const done = finalhandler(req, res);
                 serve(req, res, done);

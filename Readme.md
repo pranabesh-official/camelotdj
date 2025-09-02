@@ -1,113 +1,137 @@
-# Mixed In Key - Professional Music Analysis Desktop Application
+# CamelotDJ - Music Analyzer
 
-A professional desktop music analysis application built with Electron + Python + React, following the [electron-python boilerplate](n) pattern.
+An open-source music analysis platform inspired by [Mixed In Key](https://mixedinkey.com/), designed to help DJs and music producers discover the key, BPM, and energy level of their tracks for harmonic mixing.
 
-## 🚀 Quick Start
+## 🎵 Features
 
-### One-Click Launch (Electron Desktop App)c
+- **Key Detection**: Automatically detect musical keys using advanced audio analysis
+- **BPM Analysis**: Accurate BPM detection for beat matching
+- **Energy Level Rating**: Unique energy level ratings to help create dynamic DJ sets
+- **Harmonic Mixing**: Use the Camelot Wheel system for seamless track transitions
+- **Cross-Platform**: Built with Electron for Windows, macOS, and Linux
+- **Python Backend**: Powerful audio analysis engine built with Python
+- **React Frontend**: Modern, responsive user interface
+- **Firebase Integration**: Cloud-based user authentication and data storage
+- **USB Export**: Export analyzed tracks to USB devices for DJ software
+
+## 🎯 What is Harmonic Mixing?
+
+Harmonic mixing is a technique used by professional DJs to create seamless transitions between tracks by matching their musical keys. When tracks are in compatible keys, they blend together naturally, creating a more professional and enjoyable listening experience.
+
+CamelotDJ helps you:
+- Identify the key of any track in your music library
+- Find tracks that will mix harmonically together
+- Create playlists that flow seamlessly from one track to the next
+- Understand the energy progression of your sets
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js (v14 or higher)
+- Python 3.8+ (Anaconda recommended)
+- Git
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/pranabesh-official/camelotdj.git
+   cd camelotdj
+   ```
+
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   npm rebuild
+   ```
+
+3. **Set up Python environment**
+   ```bash
+   # On Windows, use cmd instead of PowerShell
+   conda env create -f environment.yml
+   conda activate camelotdj
+   ```
+
+4. **Configure environment variables**
+   ```bash
+   cp env.example .env.local
+   # Edit .env.local with your Firebase and Google OAuth credentials
+   ```
+
+5. **Start the development server**
+   ```bash
+   npm run start
+   ```
+
+### Building for Production
+
 ```bash
-npm start
-```
-This automatically:n
-- Starts React frontend on port 3000
-- Spawns Python backend on port 5002 via Electron
-- Opens desktop application window
-- Handles all IPC communication between components
-
-### Alternative: Web Development Mode
-```bash
-npm run dev
-```
-This starts both services independently for web browser testing.
-
-## ✨ Features
-
-### 🎵 Real Music Analysis
-- **Key Detection**: Accurate musical key analysis using Librosa + Essentia
-- **BPM Analysis**: Precise tempo detection for DJ mixing
-- **Energy Calculation**: Track energy levels for set planning
-- **Cue Point Detection**: Automatic intro/outro identification
-
-### 🎡 Camelot Wheel Harmonic Mixing
-- **Visual Key Mapping**: Interactive Camelot Wheel with 24 keys
-- **Harmonic Highlighting**: 
-  - 🔥 **Selected track key** - Bright orange with glow
-  - 💙 **Compatible keys** - Bright blue highlighting
-  - ⚪ **Dimmed non-compatible** - Reduced opacity
-- **Smart Compatibility**: Adjacent keys (±1) + relative major/minor
-- **Click to Select**: Click any key to select songs in that key
-
-### 🎛️ Professional UI
-- **Dark Mode Design**: Professional Mixed In Key aesthetic
-- **Real-time Analysis**: No demo tracks - analyze your actual music
-- **Drag & Drop Upload**: Easy file and folder upload
-- **Playlist Management**: Create and organize your music library
-- **Audio Playback**: Built-in player with waveform visualization
-
-### 🏷️ ID3 Tag Integration
-- **Automatic Writing**: Saves analysis results to your music files
-- **Key & BPM Tags**: Stores Camelot key, musical key, and BPM
-- **Cue Points**: Embeds intro/outro points for DJ software
-- **Compatible Formats**: MP3, WAV, FLAC, AAC, OGG, M4A
-
-## 🏗️ Architecture
-
-Following the proven [electron-python boilerplate](https://github.com/yoDon/electron-python):
-
-- **Electron Main Process**: Spawns Python backend, manages IPC
-- **React Frontend**: Professional UI with TypeScript
-- **Python Backend**: Flask server with music analysis engines
-- **Automatic Process Management**: Python exits gracefully with Electron
-
-## 🛠️ Development
-
-### Requirements
-- Node.js & npm
-- Python 3 with pip
-- All dependencies auto-installed via npm
-
-### Project Structure
-```
-mixed_in_key/
-├── main/                   # Electron main process
-│   ├── index.ts           # Main window creation
-│   └── with-python.ts     # Python process management
-├── src/                   # React frontend
-│   ├── components/        # UI components
-│   └── App.tsx           # Main application
-├── python/               # Python backend
-│   ├── api.py           # Flask server + GraphQL
-│   ├── music_analyzer.py # Analysis engine
-│   └── requirements.txt  # Python dependencies
-└── package.json         # Node.js dependencies + scripts
+npm run build
 ```
 
-### Available Scripts
-- `npm start` - Launch full Electron desktop app
-- `npm run dev` - Development mode (web browser)
-- `npm run build` - Build for production distribution
+This will create platform-specific installers in the `dist/` folder.
 
-## 🎯 Usage
+## 🔧 Configuration
 
-1. **Launch Application**: `npm start`
-2. **Upload Music**: Drag files to Playlist Manager or click "Add Music Files"
-3. **View Analysis**: See key, BPM, energy in track table
-4. **Select Track**: Click any song to see its key highlighted on Camelot Wheel
-5. **Find Compatible**: Blue highlighted keys show harmonic mixing options
-6. **Create Playlists**: Organize compatible tracks for seamless mixing
+### Firebase Setup
 
-## 🎚️ Harmonic Mixing Guide
+1. Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
+2. Enable Authentication and Firestore
+3. Copy your Firebase config to `.env.local`
 
-The Camelot Wheel shows compatible keys for smooth DJ transitions:
-- **Same Key**: Perfect match (e.g., 8A → 8A)
-- **Adjacent Keys**: ±1 position (e.g., 8A → 7A or 9A)
-- **Relative Major/Minor**: Same number, opposite letter (e.g., 8A → 8B)
+### Google OAuth Setup
 
-## 🔧 Troubleshooting
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create OAuth 2.0 credentials
+3. Add your client ID and secret to `.env.local`
 
-If you see connection errors:
-1. Ensure Python 3 is installed
-2. Check that port 5002 is available
-3. Restart with `npm start`
+## 📁 Project Structure
 
-The application automatically handles Python backend startup and shutdown.
+```
+camelotdj/
+├── main/           # Electron main process
+├── src/            # React frontend
+├── python/         # Python backend (audio analysis)
+├── docs/           # Documentation
+├── build/          # Build outputs
+└── dist/           # Distribution packages
+```
+
+## 🎧 How It Works
+
+1. **Audio Analysis**: Python backend analyzes audio files using advanced signal processing
+2. **Key Detection**: Identifies musical keys using the Camelot Wheel system
+3. **BPM Analysis**: Detects tempo and beat patterns
+4. **Energy Rating**: Assigns energy levels based on audio characteristics
+5. **Harmonic Matching**: Suggests compatible tracks for mixing
+6. **Export**: Generate playlists compatible with major DJ software
+
+## 🌟 Why Open Source?
+
+This project is inspired by the amazing work of Mixed In Key, but built as an open-source alternative. We believe that powerful music analysis tools should be accessible to everyone in the music community.
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our contributing guidelines and feel free to submit pull requests or open issues.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
+
+## 🙏 Acknowledgments
+
+- Inspired by [Mixed In Key](https://mixedinkey.com/)
+- Built with Electron, React, and Python
+- Audio analysis powered by advanced signal processing libraries
+
+## 📞 Support
+
+If you encounter any issues or have questions, please:
+1. Check the documentation in the `docs/` folder
+2. Search existing issues on GitHub
+3. Create a new issue with detailed information
+
+---
+
+**Note**: This is an open-source project inspired by Mixed In Key. For the original commercial software, please visit [mixedinkey.com](https://mixedinkey.com/).

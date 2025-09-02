@@ -1,0 +1,247 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Install Node.js dependencies
+      run: |
+        npm install
+        npm rebuild
+        
+    - name: Build Python backend
+      run: npm run python-build
+      
+    - name: Build React frontend
+      run: npm run react-build
+      
+    - name: Build Electron main process
+      run: tsc -p tsconfig.electronMain.json
+      
+    - name: Build macOS app
+      run: |
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          cross-env npm_config_arch=arm64 ELECTRON_BUILDER_ARCH=arm64 electron-builder --mac --arm64
+        else
+          cross-env npm_config_arch=x64 ELECTRON_BUILDER_ARCH=x64 electron-builder --mac --x64
+        fi
+        
+    - name: Upload macOS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-${{ matrix.arch }}
+        path: |
+          dist/mac-${{ matrix.arch }}/
+          dist/*.zip
+        retention-days: 30
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Install Node.js dependencies
+      run: |
+        npm install
+        npm rebuild
+        
+    - name: Build Python backend
+      run: npm run python-build
+      
+    - name: Build React frontend
+      run: npm run react-build
+      
+    - name: Build Electron main process
+      run: tsc -p tsconfig.electronMain.json
+      
+    - name: Build Windows app
+      run: |
+        if ("${{ matrix.arch }}" -eq "arm64") {
+          $env:npm_config_arch="arm64"
+          $env:ELECTRON_BUILDER_ARCH="arm64"
+          npx electron-builder --win --arm64
+        } else {
+          $env:npm_config_arch="x64"
+          $env:ELECTRON_BUILDER_ARCH="x64"
+          npx electron-builder --win --x64
+        }
+        
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-${{ matrix.arch }}
+        path: |
+          dist/win-${{ matrix.arch }}/
+          dist/*.exe
+          dist/*.zip
+        retention-days: 30
+
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download macOS x64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: macos-x64
+        path: artifacts/macos-x64/
+        
+    - name: Download macOS arm64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: macos-arm64
+        path: artifacts/macos-arm64/
+        
+    - name: Download Windows x64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: windows-x64
+        path: artifacts/windows-x64/
+        
+    - name: Download Windows arm64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: windows-arm64
+        path: artifacts/windows-arm64/
+        
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: CAMELOTDJ - Music Analyzer ${{ steps.version.outputs.version }}
+        body: |
+          ## CAMELOTDJ - Music Analyzer ${{ steps.version.outputs.version }}
+          
+          ### 🎵 Features
+          - **Key Detection**: Advanced musical key analysis using Essentia and Librosa
+          - **BPM Analysis**: Accurate tempo detection for beatmatching
+          - **Energy Level Rating**: 1-10 scale energy analysis
+          - **Harmonic Mixing**: Camelot Wheel system for seamless transitions
+          - **USB Export**: Export playlists to USB devices
+          - **Cross-Platform**: Available for Windows and macOS
+          
+          ### 📦 Downloads
+          
+          **macOS:**
+          - **Apple Silicon (ARM64)**: `CAMELOTDJ-Music-Analyzer-${{ steps.version.outputs.version }}-arm64-mac.zip`
+          - **Intel (x64)**: `CAMELOTDJ-Music-Analyzer-${{ steps.version.outputs.version }}-x64-mac.zip`
+          
+          **Windows:**
+          - **x64**: `CAMELOTDJ-Music-Analyzer-Setup-${{ steps.version.outputs.version }}.exe`
+          - **ARM64**: `CAMELOTDJ-Music-Analyzer-Setup-${{ steps.version.outputs.version }}-arm64.exe`
+          
+          ### 🚀 Installation
+          
+          **macOS:**
+          1. Download the appropriate version for your Mac (Intel or Apple Silicon)
+          2. Extract the ZIP file
+          3. Right-click the app and select "Open" (first time only)
+          4. Drag to Applications folder
+          
+          **Windows:**
+          1. Download the appropriate installer for your system
+          2. Run the installer as Administrator
+          3. Follow the installation wizard
+          
+          ### 🔧 System Requirements
+          - **macOS**: 10.14 or later
+          - **Windows**: Windows 10 or later
+          - **RAM**: 4GB minimum, 8GB recommended
+          - **Storage**: 500MB free space
+          
+          ### 🐛 Bug Fixes in this Release
+          - Fixed USB export functionality
+          - Improved device detection and error handling
+          - Enhanced user experience for USB export dialog
+          
+          ### 📝 Notes
+          - The app is unsigned, so you may need to allow it in Security & Privacy settings
+          - For Windows, you may need to allow the app through Windows Defender
+          
+          ---
+          
+          **Built with ❤️ using Electron, React, and Python**
+        files: |
+          artifacts/macos-x64/*.zip
+          artifacts/macos-arm64/*.zip
+          artifacts/windows-x64/*.exe
+          artifacts/windows-x64/*.zip
+          artifacts/windows-arm64/*.exe
+          artifacts/windows-arm64/*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

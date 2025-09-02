@@ -159,6 +159,13 @@ npm run build
 - **`./build-windows.sh`** - Windows build
 - See `BUILD_SCRIPTS.md` for detailed usage instructions
 
+### Automated Builds (GitHub Actions)
+- **Automatic Releases**: Push a tag (e.g., `v1.0.0`) to trigger automated builds for all platforms
+- **Cross-Platform**: Builds for Windows (x64/ARM64) and macOS (x64/ARM64)
+- **Continuous Integration**: Automated testing on pull requests
+- **Security Audits**: Regular dependency and security checks
+- See `.github/README.md` for detailed CI/CD documentation
+
 This creates:
 - Packaged Python backend (PyInstaller)
 - Built React frontend

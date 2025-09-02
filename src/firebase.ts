@@ -1,20 +1,45 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, connectAuthEmulator } from "firebase/auth";
-import { getFirestore, enableIndexedDbPersistence, initializeFirestore } from "firebase/firestore";
+import { initializeApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getDatabase } from 'firebase/database';
+import { getStorage } from 'firebase/storage';
+import { getAnalytics, isSupported } from 'firebase/analytics';
 
-// Firebase configuration - use environment variables
-const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID,
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+// Debug: Log all environment variables to see what's available
+console.log('🔍 Environment Variables Debug:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('process.env keys:', Object.keys(process.env).filter(key => key.startsWith('REACT_APP_')));
+console.log('REACT_APP_FIREBASE_API_KEY:', process.env.REACT_APP_FIREBASE_API_KEY ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_AUTH_DOMAIN:', process.env.REACT_APP_FIREBASE_AUTH_DOMAIN ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_PROJECT_ID:', process.env.REACT_APP_FIREBASE_PROJECT_ID ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_MESSAGING_SENDER_ID:', process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_APP_ID:', process.env.REACT_APP_FIREBASE_APP_ID ? '✅ Set' : '❌ Missing');
+
+// Alternative: Try to access environment variables from window object (for web builds)
+const getEnvVar = (key: string): string | undefined => {
+  // Try process.env first (for Node.js/Electron)
+  if (process.env[key]) {
+    return process.env[key];
+  }
+  
+  // Try window.__ENV__ if available (for web builds)
+  if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__[key]) {
+    return (window as any).__ENV__[key];
+  }
+  
+  // Try window.ENV if available
+  if (typeof window !== 'undefined' && (window as any).ENV && (window as any).ENV[key]) {
+    return (window as any).ENV[key];
+  }
+  
+  return undefined;
 };
 
-// Validate that all required environment variables are present
+console.log('🔍 Alternative env var access test:');
+console.log('getEnvVar REACT_APP_FIREBASE_API_KEY:', getEnvVar('REACT_APP_FIREBASE_API_KEY') ? '✅ Found' : '❌ Not found');
+
+// Check for required environment variables
 const requiredEnvVars = [
   'REACT_APP_FIREBASE_API_KEY',
   'REACT_APP_FIREBASE_AUTH_DOMAIN',
@@ -24,84 +49,81 @@ const requiredEnvVars = [
   'REACT_APP_FIREBASE_APP_ID'
 ];
 
-const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+const missingVars = requiredEnvVars.filter(varName => !getEnvVar(varName));
+
 if (missingVars.length > 0) {
-  throw new Error(`Missing required Firebase environment variables: ${missingVars.join(', ')}. Please check your .env file.`);
+  const errorMessage = `Missing required Firebase environment variables: ${missingVars.join(', ')}. Please check your .env.local file.`;
+  console.error('❌', errorMessage);
+  console.error('🔍 Make sure you have a .env.local file with the Firebase configuration');
+  console.error('🔍 You can copy from env.example: cp env.example .env.local');
+  console.error('🔍 Current working directory:', process.cwd());
+  console.error('🔍 .env.local exists:', require('fs').existsSync('.env.local'));
+  throw new Error(errorMessage);
 }
 
-// Initialize Firebase
-export const firebaseApp = initializeApp(firebaseConfig);
-
-// Initialize Auth and provider
-export const auth = getAuth(firebaseApp);
-export const googleProvider = new GoogleAuthProvider();
-
-// Set language preference
-auth.useDeviceLanguage();
-
-// Enhanced Electron environment detection
-const isDesktopEnvironment = () => {
-  // Check for Electron-specific properties
-  const isElectron = !!(window as any).process?.type || 
-                     (navigator as any).userAgent.toLowerCase().indexOf(' electron/') > -1 ||
-                     (window as any).__ELECTRON__ ||
-                     process.env.REACT_APP_IS_ELECTRON === 'true';
-  
-  // Check for localhost/development
-  const isLocalhost = !window.location.hostname || 
-                     window.location.hostname === 'localhost' || 
-                     window.location.hostname === '127.0.0.1';
-  
-  // Check if running from file:// protocol (packaged Electron)
-  const isFileProtocol = window.location.protocol === 'file:';
-  
-  return isElectron || isLocalhost || isFileProtocol;
+// Firebase configuration using environment variables
+const firebaseConfig = {
+  apiKey: getEnvVar('REACT_APP_FIREBASE_API_KEY'),
+  authDomain: getEnvVar('REACT_APP_FIREBASE_AUTH_DOMAIN'),
+  databaseURL: getEnvVar('REACT_APP_FIREBASE_DATABASE_URL'),
+  projectId: getEnvVar('REACT_APP_FIREBASE_PROJECT_ID'),
+  storageBucket: getEnvVar('REACT_APP_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getEnvVar('REACT_APP_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getEnvVar('REACT_APP_FIREBASE_APP_ID'),
+  measurementId: getEnvVar('REACT_APP_FIREBASE_MEASUREMENT_ID')
 };
 
-// Handle authentication for both web and desktop environments
-if (isDesktopEnvironment()) {
-  console.log('🔧 Running in desktop/Electron environment - applying special auth configuration');
-  
-  // Configure Google provider for desktop/Electron
-  googleProvider.setCustomParameters({
-    prompt: 'select_account',
-    // Force new window for better Electron compatibility
-    authType: 'reauthenticate'
-  });
-  
-  // Add scopes if needed
-  googleProvider.addScope('email');
-  googleProvider.addScope('profile');
-  
-  // For development, you can connect to Firebase Auth emulator
-  if (process.env.NODE_ENV === 'development' && process.env.REACT_APP_USE_AUTH_EMULATOR === 'true') {
+console.log('🔥 Firebase Config:', {
+  apiKey: getEnvVar('REACT_APP_FIREBASE_API_KEY') ? '✅ Set' : '❌ Missing',
+  authDomain: getEnvVar('REACT_APP_FIREBASE_AUTH_DOMAIN') ? '✅ Set' : '❌ Missing',
+  projectId: getEnvVar('REACT_APP_FIREBASE_PROJECT_ID') ? '✅ Set' : '❌ Missing',
+  storageBucket: getEnvVar('REACT_APP_FIREBASE_STORAGE_BUCKET') ? '✅ Set' : '❌ Missing',
+  messagingSenderId: getEnvVar('REACT_APP_FIREBASE_MESSAGING_SENDER_ID') ? '✅ Set' : '❌ Missing',
+  appId: getEnvVar('REACT_APP_FIREBASE_APP_ID') ? '✅ Set' : '❌ Missing'
+});
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+// Initialize Firebase services
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const database = getDatabase(app);
+export const storage = getStorage(app);
+
+// Initialize Analytics conditionally (only if supported and measurementId is provided)
+export const analytics = getEnvVar('REACT_APP_FIREBASE_MEASUREMENT_ID') ? 
+  (async () => {
     try {
-      connectAuthEmulator(auth, 'http://localhost:9099');
-      console.log('🔧 Connected to Firebase Auth emulator');
+      const analyticsSupported = await isSupported();
+      return analyticsSupported ? getAnalytics(app) : null;
     } catch (error) {
-      console.log('⚠️ Auth emulator connection failed, using production auth');
+      console.warn('Analytics not supported:', error);
+      return null;
     }
-  }
-} else {
-  console.log('🌐 Running in web environment - using standard auth configuration');
-}
+  })() : null;
 
-// Export the helper function for use in other components
-export { isDesktopEnvironment };
+// Google Auth Provider
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('profile');
+googleProvider.addScope('email');
 
-// Initialize Firestore with offline persistence
-// In Electron/webviews, long polling improves reliability
-export const db = initializeFirestore(firebaseApp, {
-  ignoreUndefinedProperties: true,
-  experimentalForceLongPolling: true,
-});
+// Check if running in desktop/Electron environment
+export const isDesktopEnvironment = (): boolean => {
+  return typeof window !== 'undefined' && 
+         (window as any).require && 
+         (window as any).require('electron');
+};
 
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a time
-    console.log('⚠️ Firestore persistence failed - multiple tabs may be open');
-  } else if (err.code === 'unimplemented') {
-    // Browser doesn't support persistence
-    console.log('⚠️ Firestore persistence not supported in this browser');
-  }
-});
+// Check if running in development mode
+export const isDevelopment = (): boolean => {
+  return process.env.NODE_ENV === 'development';
+};
+
+// Log Firebase initialization status
+console.log('🔥 Firebase initialized successfully');
+console.log('📱 Environment:', isDesktopEnvironment() ? 'Desktop/Electron' : 'Web');
+console.log('🔧 Mode:', isDevelopment() ? 'Development' : 'Production');
+console.log('📊 Analytics:', getEnvVar('REACT_APP_FIREBASE_MEASUREMENT_ID') ? 'Enabled' : 'Disabled');
+
+export default app;

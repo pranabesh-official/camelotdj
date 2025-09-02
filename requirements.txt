@@ -11,3 +11,8 @@ numpy
 pandas
 essentia
 mirdata
+ytmusicapi
+pytube
+yt-dlp
+requests
+psutil

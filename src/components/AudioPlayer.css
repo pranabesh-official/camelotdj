@@ -1,0 +1,70 @@
+/* AudioPlayer Component Styles */
+
+/* Icon Styling for Audio Player */
+.control-btn svg {
+  transition: all 0.2s ease;
+}
+
+.control-btn:hover svg {
+  transform: scale(1.1);
+}
+
+.control-btn.play-btn svg {
+  color: white;
+}
+
+.control-btn:disabled svg {
+  opacity: 0.5;
+}
+
+/* Analysis Icons */
+.analysis-item svg {
+  color: #666;
+  margin-bottom: 2px;
+  transition: color 0.2s ease;
+}
+
+.analysis-item:hover svg {
+  color: #999;
+}
+
+/* Time Display Icons */
+.time-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.time-display svg {
+  color: #666;
+  transition: color 0.2s ease;
+}
+
+.time-display:hover svg {
+  color: #999;
+}
+
+/* Loading and Error Indicators */
+.loading-indicator svg {
+  animation: spin 1s linear infinite;
+}
+
+.error-indicator svg {
+  color: #ff4444;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Placeholder Icon */
+.placeholder-icon svg {
+  color: #666;
+  transition: color 0.2s ease;
+}
+
+.placeholder-icon:hover svg {
+  color: #999;
+}

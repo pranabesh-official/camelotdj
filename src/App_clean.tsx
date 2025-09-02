@@ -101,11 +101,14 @@ const App: React.FC = () => {
         setSelectedSong(song);
     }, []);
 
-    const handleDeleteSong = useCallback((songId: string) => {
+    const handleDeleteSong = useCallback(async (songId: string) => {
+        // Simple deletion for clean version - just remove from local state
         setSongs(prevSongs => prevSongs.filter(song => song.id !== songId));
         if (selectedSong && selectedSong.id === songId) {
             setSelectedSong(null);
         }
+        // Return resolved promise to satisfy TypeScript requirement
+        return Promise.resolve();
     }, [selectedSong]);
 
     const getCompatibleSongs = useCallback((targetKey: string) => {

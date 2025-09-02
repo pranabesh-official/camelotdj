@@ -5,7 +5,7 @@ interface MusicLibraryProps {
     songs: Song[];
     selectedSong: Song | null;
     onSongSelect: (song: Song) => void;
-    onDeleteSong: (songId: string) => void;
+    onDeleteSong: (songId: string) => Promise<void>; // Updated to async
     getCompatibleSongs: (targetKey: string) => Song[];
 }
 
@@ -233,9 +233,16 @@ const MusicLibrary: React.FC<MusicLibraryProps> = ({
                                 <div className="cell actions">
                                     <button 
                                         className="delete-btn"
-                                        onClick={(e) => {
+                                        onClick={async (e) => {
                                             e.stopPropagation();
-                                            onDeleteSong(song.id);
+                                            if (window.confirm(`Are you sure you want to permanently delete "${song.filename}"?\n\nThis will:\n• Remove it from the library\n• Remove it from all playlists\n• Cannot be undone`)) {
+                                                try {
+                                                    await onDeleteSong(song.id);
+                                                } catch (error) {
+                                                    console.error('Delete failed:', error);
+                                                    // Error is already handled in the parent component
+                                                }
+                                            }
                                         }}
                                     >
                                         🗑️

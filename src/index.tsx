@@ -1,15 +1,21 @@
 import React from "react";
 import ReactDOM from "react-dom";
 import App from "./App";
+import { AuthProvider } from "./services/AuthContext";
 import "./index.css";
 import * as serviceWorker from "./serviceWorker";
 
-console.log('Mixed In Key App starting...');
+console.log('CAMELOTDJ App starting...');
 const rootElement = document.getElementById("root");
 console.log('Root element:', rootElement);
 
 if (rootElement) {
-    ReactDOM.render(<App/>, rootElement);
+    ReactDOM.render(
+        <AuthProvider>
+            <App/>
+        </AuthProvider>,
+        rootElement
+    );
     console.log('React app mounted successfully');
 } else {
     console.error('Root element not found!');

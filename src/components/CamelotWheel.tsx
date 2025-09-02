@@ -11,10 +11,10 @@ const CamelotWheel: React.FC<CamelotWheelProps> = ({ songs, selectedSong, onSong
     // Camelot wheel positions (arranged in circle)
     const wheelPositions = useMemo(() => {
         const positions: { [key: string]: { x: number; y: number; angle: number } } = {};
-        const centerX = 200;
-        const centerY = 200;
-        const outerRadius = 150; // Major keys (B)
-        const innerRadius = 100; // Minor keys (A)
+        const centerX = 150;
+        const centerY = 150;
+        const outerRadius = 110; // Major keys (B)
+        const innerRadius = 75; // Minor keys (A)
         
         // Generate positions for keys 1-12
         for (let i = 1; i <= 12; i++) {
@@ -103,138 +103,172 @@ const CamelotWheel: React.FC<CamelotWheelProps> = ({ songs, selectedSong, onSong
     
     return (
         <div className="camelot-wheel-container">
-            <div className="wheel-header">
-                <h2>Camelot Wheel</h2>
-                <p>Visualize harmonic relationships between your songs</p>
-                {selectedSong && (
-                    <div className="selected-info">
-                        <strong>Selected:</strong> {selectedSong.filename} ({selectedSong.camelot_key})
-                        <br />
-                        <span className="compatible-info">
-                            Blue keys are harmonically compatible
-                        </span>
-                    </div>
-                )}
-            </div>
+           
+            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '16px', textAlign: 'center' }}>
+                Harmonic Mixing Guide
+            </p>
             
             <div className="wheel-svg-container">
-                <svg width="400" height="400" viewBox="0 0 400 400">
+                <svg width="200" height="200" viewBox="0 0 200 200">
                     {/* Background circles */}
-                    <circle cx="200" cy="200" r="160" fill="none" stroke="#E0E0E0" strokeWidth="2" />
-                    <circle cx="200" cy="200" r="110" fill="none" stroke="#E0E0E0" strokeWidth="2" />
+                    <circle cx="100" cy="100" r="90" fill="none" stroke="rgba(255, 255, 255, 0.15)" strokeWidth="1" />
+                    <circle cx="100" cy="100" r="65" fill="none" stroke="rgba(255, 255, 255, 0.15)" strokeWidth="1" />
+                    <circle cx="100" cy="100" r="40" fill="none" stroke="rgba(255, 255, 255, 0.1)" strokeWidth="1" />
                     
-                    {/* Radial lines */}
+                    {/* Radial lines for visual appeal */}
                     {Array.from({ length: 12 }, (_, i) => {
                         const angle = (i * 30 - 90) * Math.PI / 180;
-                        const x1 = 200 + 60 * Math.cos(angle);
-                        const y1 = 200 + 60 * Math.sin(angle);
-                        const x2 = 200 + 170 * Math.cos(angle);
-                        const y2 = 200 + 170 * Math.sin(angle);
+                        const x1 = 100 + 35 * Math.cos(angle);
+                        const y1 = 100 + 35 * Math.sin(angle);
+                        const x2 = 100 + 95 * Math.cos(angle);
+                        const y2 = 100 + 95 * Math.sin(angle);
                         
                         return (
                             <line 
                                 key={i}
                                 x1={x1} y1={y1} x2={x2} y2={y2}
-                                stroke="#E0E0E0" 
+                                stroke="rgba(255, 255, 255, 0.08)" 
                                 strokeWidth="1"
                             />
                         );
                     })}
                     
-                    {/* Key positions */}
+                    {/* Key positions with color coding */}
                     {Object.entries(wheelPositions).map(([key, position]) => {
                         const isMinor = key.endsWith('A');
                         const hasSongs = songsByKey[key] && songsByKey[key].length > 0;
                         const songCount = songsByKey[key] && songsByKey[key].length || 0;
+                        const keyNumber = parseInt(key.slice(0, -1));
+                        
+                        const keyColors = {
+                            '1A': 'var(--camelot-1a)', '1B': 'var(--camelot-1b)',
+                            '2A': 'var(--camelot-2a)', '2B': 'var(--camelot-2b)',
+                            '3A': 'var(--camelot-3a)', '3B': 'var(--camelot-3b)',
+                            '4A': 'var(--camelot-4a)', '4B': 'var(--camelot-4b)',
+                            '5A': 'var(--camelot-5a)', '5B': 'var(--camelot-5b)',
+                            '6A': 'var(--camelot-6a)', '6B': 'var(--camelot-6b)',
+                            '7A': 'var(--camelot-7a)', '7B': 'var(--camelot-7b)',
+                            '8A': 'var(--camelot-8a)', '8B': 'var(--camelot-8b)',
+                            '9A': 'var(--camelot-9a)', '9B': 'var(--camelot-9b)',
+                            '10A': 'var(--camelot-10a)', '10B': 'var(--camelot-10b)',
+                            '11A': 'var(--camelot-11a)', '11B': 'var(--camelot-11b)',
+                            '12A': 'var(--camelot-12a)', '12B': 'var(--camelot-12b)'
+                        };
+                        
+                        // Determine key color based on selection and compatibility
+                        let keyFillColor;
+                        let keyStrokeColor = 'rgba(0, 0, 0, 0.2)';
+                        let keyStrokeWidth = 1;
+                        let keyOpacity = 1;
+                        
+                        if (selectedSong && selectedSong.camelot_key) {
+                            if (key === selectedSong.camelot_key) {
+                                // Selected key - bright highlight
+                                keyFillColor = '#FF5722'; // Bright orange
+                                keyStrokeColor = '#ffffff';
+                                keyStrokeWidth = 3;
+                            } else if (compatibleKeys.includes(key)) {
+                                // Compatible keys - blue highlight
+                                keyFillColor = '#2196F3'; // Bright blue
+                                keyStrokeColor = '#ffffff';
+                                keyStrokeWidth = 2;
+                            } else if (hasSongs) {
+                                // Other keys with songs - dimmed
+                                keyFillColor = keyColors[key as keyof typeof keyColors] || '#666';
+                                keyOpacity = 0.4;
+                            } else {
+                                // Empty keys - very dimmed
+                                keyFillColor = 'rgba(255, 255, 255, 0.05)';
+                                keyOpacity = 0.3;
+                            }
+                        } else {
+                            // No selection - show normal colors
+                            keyFillColor = hasSongs ? (keyColors[key as keyof typeof keyColors] || '#666') : 'rgba(255, 255, 255, 0.1)';
+                        }
+                        
+                        const adjustedPosition = {
+                            x: 100 + (isMinor ? 52 : 77) * Math.cos((keyNumber - 1) * 30 * Math.PI / 180 - Math.PI / 2),
+                            y: 100 + (isMinor ? 52 : 77) * Math.sin((keyNumber - 1) * 30 * Math.PI / 180 - Math.PI / 2)
+                        };
                         
                         return (
                             <g key={key}>
                                 {/* Key circle */}
                                 <circle
-                                    cx={position.x}
-                                    cy={position.y}
-                                    r={isMinor ? 20 : 25}
-                                    fill={getKeyColor(key)}
-                                    stroke={selectedSong && selectedSong.camelot_key === key ? '#000' : '#666'}
-                                    strokeWidth={selectedSong && selectedSong.camelot_key === key ? 3 : 1}
+                                    cx={adjustedPosition.x}
+                                    cy={adjustedPosition.y}
+                                    r={isMinor ? 12 : 15}
+                                    fill={keyFillColor}
+                                    stroke={keyStrokeColor}
+                                    strokeWidth={keyStrokeWidth}
+                                    opacity={keyOpacity}
                                     className={hasSongs ? 'key-clickable' : 'key-empty'}
                                     onClick={() => handleKeyClick(key)}
-                                    style={{ cursor: hasSongs ? 'pointer' : 'default' }}
+                                    style={{ 
+                                        cursor: hasSongs ? 'pointer' : 'default',
+                                        filter: selectedSong && selectedSong.camelot_key === key ? 'brightness(1.1) drop-shadow(0 0 8px rgba(255, 87, 34, 0.8))' : 
+                                               selectedSong && compatibleKeys.includes(key) ? 'brightness(1.1) drop-shadow(0 0 6px rgba(33, 150, 243, 0.6))' : 'none',
+                                        transition: 'all 0.3s ease'
+                                    }}
                                 />
                                 
                                 {/* Key label */}
                                 <text
-                                    x={position.x}
-                                    y={position.y + 5}
+                                    x={adjustedPosition.x}
+                                    y={adjustedPosition.y + 3}
                                     textAnchor="middle"
-                                    fontSize={isMinor ? "12" : "14"}
-                                    fontWeight="bold"
-                                    fill={selectedSong && selectedSong.camelot_key === key ? "white" : "white"}
+                                    fontSize={isMinor ? "9" : "10"}
+                                    fontWeight="600"
+                                    fill={selectedSong && selectedSong.camelot_key === key ? "white" : 
+                                         selectedSong && compatibleKeys.includes(key) ? "white" :
+                                         hasSongs ? "white" : "rgba(255, 255, 255, 0.4)"}
                                     pointerEvents="none"
+                                    style={{ 
+                                        textShadow: selectedSong && (selectedSong.camelot_key === key || compatibleKeys.includes(key)) ? '0 1px 3px rgba(0, 0, 0, 0.9)' : '0 1px 2px rgba(0, 0, 0, 0.8)',
+                                        transition: 'all 0.3s ease'
+                                    }}
                                 >
                                     {key}
                                 </text>
                                 
                                 {/* Song count indicator */}
                                 {songCount > 1 && (
+                                    <circle
+                                        cx={adjustedPosition.x + (isMinor ? 8 : 10)}
+                                        cy={adjustedPosition.y - (isMinor ? 8 : 10)}
+                                        r="5"
+                                        fill="var(--accent-yellow)"
+                                        stroke="white"
+                                        strokeWidth="1"
+                                    />
+                                )}
+                                {songCount > 1 && (
                                     <text
-                                        x={position.x + (isMinor ? 15 : 18)}
-                                        y={position.y - (isMinor ? 15 : 18)}
+                                        x={adjustedPosition.x + (isMinor ? 8 : 10)}
+                                        y={adjustedPosition.y - (isMinor ? 8 : 10) + 2}
                                         textAnchor="middle"
-                                        fontSize="10"
+                                        fontSize="7"
                                         fontWeight="bold"
-                                        fill="#FF5722"
+                                        fill="black"
                                         pointerEvents="none"
                                     >
-                                        {songCount}
+                                        {songCount > 9 ? '9+' : songCount}
                                     </text>
                                 )}
                             </g>
                         );
                     })}
-                    
-                    {/* Center labels */}
-                    <text x="200" y="190" textAnchor="middle" fontSize="16" fontWeight="bold" fill="#666">
-                        Camelot Wheel
-                    </text>
-                    <text x="200" y="210" textAnchor="middle" fontSize="12" fill="#999">
-                        Harmonic Mixing
-                    </text>
                 </svg>
             </div>
             
-            <div className="wheel-legend">
-                <div className="legend-item">
-                    <div className="legend-color" style={{ backgroundColor: '#E0E0E0' }}></div>
-                    <span>Empty keys</span>
-                </div>
-                <div className="legend-item">
-                    <div className="legend-color" style={{ backgroundColor: '#4CAF50' }}></div>
-                    <span>Keys with songs</span>
-                </div>
-                {selectedSong && (
-                    <>
-                        <div className="legend-item">
-                            <div className="legend-color" style={{ backgroundColor: '#FF5722' }}></div>
-                            <span>Selected song key</span>
-                        </div>
-                        <div className="legend-item">
-                            <div className="legend-color" style={{ backgroundColor: '#2196F3' }}></div>
-                            <span>Compatible keys</span>
-                        </div>
-                    </>
-                )}
-            </div>
+          
             
-            <div className="wheel-instructions">
-                <h3>How to Use:</h3>
-                <ul>
-                    <li>Click on colored circles to select songs in that key</li>
-                    <li>Adjacent numbers (e.g., 8A → 7A or 9A) mix well</li>
-                    <li>Same number, different letter (e.g., 8A → 8B) are relative major/minor</li>
-                    <li>Numbers with multiple songs show a count indicator</li>
-                </ul>
-            </div>
+            {/* Instructions when no track is selected */}
+            {!selectedSong && (
+                <div className="wheel-info" style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                    <p>Select a track to see harmonic mixing recommendations</p>
+                </div>
+            )}
         </div>
     );
 };

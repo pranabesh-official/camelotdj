@@ -1,11 +1,28 @@
 import React, { useCallback, useState } from 'react';
 
+// Professional SVG icons
+const MusicIcon = () => (
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="9 18V5l12-2v13"/>
+    <circle cx="6" cy="18" r="3"/>
+    <circle cx="18" cy="16" r="3"/>
+  </svg>
+);
+
+const FolderIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+  </svg>
+);
+
 interface FileUploadProps {
     onFileUpload: (file: File) => void;
+    onMultiFileUpload?: (files: File[]) => void;
+    onFolderUpload?: (files: FileList) => void;
     isAnalyzing: boolean;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onMultiFileUpload, onFolderUpload, isAnalyzing }) => {
     const [dragOver, setDragOver] = useState(false);
     
     const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -23,26 +40,51 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) =>
         setDragOver(false);
         
         const files = Array.from(e.dataTransfer.files);
-        const musicFile = files.find(file => 
+        const musicFiles = files.filter(file => 
             file.type.startsWith('audio/') || 
             /\\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(file.name)
         );
         
-        if (musicFile) {
-            onFileUpload(musicFile);
-        } else {
-            alert('Please upload a valid audio file (MP3, WAV, FLAC, AAC, OGG, M4A)');
+        if (musicFiles.length === 0) {
+            alert('Please upload valid audio files (MP3, WAV, FLAC, AAC, OGG, M4A)');
+            return;
         }
-    }, [onFileUpload]);
+        
+        if (musicFiles.length === 1) {
+            onFileUpload(musicFiles[0]);
+        } else if (onMultiFileUpload) {
+            onMultiFileUpload(musicFiles);
+        } else {
+            // Fallback to single file upload for the first file
+            onFileUpload(musicFiles[0]);
+        }
+    }, [onFileUpload, onMultiFileUpload]);
     
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files && e.target.files[0];
-        if (file) {
-            onFileUpload(file);
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            const fileArray = Array.from(files);
+            if (fileArray.length === 1) {
+                onFileUpload(fileArray[0]);
+            } else if (onMultiFileUpload) {
+                onMultiFileUpload(fileArray);
+            } else {
+                // Fallback to single file upload for the first file
+                onFileUpload(fileArray[0]);
+            }
         }
         // Reset input value to allow selecting the same file again
         e.target.value = '';
-    }, [onFileUpload]);
+    }, [onFileUpload, onMultiFileUpload]);
+    
+    const handleFolderSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (files && files.length > 0 && onFolderUpload) {
+            onFolderUpload(files);
+        }
+        // Reset input value
+        e.target.value = '';
+    }, [onFolderUpload]);
     
     return (
         <div className="file-upload-container">
@@ -63,18 +105,35 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, isAnalyzing }) =>
                     </div>
                 ) : (
                     <div className="upload-state">
-                        <div className="upload-icon">🎵</div>
+                        <div className="upload-icon">
+                            <MusicIcon />
+                        </div>
                         <h3>Drag & Drop Music Files Here</h3>
-                        <p>or</p>
+                        <p>Select multiple files or folders for batch analysis</p>
                         <label className="file-input-label">
                             <input 
                                 type="file" 
+                                multiple
                                 accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
                                 onChange={handleFileSelect}
                                 disabled={isAnalyzing}
                             />
                             Choose Files
                         </label>
+                        {/* {onFolderUpload && (
+                            <label className="folder-upload-btn">
+                                <input 
+                                    type="file" 
+                                    {...({ webkitdirectory: "", directory: "" } as any)}
+                                    multiple
+                                    accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,audio/*"
+                                    onChange={handleFolderSelect}
+                                    disabled={isAnalyzing}
+                                />
+                                <FolderIcon />
+                                Choose Folder
+                            </label>
+                        )} */}
                         <div className="supported-formats">
                             <small>Supported formats: MP3, WAV, FLAC, AAC, OGG, M4A</small>
                         </div>

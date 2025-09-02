@@ -1,0 +1,149 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            arch: x64
+            target: zip
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+            target: zip
+          - os: windows-latest
+            platform: win
+            arch: x64
+            target: nsis
+          - os: windows-latest
+            platform: win
+            arch: arm64
+            target: nsis
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install PyInstaller
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Build Python backend
+        run: npm run python-build
+
+      - name: Build React app
+        run: npm run react-build
+
+      - name: Build Electron main process
+        run: npm run main-build
+
+      - name: Build Electron app
+        env:
+          ELECTRON_BUILDER_ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --${{ matrix.target }}
+          else
+            npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --${{ matrix.target }}
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.target }}
+          path: dist/
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## CAMELOTDJ - Music Analyzer v${{ steps.get_version.outputs.VERSION }}
+            
+            ### Downloads
+            
+            **macOS:**
+            - Intel (x64): [CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-x64-mac.zip](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-x64-mac.zip)
+            - Apple Silicon (arm64): [CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-arm64-mac.zip](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-arm64-mac.zip)
+            
+            **Windows:**
+            - Intel (x64): [CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-x64-win.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-x64-win.exe)
+            - ARM64: [CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-arm64-win.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/CAMELOTDJ-Music-Analyzer-${{ steps.get_version.outputs.VERSION }}-arm64-win.exe)
+            
+            ### Changes
+            - Built for multiple platforms and architectures
+            - Optimized for performance and compatibility
+            
+            ### Installation
+            1. Download the appropriate version for your platform and architecture
+            2. Extract the ZIP file (macOS) or run the installer (Windows)
+            3. Launch the application
+            
+            ### System Requirements
+            - **macOS**: 10.14+ (Intel) or 11.0+ (Apple Silicon)
+            - **Windows**: Windows 10+ (x64) or Windows 11+ (ARM64)
+            - **Python**: 3.9+ (included in the build)
+            
+            ### Features
+            - Professional music analysis
+            - DJ tools and utilities
+            - Cross-platform compatibility
+            - Integrated Python backend
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/mac-x64-zip/dist/*.zip
+            artifacts/mac-arm64-zip/dist/*.zip
+            artifacts/win-x64-nsis/dist/*.exe
+            artifacts/win-arm64-nsis/dist/*.exe

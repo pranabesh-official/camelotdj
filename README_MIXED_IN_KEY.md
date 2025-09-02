@@ -184,9 +184,22 @@ Visit `http://127.0.0.1:5000/graphiql/` for GraphQL interface.
 
 ## 📦 Building for Distribution
 
+### Quick Build (Recommended)
+```bash
+# Use the automated build script
+./build.sh
+```
+
+### Manual Build
 ```bash
 npm run build
 ```
+
+### Available Build Scripts
+- **`./build.sh`** - Full macOS build with dependency checking
+- **`./quick-build.sh`** - Fast macOS build (when dependencies are installed)
+- **`./build-windows.sh`** - Windows build
+- See `BUILD_SCRIPTS.md` for detailed usage instructions
 
 This creates:
 - Packaged Python backend (PyInstaller)

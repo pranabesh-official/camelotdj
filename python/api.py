@@ -261,6 +261,11 @@ def get_usb_devices():
                         line = line.strip()
                         if line.startswith('Product ID:'):
                             if current_device:
+                                # Add type field based on device characteristics
+                                if 'Mass Storage' in current_device.get('product', '') or 'USB Drive' in current_device.get('product', ''):
+                                    current_device['type'] = 'usb_storage'
+                                else:
+                                    current_device['type'] = 'usb_device'
                                 devices.append(current_device)
                             current_device = {'product_id': line.split(':')[1].strip()}
                         elif line.startswith('Vendor ID:'):
@@ -275,6 +280,11 @@ def get_usb_devices():
                             current_device['speed'] = line.split(':')[1].strip()
                     
                     if current_device:
+                        # Add type field for the last device
+                        if 'Mass Storage' in current_device.get('product', '') or 'USB Drive' in current_device.get('product', ''):
+                            current_device['type'] = 'usb_storage'
+                        else:
+                            current_device['type'] = 'usb_device'
                         devices.append(current_device)
                         
             except subprocess.TimeoutExpired:
@@ -293,11 +303,16 @@ def get_usb_devices():
                         if line.strip():
                             parts = line.strip().split()
                             if len(parts) >= 2:
-                                devices.append({
+                                device_info = {
                                     'device_id': parts[0],
                                     'name': ' '.join(parts[1:]),
-                                    'description': ' '.join(parts[1:])
-                                })
+                                    'description': ' '.join(parts[1:]),
+                                    'type': 'usb_device'  # Default type
+                                }
+                                # Try to detect if it's a storage device
+                                if any(keyword in device_info['name'].lower() for keyword in ['drive', 'disk', 'storage', 'usb']):
+                                    device_info['type'] = 'usb_storage'
+                                devices.append(device_info)
             except subprocess.TimeoutExpired:
                 print("⚠️ USB detection timed out on Windows")
             except Exception as e:
@@ -313,13 +328,18 @@ def get_usb_devices():
                         if line.strip():
                             parts = line.split()
                             if len(parts) >= 6:
-                                devices.append({
+                                device_info = {
                                     'bus': parts[1],
                                     'device': parts[3],
                                     'vendor_id': parts[5].split(':')[0],
                                     'product_id': parts[5].split(':')[1],
-                                    'description': ' '.join(parts[6:])
-                                })
+                                    'description': ' '.join(parts[6:]),
+                                    'type': 'usb_device'  # Default type
+                                }
+                                # Try to detect if it's a storage device
+                                if any(keyword in device_info['description'].lower() for keyword in ['drive', 'disk', 'storage', 'usb']):
+                                    device_info['type'] = 'usb_storage'
+                                devices.append(device_info)
             except subprocess.TimeoutExpired:
                 print("⚠️ USB detection timed out on Linux")
             except Exception as e:

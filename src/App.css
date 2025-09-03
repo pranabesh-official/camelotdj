@@ -105,16 +105,19 @@ body {
 
 .header-content {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   width: 100%;
   gap: var(--space-xl);
+  position: relative;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  position: absolute;
+  left: 0;
 }
 
 .brand .logo {
@@ -189,6 +192,15 @@ body {
   position: relative;
 }
 
+.search-box-centered {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 400px;
+  max-width: 400px;
+}
+
 .search-box-header input {
   width: 100%;
   padding: var(--space-sm) var(--space-md);
@@ -208,6 +220,94 @@ body {
 
 .search-box-header input::placeholder {
   color: var(--text-muted);
+}
+
+/* YouTube Search Input - Remove focus highlight */
+.youtube-music-container input:focus {
+  outline: none;
+  border-color: var(--border-color);
+  box-shadow: none;
+}
+
+/* Professional Search Button Animations */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* YouTube Table Styling */
+.table-wrapper {
+  background: var(--surface-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.youtube-tracks-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface-bg);
+}
+
+.youtube-tracks-table thead {
+  background: var(--elevated-bg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.youtube-tracks-table th {
+  padding: var(--space-md) var(--space-sm);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.youtube-tracks-table td {
+  padding: var(--space-md) var(--space-sm);
+  border-bottom: 1px solid var(--divider-color);
+  vertical-align: middle;
+}
+
+.youtube-track-row:hover {
+  background: var(--hover-bg) !important;
+}
+
+.thumbnail-cell {
+  width: 60px;
+  text-align: center;
+}
+
+.title-cell {
+  min-width: 200px;
+  max-width: 250px;
+}
+
+.artist-cell {
+  min-width: 150px;
+  max-width: 180px;
+}
+
+.album-cell {
+  min-width: 150px;
+  max-width: 180px;
+}
+
+.duration-cell {
+  width: 80px;
+  text-align: center;
+}
+
+.actions-cell {
+  width: 140px;
+  text-align: center;
 }
 
 /* Main Layout */
@@ -940,6 +1040,30 @@ body {
   margin: 0 auto;
 }
 
+.settings-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-2xl);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.settings-icon {
+  color: var(--brand-blue);
+  flex-shrink: 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-lg);
+}
+
+.section-icon {
+  color: var(--brand-blue);
+  flex-shrink: 0;
+}
+
 .settings-section {
   margin-bottom: var(--space-xl);
 }
@@ -1002,6 +1126,16 @@ body {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   margin-bottom: var(--space-md);
+}
+
+.status-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.status-content svg {
+  flex-shrink: 0;
 }
 
 .status-indicator p {

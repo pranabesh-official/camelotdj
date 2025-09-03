@@ -848,58 +848,65 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             onClick={() => handleSearch()}
                             disabled={isSearching || !searchQuery.trim()}
                             style={{
-                                padding: '12px 24px',
-                                fontSize: '16px',
-                                fontWeight: '600',
+                                padding: '12px 16px',
+                                fontSize: '14px',
+                                fontWeight: '500',
                                 background: isSearching 
-                                    ? 'linear-gradient(135deg, var(--surface-bg) 0%, rgba(139, 69, 255, 0.1) 100%)' 
+                                    ? 'var(--surface-bg)' 
                                     : !searchQuery.trim()
                                         ? 'var(--surface-bg)'
-                                        : 'linear-gradient(135deg, var(--accent-color) 0%, #6366f1 100%)',
+                                        : 'var(--brand-blue)',
                                 color: isSearching || !searchQuery.trim() ? 'var(--text-disabled)' : 'white',
                                 border: isSearching 
-                                    ? '1px solid var(--accent-color)' 
+                                    ? '1px solid var(--brand-blue)' 
                                     : !searchQuery.trim()
                                         ? '1px solid var(--border-color)'
-                                        : 'none',
+                                        : '1px solid var(--brand-blue)',
                                 borderRadius: '8px',
                                 cursor: isSearching ? 'not-allowed' : !searchQuery.trim() ? 'default' : 'pointer',
-                                minWidth: '120px',
+                                minWidth: '100px',
                                 height: '48px',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                                boxShadow: !isSearching && searchQuery.trim() 
-                                    ? '0 4px 12px rgba(139, 69, 255, 0.2), 0 0 0 0 rgba(139, 69, 255, 0.4)' 
-                                    : 'none',
+                                gap: '6px',
+                                transition: 'all 0.2s ease',
+                                boxShadow: 'none',
                                 transform: 'translateY(0)',
                                 position: 'relative',
                                 overflow: 'hidden'
                             }}
                             onMouseEnter={(e) => {
                                 if (!isSearching && searchQuery.trim()) {
-                                    e.currentTarget.style.transform = 'translateY(-2px)';
-                                    e.currentTarget.style.boxShadow = '0 8px 24px rgba(139, 69, 255, 0.3), 0 0 0 2px rgba(139, 69, 255, 0.2)';
+                                    e.currentTarget.style.background = 'var(--brand-blue-light)';
+                                    e.currentTarget.style.borderColor = 'var(--brand-blue-light)';
                                 }
                             }}
                             onMouseLeave={(e) => {
                                 if (!isSearching && searchQuery.trim()) {
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(139, 69, 255, 0.2), 0 0 0 0 rgba(139, 69, 255, 0.4)';
+                                    e.currentTarget.style.background = 'var(--brand-blue)';
+                                    e.currentTarget.style.borderColor = 'var(--brand-blue)';
                                 }
                             }}
                             onMouseDown={(e) => {
                                 if (!isSearching && searchQuery.trim()) {
-                                    e.currentTarget.style.transform = 'translateY(1px)';
+                                    e.currentTarget.style.background = 'var(--brand-blue-dark)';
                                 }
                             }}
                             onMouseUp={(e) => {
                                 if (!isSearching && searchQuery.trim()) {
-                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.background = 'var(--brand-blue-light)';
                                 }
                             }}
                         >
+                            {/* Search Icon */}
+                            {!isSearching && (
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+                                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                    <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                            )}
+                            
                             {/* Loading animation backdrop */}
                             {isSearching && (
                                 <div style={{
@@ -908,7 +915,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     left: 0,
                                     right: 0,
                                     bottom: 0,
-                                    background: 'linear-gradient(90deg, transparent, rgba(139, 69, 255, 0.3), transparent)',
+                                    background: 'linear-gradient(90deg, transparent, rgba(74, 144, 226, 0.3), transparent)',
                                     animation: 'shimmer 1.5s infinite',
                                     borderRadius: '8px'
                                 }} />
@@ -940,7 +947,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             )}
                         </button>
                         
-                        {/* Add CSS animations */}
+                        {/* Add CSS animations and table styles */}
                         <style>{`
                             @keyframes shimmer {
                                 0% { transform: translateX(-100%); }
@@ -952,98 +959,190 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.05); }
                             }
                             
-                            /* Responsive grid for track cards */
-                            .tracks-grid {
-                                display: grid;
-                                gap: 16px;
-                                grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+                            /* Table wrapper styles */
+                            .table-wrapper {
                                 width: 100%;
+                                overflow-x: auto;
+                                border: 1px solid var(--border-color);
+                                border-radius: 8px;
+                                background: var(--surface-bg);
                             }
                             
-                            /* Large screens - 3 columns */
-                            @media (min-width: 1400px) {
-                                .tracks-grid {
-                                    grid-template-columns: repeat(3, 1fr);
-                                }
+                            /* YouTube tracks table styles */
+                            .youtube-tracks-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                background: var(--surface-bg);
                             }
                             
-                            /* Medium-large screens - 2 columns */
-                            @media (max-width: 1399px) and (min-width: 1024px) {
-                                .tracks-grid {
-                                    grid-template-columns: repeat(2, 1fr);
-                                }
+                            .youtube-tracks-table thead {
+                                background: var(--card-bg);
+                                border-bottom: 2px solid var(--border-color);
                             }
                             
-                            /* Tablet screens */
-                            @media (max-width: 1023px) and (min-width: 769px) {
-                                .tracks-grid {
-                                    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-                                }
+                            .youtube-tracks-table th {
+                                padding: 12px 8px;
+                                text-align: left;
+                                font-weight: 600;
+                                font-size: 12px;
+                                color: var(--text-secondary);
+                                text-transform: uppercase;
+                                letter-spacing: 0.5px;
+                                border-right: 1px solid var(--border-color);
                             }
                             
-                            /* Small tablet and mobile */
+                            .youtube-tracks-table th:last-child {
+                                border-right: none;
+                            }
+                            
+                            .youtube-tracks-table td {
+                                padding: 12px 8px;
+                                border-bottom: 1px solid var(--border-color);
+                                border-right: 1px solid var(--border-color);
+                                vertical-align: middle;
+                            }
+                            
+                            .youtube-tracks-table td:last-child {
+                                border-right: none;
+                            }
+                            
+                            .youtube-track-row {
+                                transition: all 0.2s ease;
+                            }
+                            
+                            .youtube-track-row:hover {
+                                background: var(--card-bg) !important;
+                            }
+                            
+                            .youtube-track-row:last-child td {
+                                border-bottom: none;
+                            }
+                            
+                            /* Column widths */
+                            .thumbnail-header, .thumbnail-cell {
+                                width: 80px;
+                                text-align: center;
+                            }
+                            
+                            .title-header, .title-cell {
+                                width: 25%;
+                                min-width: 200px;
+                            }
+                            
+                            .artist-header, .artist-cell {
+                                width: 20%;
+                                min-width: 150px;
+                            }
+                            
+                            .album-header, .album-cell {
+                                width: 20%;
+                                min-width: 150px;
+                            }
+                            
+                            .duration-header, .duration-cell {
+                                width: 80px;
+                                text-align: center;
+                            }
+                            
+                            .actions-header, .actions-cell {
+                                width: 150px;
+                                text-align: center;
+                            }
+                            
+                            /* Mobile responsive styles */
                             @media (max-width: 768px) {
-                                .tracks-grid {
-                                    grid-template-columns: 1fr;
-                                    gap: 12px;
+                                .table-wrapper {
+                                    font-size: 12px;
                                 }
-                                .track-card {
-                                    padding: 12px !important;
-                                    gap: 12px !important;
+                                
+                                .youtube-tracks-table th,
+                                .youtube-tracks-table td {
+                                    padding: 8px 4px;
                                 }
-                                .track-duration {
-                                    display: none !important;
+                                
+                                .album-header, .album-cell {
+                                    display: none;
+                                }
+                                
+                                .duration-header, .duration-cell {
+                                    display: none;
+                                }
+                                
+                                .thumbnail-cell img {
+                                    width: 40px !important;
+                                    height: 40px !important;
+                                }
+                                
+                                .title-cell div {
+                                    max-width: 150px !important;
+                                }
+                                
+                                .artist-cell div {
+                                    max-width: 120px !important;
                                 }
                             }
                             
-                            /* Mobile phones */
                             @media (max-width: 480px) {
-                                .tracks-grid {
-                                    gap: 8px;
-                                }
-                                .track-card {
-                                    flex-direction: column !important;
-                                    align-items: flex-start !important;
-                                    text-align: left !important;
-                                    padding: 10px !important;
-                                    gap: 8px !important;
-                                }
-                                .track-info {
-                                    width: 100% !important;
-                                }
-                                .track-download {
-                                    width: 100% !important;
-                                    margin-top: 8px !important;
-                                }
                                 .youtube-music-container {
                                     padding: 12px !important;
                                 }
+                                
                                 .search-section {
                                     margin-bottom: 12px !important;
                                 }
+                                
                                 .search-section > div:first-child {
                                     flex-direction: column !important;
                                     gap: 8px !important;
                                 }
+                                
                                 .search-section input {
                                     font-size: 16px !important; /* Prevents zoom on iOS */
                                 }
+                                
                                 .search-section button {
                                     width: 100% !important;
                                     justify-self: stretch !important;
                                 }
+                                
+                                .table-wrapper {
+                                    border-radius: 4px;
+                                }
+                                
+                                .youtube-tracks-table th,
+                                .youtube-tracks-table td {
+                                    padding: 6px 2px;
+                                    font-size: 11px;
+                                }
+                                
+                                .thumbnail-cell img {
+                                    width: 30px !important;
+                                    height: 30px !important;
+                                }
+                                
+                                .title-cell div {
+                                    max-width: 100px !important;
+                                }
+                                
+                                .artist-cell div {
+                                    max-width: 80px !important;
+                                }
+                                
+                                .actions-cell button {
+                                    padding: 2px 4px !important;
+                                    font-size: 10px !important;
+                                }
                             }
                             
                             @media (max-width: 360px) {
-                                .tracks-grid {
-                                    gap: 6px;
-                                }
-                                .track-card {
-                                    padding: 8px !important;
-                                    gap: 6px !important;
-                                }
                                 .youtube-music-container {
                                     padding: 8px !important;
+                                }
+                                
+                                .youtube-tracks-table th,
+                                .youtube-tracks-table td {
+                                    padding: 4px 1px;
+                                    font-size: 10px;
                                 }
                             }
                         `}</style>
@@ -1072,306 +1171,261 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     </h3>
                 )}
 
-                <div className="tracks-grid">
-                    {searchResults.map((track) => {
-                        const isCurrentlyDownloading = isDownloading === track.id;
-                        const progress = downloadProgress[track.id] || 0;
+                <div className="table-wrapper">
+                    <table className="youtube-tracks-table">
+                        <thead>
+                            <tr>
+                                <th className="thumbnail-header">Thumbnail</th>
+                                <th className="title-header">Title</th>
+                                <th className="artist-header">Artist</th>
+                                <th className="album-header">Album</th>
+                                <th className="duration-header">Duration</th>
+                                <th className="actions-header">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {searchResults.map((track) => {
+                                const isCurrentlyDownloading = isDownloading === track.id;
+                                const progress = downloadProgress[track.id] || 0;
 
-                        return (
-                            <div
-                                key={track.id}
-                                className="track-card"
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    padding: 'var(--space-md)',
-                                    background: 'var(--card-bg)',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: '8px',
-                                    gap: 'var(--space-md)',
-                                    minWidth: '0', // Allow flex items to shrink
-                                    width: '100%',
-                                    transition: 'all 0.2s ease'
-                                }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.borderColor = 'var(--accent-color)';
-                                    e.currentTarget.style.transform = 'translateY(-2px)';
-                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(139, 69, 255, 0.15)';
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                    e.currentTarget.style.boxShadow = 'none';
-                                }}
-                            >
-                                {/* Thumbnail */}
-                                <img
-                                    src={track.thumbnail}
-                                    alt={`${track.title} by ${track.artist}`}
-                                    style={{
-                                        width: '60px',
-                                        height: '60px',
-                                        borderRadius: '6px',
-                                        objectFit: 'cover',
-                                        flexShrink: 0
-                                    }}
-                                    onError={(e) => {
-                                        // Fallback for broken images
-                                        e.currentTarget.style.display = 'none';
-                                    }}
-                                />
+                                return (
+                                    <tr
+                                        key={track.id}
+                                        className="youtube-track-row"
+                                        style={{
+                                            transition: 'all 0.2s ease',
+                                            cursor: 'pointer'
+                                        }}
+                                                                                 onMouseEnter={(e) => {
+                                             e.currentTarget.style.backgroundColor = 'var(--card-bg)';
+                                             e.currentTarget.style.borderColor = 'var(--brand-blue)';
+                                         }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'transparent';
+                                            e.currentTarget.style.borderColor = 'transparent';
+                                        }}
+                                    >
+                                        {/* Thumbnail */}
+                                        <td className="thumbnail-cell">
+                                            <img
+                                                src={track.thumbnail}
+                                                alt={`${track.title} by ${track.artist}`}
+                                                style={{
+                                                    width: '50px',
+                                                    height: '50px',
+                                                    borderRadius: '4px',
+                                                    objectFit: 'cover'
+                                                }}
+                                                onError={(e) => {
+                                                    // Fallback for broken images
+                                                    e.currentTarget.style.display = 'none';
+                                                }}
+                                            />
+                                        </td>
 
-                                {/* Track Info */}
-                                <div className="track-info" style={{ 
-                                    flex: 1, 
-                                    minWidth: 0, // Allow text to truncate
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '2px'
-                                }}>
-                                    <h4 style={{
-                                        color: 'var(--text-primary)',
-                                        margin: '0',
-                                        fontSize: '16px',
-                                        fontWeight: '500',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                        lineHeight: '1.2'
-                                    }}>
-                                        {track.title}
-                                    </h4>
-                                    <p style={{
-                                        color: 'var(--text-secondary)',
-                                        margin: '0',
-                                        fontSize: '14px',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                        lineHeight: '1.2'
-                                    }}>
-                                        {track.artist}
-                                    </p>
-                                    {track.album && (
-                                        <p style={{
-                                            color: 'var(--text-tertiary)',
-                                            margin: '0',
-                                            fontSize: '12px',
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
-                                            whiteSpace: 'nowrap',
-                                            lineHeight: '1.2'
-                                        }}>
-                                            {track.album}
-                                        </p>
-                                    )}
-                                </div>
+                                        {/* Title */}
+                                        <td className="title-cell">
+                                            <div style={{
+                                                color: 'var(--text-primary)',
+                                                fontSize: '14px',
+                                                fontWeight: '500',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                maxWidth: '200px'
+                                            }}>
+                                                {track.title}
+                                            </div>
+                                        </td>
 
-                                {/* Duration - Hide on small screens */}
-                                {track.duration && (
-                                    <div className="track-duration" style={{
-                                        color: 'var(--text-secondary)',
-                                        fontSize: '14px',
-                                        fontFamily: 'monospace',
-                                        flexShrink: 0
-                                    }}>
-                                        {track.duration}
-                                    </div>
-                                )}
+                                        {/* Artist */}
+                                        <td className="artist-cell">
+                                            <div style={{
+                                                color: 'var(--text-secondary)',
+                                                fontSize: '14px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                maxWidth: '150px'
+                                            }}>
+                                                {track.artist}
+                                            </div>
+                                        </td>
 
-                                {/* Download Button / Progress */}
-                                <div className="track-download" style={{ width: '120px', textAlign: 'center', flexShrink: 0 }}>
-                                    {(() => {
-                                        const isCurrentlyDownloading = isDownloading === track.id;
-                                        const isDownloaded = downloadedTracks.has(track.id);
-                                        
-                                        // Find any active progress for this track
-                                        const activeProgress = Object.entries(realTimeProgress).find(
-                                            ([id, _]) => id.startsWith(track.id)
-                                        );
-                                        const progressData = activeProgress ? activeProgress[1] : null;
-                                        const progressPercent = progressData?.progress || downloadProgress[track.id] || 0;
-                                        
-                                        if (isCurrentlyDownloading || (progressData && progressData.stage !== 'complete')) {
-                                            return (
-                                                <div style={{ width: '100%' }}>
-                                                    {/* Enhanced Progress Bar */}
-                                                    <div style={{
-                                                        width: '100%',
-                                                        height: '6px',
-                                                        backgroundColor: 'var(--surface-bg)',
-                                                        borderRadius: '3px',
-                                                        overflow: 'hidden',
-                                                        marginBottom: '4px',
-                                                        border: '1px solid var(--border-color)'
-                                                    }}>
-                                                        <div style={{
-                                                            width: `${Math.max(progressPercent, 2)}%`,
-                                                            height: '100%',
-                                                            background: progressData?.stage === 'error' 
-                                                                ? 'linear-gradient(90deg, #ef4444, #dc2626)'
-                                                                : progressData?.stage === 'complete'
-                                                                    ? 'linear-gradient(90deg, #10b981, #059669)'
-                                                                    : 'linear-gradient(90deg, var(--accent-color), #6366f1)',
-                                                            transition: 'width 0.3s ease, background 0.3s ease',
-                                                            borderRadius: '2px'
-                                                        }} />
-                                                    </div>
+                                        {/* Album */}
+                                        <td className="album-cell">
+                                            <div style={{
+                                                color: 'var(--text-tertiary)',
+                                                fontSize: '12px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                maxWidth: '150px'
+                                            }}>
+                                                {track.album || '—'}
+                                            </div>
+                                        </td>
+
+                                        {/* Duration */}
+                                        <td className="duration-cell">
+                                            <div style={{
+                                                color: 'var(--text-secondary)',
+                                                fontSize: '12px',
+                                                fontFamily: 'monospace'
+                                            }}>
+                                                {track.duration || '—'}
+                                            </div>
+                                        </td>
+
+                                        {/* Actions */}
+                                        <td className="actions-cell">
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                {(() => {
+                                                    const isCurrentlyDownloading = isDownloading === track.id;
+                                                    const isDownloaded = downloadedTracks.has(track.id);
                                                     
-                                                    {/* Progress Text */}
-                                                    <div style={{
-                                                        color: progressData?.stage === 'error' 
-                                                            ? '#ef4444'
-                                                            : progressData?.stage === 'complete'
-                                                                ? '#10b981'
-                                                                : 'var(--text-secondary)',
-                                                        fontSize: '11px',
-                                                        fontWeight: '500',
-                                                        marginBottom: '2px'
-                                                    }}>
-                                                        {progressPercent}%
-                                                    </div>
+                                                    // Find any active progress for this track
+                                                    const activeProgress = Object.entries(realTimeProgress).find(
+                                                        ([id, _]) => id.startsWith(track.id)
+                                                    );
+                                                    const progressData = activeProgress ? activeProgress[1] : null;
+                                                    const progressPercent = progressData?.progress || downloadProgress[track.id] || 0;
                                                     
-                                                    {/* Stage Message */}
-                                                    <div style={{
-                                                        color: 'var(--text-tertiary)',
-                                                        fontSize: '10px',
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap',
-                                                        maxWidth: '100%'
-                                                    }}>
-                                                        {progressData?.message || 'Downloading...'}
-                                                    </div>
-                                                    
-                                                    {/* Speed indicator for downloading stage */}
-                                                    {progressData?.speed && progressData.stage === 'downloading' && (
-                                                        <div style={{
-                                                            color: 'var(--text-tertiary)',
-                                                            fontSize: '9px',
-                                                            marginTop: '1px'
-                                                        }}>
-                                                            {(progressData.speed / 1024 / 1024).toFixed(1)} MB/s
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        } else if (isDownloaded || progressPercent === 100) {
-                                            return (
-                                                <div style={{
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    alignItems: 'center',
-                                                    gap: '2px'
-                                                }}>
-                                                    <div style={{
-                                                        color: '#10b981',
-                                                        fontSize: '14px',
-                                                        fontWeight: '600',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '4px'
-                                                    }}>
-                                                        ✓ Downloaded
-                                                    </div>
-                                                    <div style={{
-                                                        fontSize: '10px',
-                                                        color: 'var(--text-tertiary)'
-                                                    }}>
-                                                        320kbps MP3
-                                                    </div>
-                                                </div>
-                                            );
-                                        } else {
-                                            return (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                    {/* Preview Button */}
-                                                    <button
-                                                        onClick={() => handlePreview(track)}
-                                                        style={{
-                                                            padding: '6px 12px',
-                                                            fontSize: '12px',
-                                                            fontWeight: '500',
-                                                            background: previewingId === track.id ? 'var(--accent-color)' : 'var(--surface-bg)',
-                                                            color: previewingId === track.id ? 'white' : 'var(--text-primary)',
-                                                            border: '1px solid var(--border-color)',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            width: '100%',
-                                                            transition: 'all 0.2s ease'
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            if (previewingId !== track.id) {
-                                                                e.currentTarget.style.backgroundColor = 'var(--accent-color)';
-                                                                e.currentTarget.style.color = 'white';
-                                                                e.currentTarget.style.borderColor = 'var(--accent-color)';
-                                                            }
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            if (previewingId !== track.id) {
-                                                                e.currentTarget.style.backgroundColor = 'var(--surface-bg)';
-                                                                e.currentTarget.style.color = 'var(--text-primary)';
-                                                                e.currentTarget.style.borderColor = 'var(--border-color)';
-                                                            }
-                                                        }}
-                                                    >
-                                                        {previewingId === track.id ? 'Playing...' : 'Preview'}
-                                                    </button>
-                                                    
-                                                    {/* Download Button */}
-                                                    <button
-                                                        onClick={() => handleDownload(track)}
-                                                        disabled={!isDownloadPathSet}
-                                                        style={{
-                                                            padding: '6px 12px',
-                                                            fontSize: '12px',
-                                                            fontWeight: '500',
-                                                            background: isDownloadPathSet 
-                                                                ? 'linear-gradient(135deg, var(--accent-color) 0%, #6366f1 100%)' 
-                                                                : 'var(--surface-bg)',
-                                                            color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
-                                                            border: 'none',
-                                                            borderRadius: '4px',
-                                                            cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
-                                                            width: '100%',
-                                                            transition: 'all 0.2s ease',
-                                                            boxShadow: isDownloadPathSet 
-                                                                ? '0 2px 4px rgba(139, 69, 255, 0.2)' 
-                                                                : 'none'
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            if (isDownloadPathSet) {
-                                                                e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(139, 69, 255, 0.3)';
-                                                            }
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            if (isDownloadPathSet) {
-                                                                e.currentTarget.style.transform = 'translateY(0)';
-                                                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(139, 69, 255, 0.2)';
-                                                            }
-                                                        }}
-                                                    >
-                                                        Download
-                                                    </button>
-                                                    
-                                                    {/* Enhanced features indicator */}
-                                                    <div style={{
-                                                        fontSize: '9px',
-                                                        color: 'var(--text-tertiary)',
-                                                        textAlign: 'center',
-                                                        lineHeight: '1.2'
-                                                    }}>
-                                                        320kbps + Artwork
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-                                    })()}
-                                </div>
-                            </div>
-                        );
-                    })}
+                                                    if (isCurrentlyDownloading || (progressData && progressData.stage !== 'complete')) {
+                                                        return (
+                                                            <div style={{ minWidth: '120px' }}>
+                                                                {/* Enhanced Progress Bar */}
+                                                                <div style={{
+                                                                    width: '100%',
+                                                                    height: '4px',
+                                                                    backgroundColor: 'var(--surface-bg)',
+                                                                    borderRadius: '2px',
+                                                                    overflow: 'hidden',
+                                                                    marginBottom: '4px',
+                                                                    border: '1px solid var(--border-color)'
+                                                                }}>
+                                                                    <div style={{
+                                                                        width: `${Math.max(progressPercent, 2)}%`,
+                                                                        height: '100%',
+                                                                        background: progressData?.stage === 'error' 
+                                                                            ? 'linear-gradient(90deg, #ef4444, #dc2626)'
+                                                                            : progressData?.stage === 'complete'
+                                                                                ? 'linear-gradient(90deg, #10b981, #059669)'
+                                                                                                                                                                 : 'linear-gradient(90deg, var(--brand-blue), var(--brand-blue-light))',
+                                                                        transition: 'width 0.3s ease, background 0.3s ease',
+                                                                        borderRadius: '1px'
+                                                                    }} />
+                                                                </div>
+                                                                
+                                                                {/* Progress Text */}
+                                                                <div style={{
+                                                                    color: progressData?.stage === 'error' 
+                                                                        ? '#ef4444'
+                                                                        : progressData?.stage === 'complete'
+                                                                            ? '#10b981'
+                                                                            : 'var(--text-secondary)',
+                                                                    fontSize: '10px',
+                                                                    fontWeight: '500',
+                                                                    textAlign: 'center'
+                                                                }}>
+                                                                    {progressPercent}% - {progressData?.message || 'Downloading...'}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    } else if (isDownloaded || progressPercent === 100) {
+                                                        return (
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '4px',
+                                                                color: '#10b981',
+                                                                fontSize: '12px',
+                                                                fontWeight: '500'
+                                                            }}>
+                                                                ✓ Downloaded
+                                                            </div>
+                                                        );
+                                                    } else {
+                                                        return (
+                                                            <div style={{ display: 'flex', gap: '6px' }}>
+                                                                {/* Preview Button */}
+                                                                <button
+                                                                    onClick={() => handlePreview(track)}
+                                                                    style={{
+                                                                        padding: '4px 8px',
+                                                                        fontSize: '11px',
+                                                                        fontWeight: '500',
+                                                                        background: previewingId === track.id ? 'var(--brand-blue)' : 'var(--surface-bg)',
+                                                                        color: previewingId === track.id ? 'white' : 'var(--text-primary)',
+                                                                        border: '1px solid var(--border-color)',
+                                                                        borderRadius: '3px',
+                                                                        cursor: 'pointer',
+                                                                        transition: 'all 0.2s ease'
+                                                                    }}
+                                                                                                                                         onMouseEnter={(e) => {
+                                                                         if (previewingId !== track.id) {
+                                                                             e.currentTarget.style.backgroundColor = 'var(--brand-blue)';
+                                                                             e.currentTarget.style.color = 'white';
+                                                                             e.currentTarget.style.borderColor = 'var(--brand-blue)';
+                                                                         }
+                                                                     }}
+                                                                     onMouseLeave={(e) => {
+                                                                         if (previewingId !== track.id) {
+                                                                             e.currentTarget.style.backgroundColor = 'var(--surface-bg)';
+                                                                             e.currentTarget.style.color = 'var(--text-primary)';
+                                                                             e.currentTarget.style.borderColor = 'var(--border-color)';
+                                                                         }
+                                                                     }}
+                                                                >
+                                                                    {previewingId === track.id ? 'Playing' : 'Preview'}
+                                                                </button>
+                                                                
+                                                                {/* Download Button */}
+                                                                <button
+                                                                    onClick={() => handleDownload(track)}
+                                                                    disabled={!isDownloadPathSet}
+                                                                    style={{
+                                                                        padding: '4px 8px',
+                                                                        fontSize: '11px',
+                                                                        fontWeight: '500',
+                                                                        background: isDownloadPathSet 
+                                                                            ? 'linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-light) 100%)' 
+                                                                            : 'var(--surface-bg)',
+                                                                        color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
+                                                                        border: 'none',
+                                                                        borderRadius: '3px',
+                                                                        cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
+                                                                        transition: 'all 0.2s ease',
+                                                                                                                                                 boxShadow: isDownloadPathSet 
+                                                                             ? '0 1px 3px rgba(74, 144, 226, 0.2)' 
+                                                                             : 'none'
+                                                                     }}
+                                                                     onMouseEnter={(e) => {
+                                                                         if (isDownloadPathSet) {
+                                                                             e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                             e.currentTarget.style.boxShadow = '0 2px 6px rgba(74, 144, 226, 0.3)';
+                                                                         }
+                                                                     }}
+                                                                     onMouseLeave={(e) => {
+                                                                         if (isDownloadPathSet) {
+                                                                             e.currentTarget.style.transform = 'translateY(0)';
+                                                                             e.currentTarget.style.boxShadow = '0 1px 3px rgba(74, 144, 226, 0.2)';
+                                                                         }
+                                                                     }}
+                                                                >
+                                                                    Download
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    }
+                                                })()}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
 
                 {searchResults.length === 0 && !isSearching && searchQuery && (

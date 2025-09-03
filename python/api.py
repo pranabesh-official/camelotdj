@@ -695,44 +695,132 @@ def upload_and_analyze():
         uploaded_files[file.filename] = permanent_path
         
         try:
-            # Check if song already has metadata before analyzing
-            metadata_check = db_manager.check_song_has_metadata(permanent_path)
+            # Enhanced check using new database tracking system
+            skip_check = db_manager.should_skip_analysis(permanent_path)
             track_id = db_manager.generate_unique_track_id(permanent_path, file.filename)
             
-            if metadata_check['exists'] and metadata_check['has_complete_metadata']:
-                # Song already has complete metadata, skip analysis
-                print(f"✅ Song already has complete metadata - skipping analysis")
-                print(f"📊 Existing metadata: Key={metadata_check['camelot_key']}, BPM={metadata_check['bpm']}, Energy={metadata_check['energy_level']}")
+            if skip_check['should_skip']:
+                # Song should be skipped - already analyzed or prevented
+                print(f"✅ Song should be skipped - {skip_check['reason']}")
                 
-                # Update track_id for existing song
-                db_manager.update_track_id(str(metadata_check['song_id']), track_id)
-                
-                # Return existing metadata
-                analysis_result = {
-                    'filename': metadata_check['filename'],
-                    'file_path': permanent_path,
-                    'key': metadata_check['key_signature'],
-                    'camelot_key': metadata_check['camelot_key'],
-                    'bpm': metadata_check['bpm'],
-                    'energy_level': metadata_check['energy_level'],
-                    'duration': metadata_check['duration'],
-                    'analysis_date': metadata_check['analysis_date'],
-                    'track_id': track_id,
-                    'status': 'existing_metadata',
-                    'message': 'Song already has complete metadata'
-                }
+                if skip_check['song_data']:
+                    song_data = skip_check['song_data']
+                    print(f"📊 Existing metadata: Key={song_data.get('camelot_key')}, BPM={song_data.get('bpm')}, Energy={song_data.get('energy_level')}")
+                    
+                    # Update track_id for existing song
+                    db_manager.update_track_id(str(song_data['id']), track_id)
+                    
+                    # Return existing metadata
+                    analysis_result = {
+                        'filename': song_data['filename'],
+                        'file_path': permanent_path,
+                        'key': song_data.get('key_signature'),
+                        'camelot_key': song_data.get('camelot_key'),
+                        'bpm': song_data.get('bpm'),
+                        'energy_level': song_data.get('energy_level'),
+                        'duration': song_data.get('duration'),
+                        'analysis_date': song_data.get('analysis_date'),
+                        'track_id': track_id,
+                        'status': 'existing_metadata',
+                        'message': f'Song already analyzed ({skip_check["reason"]})',
+                        'skip_reason': skip_check['reason'],
+                        'id3_tags_written': skip_check.get('id3_tags_written', False)
+                    }
+                else:
+                    # File not found in database but should be skipped (error case)
+                    analysis_result = {
+                        'filename': file.filename,
+                        'file_path': permanent_path,
+                        'track_id': track_id,
+                        'status': 'error',
+                        'message': f'Analysis skipped due to {skip_check["reason"]}',
+                        'skip_reason': skip_check['reason']
+                    }
             else:
-                # Analyze the uploaded file
-                print(f"🆕 Analyzing new song or song with incomplete metadata")
-                analysis_result = analyze_music_file(permanent_path)
-                analysis_result['track_id'] = track_id
-            # Write tags and cue points to ID3
+                # Check for duplicate content by hash
+                file_hash = db_manager.calculate_file_hash(permanent_path)
+                duplicate = db_manager.find_duplicate_by_hash(file_hash)
+                
+                if duplicate and duplicate['file_path'] != permanent_path:
+                    # Found duplicate content - copy analysis from existing file
+                    print(f"🔄 Found duplicate content - copying analysis from existing file")
+                    print(f"📊 Duplicate metadata: Key={duplicate.get('camelot_key')}, BPM={duplicate.get('bpm')}, Energy={duplicate.get('energy_level')}")
+                    
+                    # Copy analysis data from duplicate
+                    analysis_result = {
+                        'filename': file.filename,
+                        'file_path': permanent_path,
+                        'key': duplicate.get('key_signature'),
+                        'camelot_key': duplicate.get('camelot_key'),
+                        'bpm': duplicate.get('bpm'),
+                        'energy_level': duplicate.get('energy_level'),
+                        'duration': duplicate.get('duration'),
+                        'analysis_date': duplicate.get('analysis_date'),
+                        'track_id': track_id,
+                        'status': 'duplicate_content',
+                        'message': 'Analysis copied from duplicate content',
+                        'duplicate_of': duplicate['file_path']
+                    }
+                    
+                    # Add to database with copied analysis
+                    analysis_result['analysis_status'] = 'completed'
+                    analysis_result['id3_tags_written'] = duplicate.get('id3_tags_written', 0)
+                    analysis_result['file_hash'] = file_hash
+                    db_manager.add_music_file(analysis_result)
+                else:
+                    # Analyze the uploaded file
+                    print(f"🆕 Analyzing new song")
+                    
+                    # Mark analysis as started
+                    db_manager.mark_analysis_started(permanent_path)
+                    
+                    try:
+                        analysis_result = analyze_music_file(permanent_path)
+                        analysis_result['track_id'] = track_id
+                        analysis_result['file_hash'] = file_hash
+                        analysis_result['analysis_status'] = 'completed'
+                        
+                        # Mark analysis as completed
+                        db_manager.mark_analysis_completed(permanent_path, analysis_result)
+                        
+                    except Exception as analysis_error:
+                        # Mark analysis as failed
+                        db_manager.mark_analysis_failed(permanent_path, str(analysis_error))
+                        raise analysis_error
+            # Write tags and cue points to ID3 (only if not already written)
             try:
-                analyzer = MusicAnalyzer()
-                tag_result = analyzer.write_id3_tags(permanent_path, analysis_result)
-                analysis_result['tag_write'] = tag_result
+                # Check if ID3 tags should be written
+                should_write_tags = True
+                if skip_check['should_skip'] and skip_check.get('id3_tags_written', False):
+                    should_write_tags = False
+                    print(f"⏭️ Skipping ID3 tag writing - tags already written")
+                elif analysis_result.get('status') == 'existing_metadata' and analysis_result.get('id3_tags_written', False):
+                    should_write_tags = False
+                    print(f"⏭️ Skipping ID3 tag writing - tags already written for existing metadata")
+                
+                if should_write_tags:
+                    analyzer = MusicAnalyzer()
+                    tag_result = analyzer.write_id3_tags(permanent_path, analysis_result)
+                    analysis_result['tag_write'] = tag_result
+                    
+                    # Mark that ID3 tags have been written
+                    if tag_result.get('updated'):
+                        db_manager.mark_id3_tags_written(permanent_path)
+                        print(f"✅ ID3 tags written and marked in database")
+                    else:
+                        print(f"⚠️ ID3 tag writing failed: {tag_result.get('error', 'Unknown error')}")
+                else:
+                    analysis_result['tag_write'] = {
+                        'updated': False,
+                        'skipped': True,
+                        'reason': 'tags_already_written'
+                    }
             except Exception as _e:
                 print(f"Warning: Failed to write ID3 tags: {str(_e)}")
+                analysis_result['tag_write'] = {
+                    'updated': False,
+                    'error': str(_e)
+                }
             
             # Automatically rename file with key and BPM information
             rename_result = None
@@ -3653,10 +3741,31 @@ def update_song_tags():
         if not song_data:
             return jsonify({"error": "Could not retrieve song data"}), 404
         
+        # Check if ID3 tags should be written
+        file_path_to_check = file_path or song_data['file_path']
+        skip_check = db_manager.should_skip_analysis(file_path_to_check)
+        
         # Update ID3 tags
         try:
-            analyzer = MusicAnalyzer()
-            tag_result = analyzer.write_id3_tags(file_path or song_data['file_path'], song_data)
+            should_write_tags = True
+            if skip_check['should_skip'] and skip_check.get('id3_tags_written', False):
+                should_write_tags = False
+                print(f"⏭️ Skipping ID3 tag writing - tags already written")
+            
+            if should_write_tags:
+                analyzer = MusicAnalyzer()
+                tag_result = analyzer.write_id3_tags(file_path_to_check, song_data)
+                
+                # Mark that ID3 tags have been written
+                if tag_result.get('updated'):
+                    db_manager.mark_id3_tags_written(file_path_to_check)
+                    print(f"✅ ID3 tags written and marked in database")
+            else:
+                tag_result = {
+                    'updated': False,
+                    'skipped': True,
+                    'reason': 'tags_already_written'
+                }
             
             if tag_result.get('updated'):
                 # Rename file with new metadata format
@@ -3900,10 +4009,32 @@ def force_update_song_tags():
                 }
             }), 400
         
+        # Check if ID3 tags should be written (force update bypasses some checks)
+        file_path_to_check = file_path or song_data['file_path']
+        skip_check = db_manager.should_skip_analysis(file_path_to_check)
+        
         # Update ID3 tags
         try:
-            analyzer = MusicAnalyzer()
-            tag_result = analyzer.write_id3_tags(file_path or song_data['file_path'], song_data)
+            should_write_tags = True
+            if not force_update and skip_check['should_skip'] and skip_check.get('id3_tags_written', False):
+                should_write_tags = False
+                print(f"⏭️ Skipping ID3 tag writing - tags already written (use force_update=true to override)")
+            
+            if should_write_tags:
+                analyzer = MusicAnalyzer()
+                tag_result = analyzer.write_id3_tags(file_path_to_check, song_data)
+                
+                # Mark that ID3 tags have been written
+                if tag_result.get('updated'):
+                    db_manager.mark_id3_tags_written(file_path_to_check)
+                    print(f"✅ ID3 tags written and marked in database")
+            else:
+                tag_result = {
+                    'updated': False,
+                    'skipped': True,
+                    'reason': 'tags_already_written',
+                    'message': 'Use force_update=true to override'
+                }
             
             if tag_result.get('updated'):
                 # Rename file with new metadata format if requested

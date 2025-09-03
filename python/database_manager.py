@@ -101,7 +101,14 @@ class DatabaseManager:
                 ('organization', 'TEXT'),
                 ('copyright', 'TEXT'),
                 ('encodedby', 'TEXT'),
-                ('id3_metadata', 'TEXT')  # JSON blob for all metadata
+                ('id3_metadata', 'TEXT'),  # JSON blob for all metadata
+                # Analysis tracking columns
+                ('analysis_status', 'TEXT DEFAULT "pending"'),  # pending, analyzing, completed, failed
+                ('id3_tags_written', 'BOOLEAN DEFAULT 0'),  # Track if ID3 tags have been written
+                ('last_analysis_attempt', 'TEXT'),  # Timestamp of last analysis attempt
+                ('analysis_attempts', 'INTEGER DEFAULT 0'),  # Number of analysis attempts
+                ('file_hash', 'TEXT'),  # MD5 hash of file content for duplicate detection
+                ('prevent_reanalysis', 'BOOLEAN DEFAULT 0')  # Flag to prevent re-analysis
             ]
             
             for column_name, column_type in id3_columns:
@@ -200,6 +207,9 @@ class DatabaseManager:
                 # Extract ID3 metadata
                 id3_data = file_data.get('id3', {})
                 
+                # Calculate file hash for duplicate detection if file exists
+                file_hash = self.calculate_file_hash(file_data['file_path']) if os.path.exists(file_data['file_path']) else ''
+                
                 cursor.execute('''
                     UPDATE music_files SET
                         filename = ?, file_size = ?, key_signature = ?, scale = ?,
@@ -209,7 +219,8 @@ class DatabaseManager:
                         title = ?, artist = ?, album = ?, albumartist = ?, date = ?, year = ?,
                         genre = ?, composer = ?, tracknumber = ?, discnumber = ?, comment = ?,
                         initialkey = ?, bpm_from_tags = ?, website = ?, isrc = ?, language = ?,
-                        organization = ?, copyright = ?, encodedby = ?, id3_metadata = ?
+                        organization = ?, copyright = ?, encodedby = ?, id3_metadata = ?,
+                        analysis_status = ?, id3_tags_written = ?, file_hash = ?, prevent_reanalysis = ?
                     WHERE id = ?
                 ''', (
                     file_data.get('filename', ''),
@@ -247,12 +258,20 @@ class DatabaseManager:
                     id3_data.get('copyright', ''),
                     id3_data.get('encodedby', ''),
                     json.dumps(id3_data),  # Store complete metadata as JSON
+                    # Analysis tracking fields
+                    file_data.get('analysis_status', 'pending'),
+                    file_data.get('id3_tags_written', 0),
+                    file_hash,
+                    file_data.get('prevent_reanalysis', 0),
                     file_id
                 ))
             else:
                 # Insert new file
                 # Extract ID3 metadata
                 id3_data = file_data.get('id3', {})
+                
+                # Calculate file hash for duplicate detection
+                file_hash = self.calculate_file_hash(file_data['file_path']) if os.path.exists(file_data['file_path']) else ''
                 
                 cursor.execute('''
                     INSERT INTO music_files (
@@ -262,8 +281,9 @@ class DatabaseManager:
                         title, artist, album, albumartist, date, year,
                         genre, composer, tracknumber, discnumber, comment,
                         initialkey, bpm_from_tags, website, isrc, language,
-                        organization, copyright, encodedby, id3_metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        organization, copyright, encodedby, id3_metadata,
+                        analysis_status, id3_tags_written, file_hash, prevent_reanalysis
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_data.get('filename', ''),
                     file_data['file_path'],
@@ -299,7 +319,12 @@ class DatabaseManager:
                     id3_data.get('organization', ''),
                     id3_data.get('copyright', ''),
                     id3_data.get('encodedby', ''),
-                    json.dumps(id3_data)  # Store complete metadata as JSON
+                    json.dumps(id3_data),  # Store complete metadata as JSON
+                    # Analysis tracking fields
+                    file_data.get('analysis_status', 'pending'),
+                    file_data.get('id3_tags_written', 0),
+                    file_hash,
+                    file_data.get('prevent_reanalysis', 0)
                 ))
                 file_id = cursor.lastrowid
                 if file_id is None:
@@ -815,6 +840,223 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error updating track ID: {str(e)}")
             return False
+
+    def should_skip_analysis(self, file_path: str) -> dict:
+        """Check if a file should be skipped for analysis based on various criteria."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT id, filename, analysis_status, id3_tags_written, 
+                           prevent_reanalysis, analysis_attempts, last_analysis_attempt,
+                           key_signature, camelot_key, bpm, energy_level, duration
+                    FROM music_files 
+                    WHERE file_path = ?
+                """, (file_path,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    song_data = dict(zip(columns, row))
+                    
+                    # Check if re-analysis is explicitly prevented (highest priority)
+                    prevent_reanalysis = song_data.get('prevent_reanalysis', 0) == 1
+                    
+                    # Check if analysis is already completed and tags are written
+                    is_completed = (song_data.get('analysis_status') == 'completed' and 
+                                  song_data.get('id3_tags_written', 0) == 1)
+                    
+                    # Check if file has complete metadata
+                    has_complete_metadata = all([
+                        song_data.get('key_signature') or song_data.get('camelot_key'),
+                        song_data.get('bpm') and song_data.get('bpm') > 0,
+                        song_data.get('energy_level') and song_data.get('energy_level') > 0,
+                        song_data.get('duration') and song_data.get('duration') > 0
+                    ])
+                    
+                    should_skip = prevent_reanalysis or is_completed or has_complete_metadata
+                    
+                    return {
+                        'should_skip': should_skip,
+                        'reason': 'prevented' if prevent_reanalysis else 
+                                 'completed' if is_completed else 
+                                 'has_metadata' if has_complete_metadata else 'none',
+                        'song_data': song_data,
+                        'analysis_status': song_data.get('analysis_status'),
+                        'id3_tags_written': song_data.get('id3_tags_written', 0) == 1,
+                        'has_complete_metadata': has_complete_metadata
+                    }
+                else:
+                    return {
+                        'should_skip': False,
+                        'reason': 'not_found',
+                        'song_data': None
+                    }
+                    
+        except Exception as e:
+            print(f"Error checking if should skip analysis: {str(e)}")
+            return {
+                'should_skip': False,
+                'reason': 'error',
+                'error': str(e)
+            }
+
+    def mark_analysis_started(self, file_path: str) -> bool:
+        """Mark that analysis has started for a file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET analysis_status = 'analyzing', 
+                        last_analysis_attempt = CURRENT_TIMESTAMP,
+                        analysis_attempts = analysis_attempts + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE file_path = ?
+                """, (file_path,))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error marking analysis started: {str(e)}")
+            return False
+
+    def mark_analysis_completed(self, file_path: str, analysis_data: dict = None) -> bool:
+        """Mark that analysis has been completed for a file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # If analysis_data is provided, update the analysis results as well
+                if analysis_data:
+                    cursor.execute("""
+                        UPDATE music_files 
+                        SET analysis_status = 'completed',
+                            key_signature = ?, camelot_key = ?, bpm = ?, 
+                            energy_level = ?, duration = ?, analysis_date = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE file_path = ?
+                    """, (
+                        analysis_data.get('key', ''),
+                        analysis_data.get('camelot_key', ''),
+                        analysis_data.get('bpm', 0.0),
+                        analysis_data.get('energy_level', 0.0),
+                        analysis_data.get('duration', 0.0),
+                        file_path
+                    ))
+                else:
+                    cursor.execute("""
+                        UPDATE music_files 
+                        SET analysis_status = 'completed', updated_at = CURRENT_TIMESTAMP
+                        WHERE file_path = ?
+                    """, (file_path,))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error marking analysis completed: {str(e)}")
+            return False
+
+    def mark_id3_tags_written(self, file_path: str) -> bool:
+        """Mark that ID3 tags have been written for a file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET id3_tags_written = 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE file_path = ?
+                """, (file_path,))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error marking ID3 tags written: {str(e)}")
+            return False
+
+    def mark_analysis_failed(self, file_path: str, error_message: str = None) -> bool:
+        """Mark that analysis has failed for a file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET analysis_status = 'failed', 
+                        error_message = ?, 
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE file_path = ?
+                """, (error_message, file_path))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error marking analysis failed: {str(e)}")
+            return False
+
+    def set_prevent_reanalysis(self, file_path: str, prevent: bool = True) -> bool:
+        """Set or unset the prevent_reanalysis flag for a file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET prevent_reanalysis = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE file_path = ?
+                """, (1 if prevent else 0, file_path))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error setting prevent_reanalysis flag: {str(e)}")
+            return False
+
+    def calculate_file_hash(self, file_path: str) -> str:
+        """Calculate MD5 hash of file content for duplicate detection."""
+        try:
+            import hashlib
+            
+            hash_md5 = hashlib.md5()
+            with open(file_path, "rb") as f:
+                # Read file in chunks to handle large files
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest()
+            
+        except Exception as e:
+            print(f"Error calculating file hash: {str(e)}")
+            return ""
+
+    def find_duplicate_by_hash(self, file_hash: str) -> Optional[dict]:
+        """Find a file with the same hash (duplicate content)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT * FROM music_files 
+                    WHERE file_hash = ? AND file_hash != ''
+                """, (file_hash,))
+                
+                row = cursor.fetchone()
+                if row:
+                    columns = [description[0] for description in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+                    
+        except Exception as e:
+            print(f"Error finding duplicate by hash: {str(e)}")
+            return None
 
     # Playlist Management Methods
     

@@ -33,6 +33,13 @@ export interface Song {
     cue_points?: number[];
     track_id?: string; // Unique track identifier
     id3?: any; // Raw ID3/metadata blob for cloud sync
+    // Enhanced analysis tracking
+    analysis_status?: 'pending' | 'analyzing' | 'completed' | 'failed';
+    id3_tags_written?: boolean;
+    last_analysis_attempt?: string;
+    analysis_attempts?: number;
+    file_hash?: string;
+    prevent_reanalysis?: boolean;
 }
 
 // Function to get the correct logo path for both development and production
@@ -382,7 +389,12 @@ const App: React.FC = () => {
         // Check if file is already analyzed (in songs list)
         const isAlreadyAnalyzed = songs.some(song => {
             const songFileName = song.filename?.toLowerCase().trim();
-            return songFileName === fileName && song.file_size === fileSize;
+            const sameName = songFileName === fileName;
+            const sameSize = song.file_size === fileSize;
+            const hasCompleteData = song.camelot_key && song.bpm && song.energy_level && song.duration;
+            const isProcessed = song.status === 'completed' || song.analysis_date;
+            
+            return sameName && sameSize && (hasCompleteData || isProcessed);
         });
         
         // Debug: Log single file check result
@@ -582,7 +594,12 @@ const App: React.FC = () => {
             // Check if file is already analyzed (in songs list)
             const isAlreadyAnalyzed = songs.some(song => {
                 const songFileName = song.filename?.toLowerCase().trim();
-                return songFileName === fileName && song.file_size === fileSize;
+                const sameName = songFileName === fileName;
+                const sameSize = song.file_size === fileSize;
+                const hasCompleteData = song.camelot_key && song.bpm && song.energy_level && song.duration;
+                const isProcessed = song.status === 'completed' || song.analysis_date;
+                
+                return sameName && sameSize && (hasCompleteData || isProcessed);
             });
             
             // Debug: Log duplicate check result
@@ -674,16 +691,34 @@ const App: React.FC = () => {
 
                 const currentItem = pendingItems[0];
                 
-                // Double-check: Make sure this file isn't already analyzed
+                // Enhanced duplicate check using multiple criteria
                 const fileName = currentItem.file.name.toLowerCase().trim();
                 const fileSize = currentItem.file.size;
+                
+                // Check for duplicates using multiple criteria
                 const isAlreadyAnalyzed = songs.some(song => {
                     const songFileName = song.filename?.toLowerCase().trim();
-                    return songFileName === fileName && song.file_size === fileSize;
+                    const sameName = songFileName === fileName;
+                    const sameSize = song.file_size === fileSize;
+                    
+                    // Also check if song has complete analysis data
+                    const hasCompleteData = song.camelot_key && song.bpm && song.energy_level && song.duration;
+                    
+                    return sameName && sameSize && hasCompleteData;
                 });
                 
-                if (isAlreadyAnalyzed) {
-                    console.log(`Skipping ${fileName} - already analyzed`);
+                // Additional check: look for songs with same name and size that are already processed
+                const isInProcessing = songs.some(song => {
+                    const songFileName = song.filename?.toLowerCase().trim();
+                    const sameName = songFileName === fileName;
+                    const sameSize = song.file_size === fileSize;
+                    const isProcessed = song.status === 'completed' || song.analysis_date;
+                    
+                    return sameName && sameSize && isProcessed;
+                });
+                
+                if (isAlreadyAnalyzed || isInProcessing) {
+                    console.log(`Skipping ${fileName} - already analyzed or processed`);
                     // Remove from queue and process next
                     setTimeout(processNextItem, 100);
                     return currentQueue.filter(item => item.id !== currentItem.id);

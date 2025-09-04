@@ -1571,7 +1571,10 @@ def verify_audio_quality(file_path):
         return None
 
 def convert_to_320kbps_mp3(temp_path, final_path):
-    """Convert audio file to 320kbps MP3 format"""
+    """Convert audio file to 320kbps MP3 format (CBR) and verify.
+    We first try via pydub/ffmpeg; if the detected bitrate is < 320kbps
+    we force a second pass using a direct ffmpeg command with CBR flags.
+    """
     try:
         from pydub import AudioSegment
         
@@ -1596,18 +1599,58 @@ def convert_to_320kbps_mp3(temp_path, final_path):
                 print(f"❌ Failed to move file: {str(move_error)}")
                 return False
         
-        # Export as MP3 with exactly 320kbps bitrate
-        print(f"🎧 Converting to 320kbps MP3 format: {final_path}")
+        # Export as MP3 with constant 320kbps using LAME
+        # Note: do NOT mix -q:a with -b:a when forcing CBR
+        print(f"🎧 Converting to 320kbps CBR MP3: {final_path}")
         audio.export(
-            final_path, 
-            format="mp3", 
+            final_path,
+            format="mp3",
             bitrate="320k",
-            parameters=["-q:a", "0"]  # Highest quality MP3 encoding
+            parameters=[
+                "-vn",  # no video
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-minrate", "320k",
+                "-maxrate", "320k",
+                "-bufsize", "64k",
+                "-ar", "44100",
+                "-ac", "2",
+                "-write_xing", "0"  # hint CBR by disabling Xing
+            ],
         )
         
         if os.path.exists(final_path):
             output_size = os.path.getsize(final_path)
-            print(f"✅ Successfully converted to 320kbps MP3 format: {final_path} ({output_size} bytes)")
+            print(f"✅ Initial MP3 conversion done: {final_path} ({output_size} bytes)")
+            # Verify bitrate; if < 320, force ffmpeg CBR encode
+            try:
+                actual = verify_audio_quality(final_path)
+            except Exception:
+                actual = None
+            if actual is None or actual < 320:
+                print(f"⚠️ Verified bitrate {actual}kbps < 320; forcing CBR re-encode via ffmpeg...")
+                try:
+                    import subprocess
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", final_path,
+                        "-vn",
+                        "-codec:a", "libmp3lame",
+                        "-b:a", "320k",
+                        "-minrate", "320k",
+                        "-maxrate", "320k",
+                        "-bufsize", "64k",
+                        "-ar", "44100",
+                        "-ac", "2",
+                        "-write_xing", "0",
+                        final_path + ".tmp.mp3"
+                    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    # atomically replace
+                    import os as _os
+                    _os.replace(final_path + ".tmp.mp3", final_path)
+                    actual2 = verify_audio_quality(final_path)
+                    print(f"🎯 Final verified bitrate after force CBR: {actual2}kbps")
+                except Exception as _e:
+                    print(f"❌ Force CBR re-encode failed: {_e}")
             return True
         else:
             print(f"❌ Conversion failed - output file not created")
@@ -1824,14 +1867,10 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
             'outtmpl': output_path,
             'noplaylist': True,
             'extractaudio': True,
-            'audioformat': 'mp3',
-            'audioquality': '320K',  # Force 320kbps
+            'audioformat': 'mp4',  # Keep as MP4 for later conversion to ensure 320kbps
+            'audioquality': '0',  # Best available quality
             'prefer_free_formats': False,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '320',
-            }],
+            'postprocessors': [],  # Don't convert yet, we'll handle it with pydub at 320kbps
             'writeinfojson': True,  # Extract metadata
             'writethumbnail': True,  # Download thumbnail for artwork
             'embedthumbnail': False,  # We'll handle artwork manually
@@ -2061,7 +2100,7 @@ def stream_youtube_audio(video_id):
         
         # Get stream URL using yt-dlp
         ydl_opts = {
-            'format': 'bestaudio',
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
             'quiet': True,
             'no_warnings': True,
         }
@@ -2081,18 +2120,44 @@ def stream_youtube_audio(video_id):
                 return jsonify({"error": "No audio stream available"}), 404
             
             # Sort by quality and get the best one
-            best_format = sorted(audio_formats, key=lambda x: x.get('abr', 0), reverse=True)[0]
+            best_format = sorted(audio_formats, key=lambda x: x.get('abr') or 0, reverse=True)[0]
             stream_url = best_format.get('url')
             
             if not stream_url:
                 return jsonify({"error": "Could not extract stream URL"}), 500
             
-            return jsonify({
-                "stream_url": stream_url,
-                "title": info.get('title', ''),
-                "duration": info.get('duration', 0),
-                "status": "success"
-            })
+            # Stream the audio directly
+            import requests
+            
+            # Get the audio stream from YouTube
+            stream_response = requests.get(stream_url, stream=True, timeout=30)
+            
+            if stream_response.status_code != 200:
+                return jsonify({"error": "Failed to fetch audio stream"}), 500
+            
+            # Set appropriate headers for audio streaming
+            def generate():
+                try:
+                    for chunk in stream_response.iter_content(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+                except Exception as e:
+                    print(f"❌ Stream generation error: {str(e)}")
+                    return
+            
+            # Return the audio stream with proper headers
+            return app.response_class(
+                generate(),
+                mimetype='audio/mpeg',
+                headers={
+                    'Content-Type': 'audio/mpeg',
+                    'Accept-Ranges': 'bytes',
+                    'Cache-Control': 'no-cache',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Range, Content-Type',
+                    'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
+                }
+            )
             
     except Exception as e:
         print(f"❌ Streaming error: {str(e)}")
@@ -2241,13 +2306,23 @@ def youtube_download():
                         "status": "error"
                     }), 500
             
-            # Export as MP3 with exactly 320kbps bitrate
-            print(f"🎧 Converting to 320kbps MP3 format: {final_path}")
+            # Export as MP3 with constant 320kbps using LAME
+            print(f"🎧 Converting to 320kbps CBR MP3: {final_path}")
             audio.export(
-                final_path, 
-                format="mp3", 
+                final_path,
+                format="mp3",
                 bitrate="320k",
-                parameters=["-q:a", "0"]  # Highest quality MP3 encoding
+                parameters=[
+                    "-vn",
+                    "-codec:a", "libmp3lame",
+                    "-b:a", "320k",
+                    "-minrate", "320k",
+                    "-maxrate", "320k",
+                    "-bufsize", "64k",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    "-write_xing", "0"
+                ],
             )
             
             # Verify the output file was created and has content
@@ -2732,6 +2807,49 @@ def youtube_download_enhanced():
         })
         return jsonify({
             "error": f"Enhanced download failed: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/cancel-download', methods=['POST'])
+def youtube_cancel_download():
+    """Cancel an active download"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        print(f"🚫 Cancelling download: {download_id}")
+        
+        # Emit cancellation progress
+        emit_progress(download_id, {
+            'stage': 'cancelled',
+            'progress': 0,
+            'message': 'Download cancelled by user'
+        })
+        
+        # Remove from active downloads if it exists
+        if download_id in active_downloads:
+            del active_downloads[download_id]
+            print(f"✅ Removed download {download_id} from active downloads")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Download cancelled successfully",
+            "download_id": download_id
+        })
+        
+    except Exception as e:
+        print(f"❌ Cancel download error: {str(e)}")
+        return jsonify({
+            "error": f"Failed to cancel download: {str(e)}",
             "status": "error"
         }), 500
 

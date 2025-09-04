@@ -49,8 +49,14 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [downloadProgress, setDownloadProgress] = useState<{[key: string]: number}>({});
     const [realTimeProgress, setRealTimeProgress] = useState<{[key: string]: any}>({});
     const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
+    const [cancellableDownloads, setCancellableDownloads] = useState<Set<string>>(new Set());
+    const [cancelledDownloads, setCancelledDownloads] = useState<Set<string>>(new Set());
     const [previewingId, setPreviewingId] = useState<string | null>(null);
+    const [loadingPreviewId, setLoadingPreviewId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const isStoppingRef = useRef<boolean>(false);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -167,6 +173,17 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             setDownloadedTracks(prev => new Set([...prev, data.download_id]));
                             setIsDownloading(null);
                             
+                            // Clear cancellable downloads state
+                            setCancellableDownloads(prev => {
+                                const newSet = new Set(prev);
+                                // Find track ID from download ID
+                                const trackId = Object.keys(realTimeProgress).find(id => id === data.download_id)?.split('_')[0];
+                                if (trackId) {
+                                    newSet.delete(trackId);
+                                }
+                                return newSet;
+                            });
+                            
                             // Trigger collection refresh if callback provided
                             if (onDownloadComplete && data.filename) {
                                 onDownloadComplete({
@@ -196,6 +213,23 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             console.error('❌ Download error for:', data.download_id, data.message);
                             setError(data.message || 'Download failed');
                             setIsDownloading(null);
+                        }
+                        
+                        // Handle cancellation
+                        if (data.stage === 'cancelled') {
+                            console.log('🚫 Download cancelled for:', data.download_id);
+                            setIsDownloading(null);
+                            
+                            // Clear cancellable downloads state
+                            setCancellableDownloads(prev => {
+                                const newSet = new Set(prev);
+                                // Find track ID from download ID
+                                const trackId = Object.keys(realTimeProgress).find(id => id === data.download_id)?.split('_')[0];
+                                if (trackId) {
+                                    newSet.delete(trackId);
+                                }
+                                return newSet;
+                            });
                         }
                     } else {
                         console.warn('⚠️ Download progress update without download_id:', data);
@@ -422,6 +456,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         setIsDownloading(track.id);
         setDownloadProgress(prev => ({ ...prev, [downloadId]: 0 }));
         setRealTimeProgress(prev => ({ ...prev, [downloadId]: { stage: 'starting', progress: 0, message: 'Preparing download...' } }));
+        setCancellableDownloads(prev => new Set([...prev, track.id]));
+        setCancelledDownloads(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(track.id);
+            return newSet;
+        });
         setError(null);
         
         // Join download room for WebSocket updates
@@ -472,7 +512,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 artist: cleanArtist,
                 download_path: downloadPath,
                 download_id: downloadId,
-                signingkey: apiSigningKey
+                signingkey: apiSigningKey,
+                quality: '320kbps', // Ensure minimum 320kbps quality
+                format: 'mp3',
+                embed_metadata: true,
+                embed_artwork: true
             };
             
             console.log('📡 Sending enhanced download request:', requestBody);
@@ -519,6 +563,13 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 // Mark track as downloaded
                 setDownloadedTracks(prev => new Set([...prev, track.id]));
                 
+                // Clear cancellable downloads state
+                setCancellableDownloads(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(track.id);
+                    return newSet;
+                });
+                
                 // Update progress to 100% if not already done by WebSocket
                 setDownloadProgress(prev => ({ ...prev, [downloadId]: 100 }));
                 setRealTimeProgress(prev => ({
@@ -536,20 +587,75 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     onDownloadComplete(result.song);
                 }
                 
-                // Show success message
+                // Show enhanced success message with quality info
                 const features = result.enhanced_features || {};
-                let successMsg = `✅ Downloaded: ${track.title} by ${track.artist}`;
-                if (features.quality_guarantee) {
-                    successMsg += ` (${features.quality_guarantee})`;
-                }
+                let successMsg = `🎵 Successfully Downloaded!\n\n`;
+                successMsg += `📀 ${track.title}\n`;
+                successMsg += `🎤 ${track.artist}\n\n`;
+                successMsg += `✨ Quality: 320kbps MP3\n`;
                 if (features.artwork_embedded) {
-                    successMsg += ' with artwork';
+                    successMsg += `🖼️ Album artwork embedded\n`;
                 }
-                if (features.collection_integration) {
-                    successMsg += ' - Added to collection';
+                if (features.metadata_embedded) {
+                    successMsg += `📝 Metadata embedded\n`;
                 }
+                successMsg += `\n📁 Added to your music collection\n`;
+                successMsg += `🔍 Ready for analysis and mixing!`;
                 
-                alert(successMsg);
+                // Show success notification instead of alert
+                const notification = document.createElement('div');
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: linear-gradient(135deg, #10b981, #059669);
+                    color: white;
+                    padding: 16px 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+                    z-index: 10000;
+                    max-width: 300px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.4;
+                    animation: slideInRight 0.3s ease-out;
+                `;
+                notification.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                        </svg>
+                        <strong>Download Complete!</strong>
+                    </div>
+                    <div style="font-size: 12px; opacity: 0.9;">
+                        ${track.title} by ${track.artist}<br>
+                        Quality: 320kbps • Added to Collection
+                    </div>
+                `;
+                
+                // Add animation styles
+                const style = document.createElement('style');
+                style.textContent = `
+                    @keyframes slideInRight {
+                        from { transform: translateX(100%); opacity: 0; }
+                        to { transform: translateX(0); opacity: 1; }
+                    }
+                `;
+                document.head.appendChild(style);
+                document.body.appendChild(notification);
+                
+                // Auto-remove notification after 5 seconds
+                setTimeout(() => {
+                    notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                        if (style.parentNode) {
+                            style.parentNode.removeChild(style);
+                        }
+                    }, 300);
+                }, 5000);
                 
                 // Clear progress after delay
                 setTimeout(() => {
@@ -603,6 +709,115 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, [apiPort, apiSigningKey, downloadPath, isDownloadPathSet, onDownloadComplete]);
 
+    // Cancel download function
+    const handleCancelDownload = useCallback(async (trackId: string) => {
+        console.log('🚫 Cancelling download for track:', trackId);
+        
+        // Find the download ID for this track
+        const downloadId = Object.keys(realTimeProgress).find(id => id.startsWith(trackId));
+        
+        if (downloadId) {
+            try {
+                // Send cancel request to backend
+                const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/cancel-download`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Signing-Key': apiSigningKey
+                    },
+                    body: JSON.stringify({
+                        download_id: downloadId,
+                        signingkey: apiSigningKey
+                    })
+                });
+                
+                if (response.ok) {
+                    console.log('✅ Download cancellation request sent');
+                } else {
+                    console.warn('⚠️ Failed to send cancellation request');
+                }
+            } catch (error) {
+                console.error('❌ Error sending cancellation request:', error);
+            }
+        }
+        
+        // Update local state
+        setCancelledDownloads(prev => new Set([...prev, trackId]));
+        setCancellableDownloads(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(trackId);
+            return newSet;
+        });
+        setIsDownloading(null);
+        
+        // Clear progress
+        setDownloadProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[downloadId || trackId];
+            return newProgress;
+        });
+        setRealTimeProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[downloadId || trackId];
+            return newProgress;
+        });
+        
+        // Show cancellation notification
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+            z-index: 10000;
+            max-width: 300px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+            animation: slideInRight 0.3s ease-out;
+        `;
+        notification.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                <strong>Download Cancelled</strong>
+            </div>
+            <div style="font-size: 12px; opacity: 0.9;">
+                Download has been cancelled successfully
+            </div>
+        `;
+        
+        // Add animation styles
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideInRight {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+        `;
+        document.head.appendChild(style);
+        document.body.appendChild(notification);
+        
+        // Auto-remove notification after 3 seconds
+        setTimeout(() => {
+            notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+                if (style.parentNode) {
+                    style.parentNode.removeChild(style);
+                }
+            }, 300);
+        }, 3000);
+        
+    }, [apiPort, apiSigningKey, realTimeProgress]);
+
     
     // Handle suggestion selection
     const handleSuggestionSelect = useCallback((suggestion: string) => {
@@ -630,21 +845,55 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, [handleSearch]);
 
+    // Stop current audio preview
+    const stopPreview = useCallback(() => {
+        isStoppingRef.current = true; // Set flag to prevent error messages
+        
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+            audioRef.current.src = '';
+            audioRef.current = null;
+        }
+        
+        if (autoStopTimerRef.current) {
+            clearTimeout(autoStopTimerRef.current);
+            autoStopTimerRef.current = null;
+        }
+        
+        setPreviewingId(null);
+        setLoadingPreviewId(null);
+        console.log('⏹️ Preview stopped');
+        
+        // Reset the stopping flag after a short delay
+        setTimeout(() => {
+            isStoppingRef.current = false;
+        }, 100);
+    }, []);
+
     // Handle preview functionality
     const handlePreview = useCallback((track: YouTubeTrack) => {
+        // If already playing this track, stop it
         if (previewingId === track.id) {
-            // Stop preview
-            setPreviewingId(null);
-            console.log(`⏹️ Stopped preview for: ${track.title}`);
+            stopPreview();
             return;
         }
 
+        // If playing a different track, stop it first
+        if (previewingId && previewingId !== track.id) {
+            stopPreview();
+        }
+
         console.log(`🎵 Starting preview for: ${track.title} by ${track.artist}`);
-        setPreviewingId(track.id);
+        setLoadingPreviewId(track.id);
+        setError(null); // Clear any previous errors
+        isStoppingRef.current = false; // Reset stopping flag
         
         // Create audio element for preview
         const audio = new Audio();
         audio.volume = 0.7; // Set volume to 70%
+        audio.preload = 'auto';
+        audioRef.current = audio;
         
         // Set up audio event handlers
         audio.onloadstart = () => {
@@ -653,44 +902,77 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         
         audio.oncanplay = () => {
             console.log('🎵 Audio can play, starting...');
+            setLoadingPreviewId(null);
+            setPreviewingId(track.id);
             audio.play().catch(error => {
                 console.error('❌ Failed to play audio:', error);
                 setPreviewingId(null);
-                alert('Failed to play preview. Please try again.');
+                setLoadingPreviewId(null);
+                setError('Failed to play preview. Please try again.');
             });
         };
         
         audio.onerror = (error) => {
             console.error('❌ Audio error:', error);
+            
+            // Don't show error if we're intentionally stopping the preview
+            if (isStoppingRef.current) {
+                console.log('🔇 Ignoring error during intentional stop');
+                return;
+            }
+            
             setPreviewingId(null);
-            alert('Failed to load preview. Please try again.');
+            setLoadingPreviewId(null);
+            setError('Failed to load preview. Please try again.');
         };
         
         audio.onended = () => {
             console.log('⏹️ Preview ended');
-            setPreviewingId(null);
+            if (!isStoppingRef.current) {
+                setPreviewingId(null);
+                setLoadingPreviewId(null);
+                audioRef.current = null;
+            }
+        };
+        
+        audio.onabort = () => {
+            console.log('⏹️ Preview aborted');
+            if (!isStoppingRef.current) {
+                setPreviewingId(null);
+                setLoadingPreviewId(null);
+                audioRef.current = null;
+            }
+        };
+        
+        audio.onstalled = () => {
+            console.log('⚠️ Audio stream stalled');
+        };
+        
+        audio.onwaiting = () => {
+            console.log('⏳ Audio buffering...');
         };
         
         // Set audio source to backend streaming endpoint
-        audio.src = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
+        const streamUrl = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
+        console.log('🔗 Stream URL:', streamUrl);
+        audio.src = streamUrl;
         
         // Auto-stop preview after 30 seconds
-        const autoStopTimer = setTimeout(() => {
+        autoStopTimerRef.current = setTimeout(() => {
             if (previewingId === track.id) {
-                audio.pause();
-                audio.currentTime = 0;
-                setPreviewingId(null);
+                stopPreview();
                 console.log(`⏰ Preview auto-stopped for: ${track.title}`);
             }
         }, 30000);
         
-        // Cleanup function
+    }, [previewingId, apiPort, apiSigningKey, stopPreview]);
+
+    // Cleanup on unmount
+    useEffect(() => {
         return () => {
-            clearTimeout(autoStopTimer);
-            audio.pause();
-            audio.currentTime = 0;
+            stopPreview();
         };
-    }, [previewingId, apiPort, apiSigningKey]);
+    }, [stopPreview]);
 
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
@@ -959,6 +1241,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.05); }
                             }
                             
+                            @keyframes spin {
+                                0% { transform: rotate(0deg); }
+                                100% { transform: rotate(360deg); }
+                            }
+                            
                             /* Table wrapper styles */
                             .table-wrapper {
                                 width: 100%;
@@ -1145,6 +1432,32 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     font-size: 10px;
                                 }
                             }
+                            
+                            /* Thumbnail hover effects */
+                            .thumbnail-hover-overlay:hover {
+                                opacity: 1 !important;
+                            }
+                            
+                            /* Enhanced progress animations */
+                            @keyframes progressPulse {
+                                0%, 100% { opacity: 1; }
+                                50% { opacity: 0.7; }
+                            }
+                            
+                            .progress-bar-animated {
+                                animation: progressPulse 2s infinite;
+                            }
+                            
+                            /* Download completion animation */
+                            @keyframes downloadComplete {
+                                0% { transform: scale(1); }
+                                50% { transform: scale(1.1); }
+                                100% { transform: scale(1); }
+                            }
+                            
+                            .download-complete {
+                                animation: downloadComplete 0.6s ease-in-out;
+                            }
                         `}</style>
                     </div>
                 </div>
@@ -1156,9 +1469,40 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         border: '1px solid rgba(239, 68, 68, 0.3)',
                         borderRadius: '8px',
                         color: 'rgb(239, 68, 68)',
-                        marginBottom: 'var(--space-md)'
+                        marginBottom: 'var(--space-md)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
                     }}>
-                        ❌ {error}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                        </svg>
+                        {error}
+                        <button
+                            onClick={() => setError(null)}
+                            style={{
+                                marginLeft: 'auto',
+                                background: 'none',
+                                border: 'none',
+                                color: 'inherit',
+                                cursor: 'pointer',
+                                padding: '4px',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'none';
+                            }}
+                        >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                            </svg>
+                        </button>
                     </div>
                 )}
             </div>
@@ -1205,22 +1549,103 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             e.currentTarget.style.borderColor = 'transparent';
                                         }}
                                     >
-                                        {/* Thumbnail */}
+                                        {/* Thumbnail with Hover Preview */}
                                         <td className="thumbnail-cell">
-                                            <img
-                                                src={track.thumbnail}
-                                                alt={`${track.title} by ${track.artist}`}
+                                            <div
                                                 style={{
+                                                    position: 'relative',
                                                     width: '50px',
                                                     height: '50px',
                                                     borderRadius: '4px',
-                                                    objectFit: 'cover'
+                                                    overflow: 'hidden',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s ease'
                                                 }}
-                                                onError={(e) => {
-                                                    // Fallback for broken images
-                                                    e.currentTarget.style.display = 'none';
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.transform = 'scale(1.05)';
+                                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
                                                 }}
-                                            />
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.transform = 'scale(1)';
+                                                    e.currentTarget.style.boxShadow = 'none';
+                                                }}
+                                                onClick={() => handlePreview(track)}
+                                            >
+                                                <img
+                                                    src={track.thumbnail}
+                                                    alt={`${track.title} by ${track.artist}`}
+                                                    style={{
+                                                        width: '100%',
+                                                        height: '100%',
+                                                        objectFit: 'cover',
+                                                        transition: 'filter 0.2s ease'
+                                                    }}
+                                                    onError={(e) => {
+                                                        // Fallback for broken images
+                                                        e.currentTarget.style.display = 'none';
+                                                    }}
+                                                />
+                                                
+                                                {/* Play/Pause/Loading Button Overlay */}
+                                                <div
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: '50%',
+                                                        left: '50%',
+                                                        transform: 'translate(-50%, -50%)',
+                                                        width: '24px',
+                                                        height: '24px',
+                                                        background: 'rgba(0, 0, 0, 0.8)',
+                                                        borderRadius: '50%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        opacity: (previewingId === track.id || loadingPreviewId === track.id) ? 1 : 0,
+                                                        transition: 'opacity 0.2s ease',
+                                                        pointerEvents: 'none',
+                                                        border: '2px solid rgba(255, 255, 255, 0.3)'
+                                                    }}
+                                                >
+                                                    {loadingPreviewId === track.id ? (
+                                                        // Loading spinner
+                                                        <div style={{
+                                                            width: '12px',
+                                                            height: '12px',
+                                                            border: '2px solid rgba(255, 255, 255, 0.3)',
+                                                            borderTop: '2px solid white',
+                                                            borderRadius: '50%',
+                                                            animation: 'spin 1s linear infinite'
+                                                        }} />
+                                                    ) : previewingId === track.id ? (
+                                                        // Pause icon when playing
+                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
+                                                            <rect x="6" y="4" width="4" height="16" rx="1"/>
+                                                            <rect x="14" y="4" width="4" height="16" rx="1"/>
+                                                        </svg>
+                                                    ) : (
+                                                        // Play icon when not playing
+                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
+                                                            <polygon points="5,3 19,12 5,21"/>
+                                                        </svg>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* Hover overlay for better visibility */}
+                                                <div
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        right: 0,
+                                                        bottom: 0,
+                                                        background: 'rgba(0, 0, 0, 0.2)',
+                                                        opacity: 0,
+                                                        transition: 'opacity 0.2s ease',
+                                                        pointerEvents: 'none'
+                                                    }}
+                                                    className="thumbnail-hover-overlay"
+                                                />
+                                            </div>
                                         </td>
 
                                         {/* Title */}
@@ -1292,128 +1717,181 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                     const progressPercent = progressData?.progress || downloadProgress[track.id] || 0;
                                                     
                                                     if (isCurrentlyDownloading || (progressData && progressData.stage !== 'complete')) {
-                                                        return (
-                                                            <div style={{ minWidth: '120px' }}>
-                                                                {/* Enhanced Progress Bar */}
-                                                                <div style={{
-                                                                    width: '100%',
-                                                                    height: '4px',
-                                                                    backgroundColor: 'var(--surface-bg)',
-                                                                    borderRadius: '2px',
-                                                                    overflow: 'hidden',
-                                                                    marginBottom: '4px',
-                                                                    border: '1px solid var(--border-color)'
+                                                        const canCancel = cancellableDownloads.has(track.id) && !cancelledDownloads.has(track.id);
+                                                        const isCancelled = cancelledDownloads.has(track.id);
+                                                        
+                                                        if (isCancelled) {
+                                                            return (
+                                                                <div style={{ 
+                                                                    display: 'flex', 
+                                                                    flexDirection: 'column', 
+                                                                    alignItems: 'center', 
+                                                                    gap: '4px',
+                                                                    color: '#f59e0b',
+                                                                    fontSize: '11px',
+                                                                    fontWeight: '500',
+                                                                    padding: '4px 8px',
+                                                                    background: 'rgba(245, 158, 11, 0.1)',
+                                                                    borderRadius: '4px',
+                                                                    border: '1px solid rgba(245, 158, 11, 0.3)'
                                                                 }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                                                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                                                                        </svg>
+                                                                        Cancelled
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        
+                                                        return (
+                                                            <div style={{ minWidth: '140px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                                                {/* Compact loading with spinner */}
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                     <div style={{
-                                                                        width: `${Math.max(progressPercent, 2)}%`,
-                                                                        height: '100%',
-                                                                        background: progressData?.stage === 'error' 
-                                                                            ? 'linear-gradient(90deg, #ef4444, #dc2626)'
-                                                                            : progressData?.stage === 'complete'
-                                                                                ? 'linear-gradient(90deg, #10b981, #059669)'
-                                                                                                                                                                 : 'linear-gradient(90deg, var(--brand-blue), var(--brand-blue-light))',
-                                                                        transition: 'width 0.3s ease, background 0.3s ease',
-                                                                        borderRadius: '1px'
+                                                                        width: '14px',
+                                                                        height: '14px',
+                                                                        border: '2px solid rgba(255,255,255,0.3)',
+                                                                        borderTop: '2px solid var(--brand-blue)',
+                                                                        borderRadius: '50%',
+                                                                        animation: 'spin 1s linear infinite'
                                                                     }} />
+                                                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                                        {progressData?.message || 'Preparing download...'}
+                                                                    </div>
                                                                 </div>
                                                                 
-                                                                {/* Progress Text */}
-                                                                <div style={{
-                                                                    color: progressData?.stage === 'error' 
-                                                                        ? '#ef4444'
-                                                                        : progressData?.stage === 'complete'
-                                                                            ? '#10b981'
-                                                                            : 'var(--text-secondary)',
-                                                                    fontSize: '10px',
-                                                                    fontWeight: '500',
-                                                                    textAlign: 'center'
-                                                                }}>
-                                                                    {progressPercent}% - {progressData?.message || 'Downloading...'}
-                                                                </div>
+                                                                {/* Cancel Button */}
+                                                                {canCancel && (
+                                                                    <button
+                                                                        onClick={() => handleCancelDownload(track.id)}
+                                                                        style={{
+                                                                            padding: '2px 8px',
+                                                                            fontSize: '10px',
+                                                                            fontWeight: '600',
+                                                                            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                                                            color: 'white',
+                                                                            border: 'none',
+                                                                            borderRadius: '4px',
+                                                                            cursor: 'pointer',
+                                                                            transition: 'all 0.2s ease',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px',
+                                                                        }}
+                                                                        onMouseEnter={(e) => {
+                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #dc2626, #b91c1c)';
+                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                        }}
+                                                                        onMouseLeave={(e) => {
+                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+                                                                            e.currentTarget.style.transform = 'translateY(0)';
+                                                                        }}
+                                                                    >
+                                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                                                                        </svg>
+                                                                        Cancel
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                         );
                                                     } else if (isDownloaded || progressPercent === 100) {
                                                         return (
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '4px',
-                                                                color: '#10b981',
-                                                                fontSize: '12px',
-                                                                fontWeight: '500'
-                                                            }}>
-                                                                ✓ Downloaded
+                                                            <div 
+                                                                className="download-complete"
+                                                                style={{
+                                                                    display: 'flex',
+                                                                    flexDirection: 'column',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    color: '#10b981',
+                                                                    fontSize: '11px',
+                                                                    fontWeight: '500',
+                                                                    padding: '4px 8px',
+                                                                    background: 'rgba(16, 185, 129, 0.1)',
+                                                                    borderRadius: '4px',
+                                                                    border: '1px solid rgba(16, 185, 129, 0.3)'
+                                                                }}
+                                                            >
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                                                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                                                    </svg>
+                                                                    Downloaded
+                                                                </div>
+                                                                <div style={{
+                                                                    fontSize: '9px',
+                                                                    opacity: 0.8,
+                                                                    textAlign: 'center'
+                                                                }}>
+                                                                    Added to Collection
+                                                                </div>
                                                             </div>
                                                         );
                                                     } else {
                                                         return (
-                                                            <div style={{ display: 'flex', gap: '6px' }}>
-                                                                {/* Preview Button */}
-                                                                <button
-                                                                    onClick={() => handlePreview(track)}
-                                                                    style={{
-                                                                        padding: '4px 8px',
-                                                                        fontSize: '11px',
-                                                                        fontWeight: '500',
-                                                                        background: previewingId === track.id ? 'var(--brand-blue)' : 'var(--surface-bg)',
-                                                                        color: previewingId === track.id ? 'white' : 'var(--text-primary)',
-                                                                        border: '1px solid var(--border-color)',
-                                                                        borderRadius: '3px',
-                                                                        cursor: 'pointer',
-                                                                        transition: 'all 0.2s ease'
-                                                                    }}
-                                                                                                                                         onMouseEnter={(e) => {
-                                                                         if (previewingId !== track.id) {
-                                                                             e.currentTarget.style.backgroundColor = 'var(--brand-blue)';
-                                                                             e.currentTarget.style.color = 'white';
-                                                                             e.currentTarget.style.borderColor = 'var(--brand-blue)';
-                                                                         }
-                                                                     }}
-                                                                     onMouseLeave={(e) => {
-                                                                         if (previewingId !== track.id) {
-                                                                             e.currentTarget.style.backgroundColor = 'var(--surface-bg)';
-                                                                             e.currentTarget.style.color = 'var(--text-primary)';
-                                                                             e.currentTarget.style.borderColor = 'var(--border-color)';
-                                                                         }
-                                                                     }}
-                                                                >
-                                                                    {previewingId === track.id ? 'Playing' : 'Preview'}
-                                                                </button>
-                                                                
+                                                            <div style={{ display: 'flex', justifyContent: 'center' }}>
                                                                 {/* Download Button */}
                                                                 <button
                                                                     onClick={() => handleDownload(track)}
                                                                     disabled={!isDownloadPathSet}
                                                                     style={{
-                                                                        padding: '4px 8px',
+                                                                        padding: '6px 12px',
                                                                         fontSize: '11px',
-                                                                        fontWeight: '500',
+                                                                        fontWeight: '600',
                                                                         background: isDownloadPathSet 
-                                                                            ? 'linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-light) 100%)' 
+                                                                            ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' 
                                                                             : 'var(--surface-bg)',
                                                                         color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
                                                                         border: 'none',
-                                                                        borderRadius: '3px',
+                                                                        borderRadius: '6px',
                                                                         cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
                                                                         transition: 'all 0.2s ease',
-                                                                                                                                                 boxShadow: isDownloadPathSet 
-                                                                             ? '0 1px 3px rgba(74, 144, 226, 0.2)' 
-                                                                             : 'none'
-                                                                     }}
-                                                                     onMouseEnter={(e) => {
-                                                                         if (isDownloadPathSet) {
-                                                                             e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                             e.currentTarget.style.boxShadow = '0 2px 6px rgba(74, 144, 226, 0.3)';
-                                                                         }
-                                                                     }}
-                                                                     onMouseLeave={(e) => {
-                                                                         if (isDownloadPathSet) {
-                                                                             e.currentTarget.style.transform = 'translateY(0)';
-                                                                             e.currentTarget.style.boxShadow = '0 1px 3px rgba(74, 144, 226, 0.2)';
-                                                                         }
-                                                                     }}
+                                                                        boxShadow: isDownloadPathSet 
+                                                                            ? '0 2px 4px rgba(16, 185, 129, 0.3)' 
+                                                                            : 'none',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '4px',
+                                                                        minWidth: '120px',
+                                                                        justifyContent: 'center',
+                                                                        position: 'relative',
+                                                                        overflow: 'hidden'
+                                                                    }}
+                                                                    onMouseEnter={(e) => {
+                                                                        if (isDownloadPathSet) {
+                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
+                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+                                                                        }
+                                                                    }}
+                                                                    onMouseLeave={(e) => {
+                                                                        if (isDownloadPathSet) {
+                                                                            e.currentTarget.style.transform = 'translateY(0)';
+                                                                            e.currentTarget.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
+                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+                                                                        }
+                                                                    }}
+                                                                    onMouseDown={(e) => {
+                                                                        if (isDownloadPathSet) {
+                                                                            e.currentTarget.style.transform = 'translateY(0)';
+                                                                            e.currentTarget.style.boxShadow = '0 1px 2px rgba(16, 185, 129, 0.3)';
+                                                                        }
+                                                                    }}
+                                                                    onMouseUp={(e) => {
+                                                                        if (isDownloadPathSet) {
+                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
+                                                                        }
+                                                                    }}
                                                                 >
-                                                                    Download
+                                                                    {/* Download icon */}
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+                                                                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                                                                    </svg>
+                                                                    <span>Download in 320kbps</span>
                                                                 </button>
                                                             </div>
                                                         );

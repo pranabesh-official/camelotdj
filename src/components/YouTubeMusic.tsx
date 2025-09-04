@@ -1130,6 +1130,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             onClick={() => handleSearch()}
                             disabled={isSearching || !searchQuery.trim()}
                             style={{
+                                display: 'none', // Hide search button since real-time search handles everything
                                 padding: '12px 16px',
                                 fontSize: '14px',
                                 fontWeight: '500',
@@ -1148,7 +1149,6 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 cursor: isSearching ? 'not-allowed' : !searchQuery.trim() ? 'default' : 'pointer',
                                 minWidth: '100px',
                                 height: '48px',
-                                display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 gap: '6px',

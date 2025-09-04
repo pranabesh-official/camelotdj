@@ -32,6 +32,7 @@ interface PlaylistManagerProps {
   onMultiFileUpload?: (files: File[]) => void;
   onFolderUpload?: (files: FileList) => void;
   isAnalyzing?: boolean;
+  downloadPath?: string;
 }
 
 // Simple SVG icons for clean UI
@@ -90,6 +91,14 @@ const ExportIcon = () => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
     <polyline points="7,10 12,15 17,10"></polyline>
     <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
+
+const DownloadIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7,10 12,15 17,10"/>
+    <line x1="12" y1="3" x2="12" y2="15"/>
   </svg>
 );
 
@@ -356,7 +365,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   onFileUpload,
   onMultiFileUpload,
   onFolderUpload,
-  isAnalyzing = false
+  isAnalyzing = false,
+  downloadPath
 }) => {
   const [showAddSongs, setShowAddSongs] = useState(false);
   const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
@@ -617,32 +627,49 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           </div>
         </div>
 
-        {/* Genre-based playlists */}
-        {['House', 'Techno', 'Hip-Hop', 'Jazz', 'Rock', 'Pop', 'Reggae', 'Ambient'].map((genre) => {
-          const genreCount = songs.filter(song => {
-            if (!song.bpm || !song.energy_level) return false;
-            
-            switch(genre) {
-              case 'House': return song.energy_level >= 5 && song.energy_level <= 7;
-              case 'Techno': return song.energy_level > 7;
-              case 'Hip-Hop': return song.energy_level <= 4 && song.bpm >= 70 && song.bpm <= 100;
-              case 'Jazz': return song.energy_level <= 3;
-              case 'Rock': return song.energy_level >= 6;
-              case 'Pop': return song.energy_level >= 4 && song.energy_level <= 6;
-              default: return false;
-            }
-          }).length;
-          
-          return (
-            <div key={genre} className="playlist-item-row genre-item">
-              <div className="genre-indicator">●</div>
-              <div className="playlist-item-info">
-                <span className="playlist-item-name">{genre}</span>
-                <span className="playlist-item-count">({genreCount})</span>
+        {/* Downloads (virtual playlist based on downloadPath) */}
+        {downloadPath && (
+          (() => {
+            const normalizePath = (p: string) =>
+              (p || '')
+                .replace(/\\/g, '/')
+                .replace(/\/+$/g, '')
+                .toLowerCase();
+            const normalized = normalizePath(downloadPath);
+            const downloadsSongs = songs.filter(s => {
+              const fp = normalizePath(s.file_path || '');
+              if (!fp || !normalized) return false;
+              return fp.startsWith(normalized) || fp.includes(`/${normalized.split('/').filter(Boolean).join('/')}`) || fp.includes(normalized);
+            });
+            const virtualPlaylist: Playlist = {
+              id: 'virtual-downloads',
+              name: 'Downloads',
+              songs: downloadsSongs,
+              createdAt: new Date(0),
+              description: 'Songs in your downloads folder',
+              color: '#4ecdc4',
+              isQueryBased: true,
+              queryCriteria: undefined
+            };
+            return (
+              <div
+                key={virtualPlaylist.id}
+                className="playlist-item-row user-playlist"
+                onClick={() => onPlaylistSelect(virtualPlaylist)}
+              >
+                <div className="playlist-item-icon">
+                  <DownloadIcon />
+                </div>
+                <div className="playlist-item-info">
+                  <span className="playlist-item-name">Downloads</span>
+                  <span className="playlist-item-count">({downloadsSongs.length})</span>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })()
+        )}
+
+        {/* Genre-based playlists removed: Only 'All Music' remains as requested */}
 
         {/* User Playlists */}
         <div className="user-playlists">

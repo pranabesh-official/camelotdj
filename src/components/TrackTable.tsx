@@ -42,6 +42,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [editingCell, setEditingCell] = useState<{songId: string, field: string} | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
   const [deletingSongs, setDeletingSongs] = useState<Set<string>>(new Set());
+  const [duplicateFilter, setDuplicateFilter] = useState<'all' | 'duplicates' | 'unique'>('all');
   
   // Metadata editor state
   const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
@@ -98,6 +99,38 @@ const TrackTable: React.FC<TrackTableProps> = ({
     });
   }, [songs]);
 
+  // Duplicate grouping helpers
+  const duplicateKeyFor = (song: Song) => {
+    // Prefer strong identifiers if present
+    if ((song as any).file_hash) return `hash:${(song as any).file_hash}`;
+    if (song.track_id) return `tid:${song.track_id}`;
+    // Fallback heuristic: normalized title + rounded duration + file_size
+    const base = (song.filename || '').toLowerCase().replace(/\.[^/.]+$/, '').trim();
+    const dur = song.duration ? Math.round(song.duration) : 0;
+    const size = song.file_size || 0;
+    return `h:${base}|d:${dur}|s:${size}`;
+  };
+
+  const duplicateGroups = useMemo(() => {
+    const groups = new Map<string, Song[]>();
+    enhancedSongs.forEach(s => {
+      const key = duplicateKeyFor(s as Song);
+      const arr = groups.get(key) || [];
+      arr.push(s as Song);
+      groups.set(key, arr);
+    });
+    return groups;
+  }, [enhancedSongs]);
+
+  const songIdToGroupSize = useMemo(() => {
+    const map = new Map<string, number>();
+    duplicateGroups.forEach(arr => {
+      const size = arr.length;
+      arr.forEach(s => map.set(s.id, size));
+    });
+    return map;
+  }, [duplicateGroups]);
+
   const sortedAndFilteredSongs = useMemo(() => {
     let filtered = enhancedSongs;
 
@@ -131,6 +164,14 @@ const TrackTable: React.FC<TrackTableProps> = ({
       filtered = filtered.filter(song => song.genre === filterGenre);
     }
 
+    // Apply duplicate filter
+    if (duplicateFilter !== 'all') {
+      filtered = filtered.filter(s => {
+        const groupSize = songIdToGroupSize.get(s.id) || 1;
+        return duplicateFilter === 'duplicates' ? groupSize > 1 : groupSize === 1;
+      });
+    }
+
     return filtered.sort((a, b) => {
       let aValue: any = a[sortField as keyof typeof a];
       let bValue: any = b[sortField as keyof typeof b];
@@ -149,7 +190,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
         return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
       }
     });
-  }, [enhancedSongs, sortField, sortDirection, filterKey, filterEnergy, filterTempo, filterGenre, searchTerm, showCompatibleOnly, selectedSong, getCompatibleSongs]);
+  }, [enhancedSongs, sortField, sortDirection, filterKey, filterEnergy, filterTempo, filterGenre, searchTerm, showCompatibleOnly, selectedSong, getCompatibleSongs, duplicateFilter, songIdToGroupSize]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -359,6 +400,12 @@ const TrackTable: React.FC<TrackTableProps> = ({
               ))}
             </select>
 
+            <select value={duplicateFilter} onChange={(e) => setDuplicateFilter(e.target.value as any)}>
+              <option value="all">All</option>
+              <option value="duplicates">Duplicates only</option>
+              <option value="unique">Unique only</option>
+            </select>
+
             <select value={filterTempo} onChange={(e) => setFilterTempo(e.target.value)}>
               <option value="">Tempo</option>
               {uniqueTempos.map(tempo => (
@@ -390,9 +437,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 setSearchTerm('');
                 setSortField('filename');
                 setSortDirection('asc');
+                setDuplicateFilter('all');
               }}
               title="Clear all filters and reset sorting"
-              disabled={!searchTerm && !filterKey && !filterTempo && !filterEnergy && !filterGenre}
+              disabled={!searchTerm && !filterKey && !filterTempo && !filterEnergy && !filterGenre && duplicateFilter === 'all'}
             >
               <ResetIcon />
               Reset All
@@ -569,6 +617,22 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 </td>
                 <td className="actions-cell">
                   <div className="action-buttons">
+                    {((songIdToGroupSize.get(song.id) || 1) > 1) && (
+                      <span
+                        className="dup-badge"
+                        title={`${(songIdToGroupSize.get(song.id) || 1)} items in this duplicate group`}
+                        style={{
+                          background: '#ffe08a',
+                          color: '#7a5e00',
+                          borderRadius: 4,
+                          padding: '2px 6px',
+                          fontSize: 12,
+                          marginRight: 8
+                        }}
+                      >
+                        Dup ×{songIdToGroupSize.get(song.id)}
+                      </span>
+                    )}
                     {false && (
                     <button 
                       className="action-btn play-btn"
@@ -593,6 +657,38 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     >
                       <EditIcon />
                     </button>
+                    )}
+                    {((songIdToGroupSize.get(song.id) || 1) > 1) && (
+                      <button
+                        className="action-btn"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          // Delete all other songs in the same duplicate group, keep this one
+                          const key = duplicateKeyFor(song as Song);
+                          const group = duplicateGroups.get(key) || [];
+                          const others = group.filter(s => s.id !== song.id);
+                          if (others.length === 0) return;
+                          const confirmMessage = `Keep "${song.filename}" and delete ${others.length} other duplicate(s)?\n\nThis removes them from library and playlists. Cannot be undone.`;
+                          if (!window.confirm(confirmMessage)) return;
+                          for (const other of others) {
+                            try {
+                              setDeletingSongs(prev => new Set([...prev, other.id]));
+                              await onDeleteSong(other.id);
+                            } catch (err) {
+                              console.error('Failed deleting duplicate', err);
+                            } finally {
+                              setDeletingSongs(prev => {
+                                const ns = new Set(prev);
+                                ns.delete(other.id);
+                                return ns;
+                              });
+                            }
+                          }
+                        }}
+                        title="Keep this track, delete other duplicates"
+                      >
+                        Keep · remove dups
+                      </button>
                     )}
                     <button 
                       className="action-btn delete-btn"

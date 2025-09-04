@@ -126,8 +126,10 @@ const App: React.FC = () => {
                         const dbService = new DatabaseService(apiInfo.port, apiInfo.signingKey);
                         setDatabaseService(dbService);
                         
-                        // Load library from database with longer delay for Electron
-                        loadLibraryFromDatabase(dbService, 2000);
+                        // Validate/clean first, then load library (longer delay for Electron)
+                        validateAndCleanLibrary(dbService).finally(() => {
+                            loadLibraryFromDatabase(dbService, 2000);
+                        });
                     } catch (error) {
                         console.error('❌ Error parsing API details:', error);
                         // Fallback to default values
@@ -183,12 +185,55 @@ const App: React.FC = () => {
         }
     }, [apiSigningKey]);
 
+    // Validate and clean library before loading
+    const validateAndCleanLibrary = React.useCallback(async (dbService: DatabaseService) => {
+        try {
+            console.log('🧹 Validating library and cleaning missing files...');
+            // Ask backend to verify current files (best-effort)
+            try {
+                const stats = await dbService.verifyLibrary();
+                console.log(`📊 Verification complete: total=${stats.total}, found=${stats.found}, missing=${stats.missing}`);
+            } catch (verifyErr) {
+                console.warn('⚠️ Library verification failed (continuing with cleanup):', verifyErr);
+            }
+
+            // Fetch songs marked as missing and delete them from DB
+            try {
+                const missingSongs = await dbService.getLibrary('missing');
+                if (missingSongs && missingSongs.length > 0) {
+                    console.log(`🗑️ Removing ${missingSongs.length} missing song(s) from database...`);
+                    for (const ms of missingSongs) {
+                        try {
+                            if (ms.id) {
+                                await dbService.deleteSong(ms.id.toString());
+                            } else if (ms.file_path) {
+                                await dbService.deleteSongByPath(ms.file_path);
+                            }
+                        } catch (delErr) {
+                            console.warn('Failed to delete missing song record:', { id: ms.id, file_path: ms.file_path, error: delErr });
+                        }
+                    }
+                    console.log('✅ Cleanup of missing songs completed.');
+                } else {
+                    console.log('✅ No missing songs to clean.');
+                }
+            } catch (missErr) {
+                console.warn('⚠️ Could not query missing songs for cleanup:', missErr);
+            }
+        } catch (error) {
+            console.warn('⚠️ Validation and cleanup encountered an issue (continuing):', error);
+        }
+    }, []);
+
     // Helper function to initialize database service with defaults
     const initializeDatabaseService = () => {
         console.log('🔧 Initializing database service with defaults...');
         const dbService = new DatabaseService(5002, 'devkey');
         setDatabaseService(dbService);
-        loadLibraryFromDatabase(dbService, 1500);
+        // Validate/clean first, then load
+        validateAndCleanLibrary(dbService).finally(() => {
+            loadLibraryFromDatabase(dbService, 1500);
+        });
     };
 
     // Load library from database
@@ -265,7 +310,38 @@ const App: React.FC = () => {
                     };
                 });
                 
-                setSongs(transformedSongs);
+                // If running in Electron, do a local filesystem existence check to hide missing files immediately
+                let finalSongs = transformedSongs;
+                try {
+                    const isElectron = !!(window as any).require;
+                    if (isElectron) {
+                        const fs = (window as any).require('fs') as typeof import('fs');
+                        const pathExists = (p?: string) => (p ? fs.existsSync(p) : false);
+                        const missingNow = transformedSongs.filter(s => !pathExists(s.file_path));
+                        if (missingNow.length > 0) {
+                            console.log(`🧼 Filtering ${missingNow.length} locally-missing song(s) from UI and deleting in DB...`);
+                            // Delete missing ones in the background to keep DB clean
+                            (async () => {
+                                for (const ms of missingNow) {
+                                    try {
+                                        if (ms.id) {
+                                            await dbService.deleteSong(ms.id.toString());
+                                        } else if (ms.file_path) {
+                                            await dbService.deleteSongByPath(ms.file_path);
+                                        }
+                                    } catch (e) {
+                                        console.warn('Background delete failed for:', { id: ms.id, file_path: ms.file_path, error: e });
+                                    }
+                                }
+                            })();
+                        }
+                        finalSongs = transformedSongs.filter(s => pathExists(s.file_path));
+                    }
+                } catch (e) {
+                    console.warn('Electron FS check failed or not available (continuing):', e);
+                }
+
+                setSongs(finalSongs);
                 console.log(`🎵 Successfully loaded ${transformedSongs.length} songs from database:`);
                 transformedSongs.forEach((song, i) => {
                     console.log(`   ${i+1}. ${song.filename} (${song.camelot_key})`);
@@ -999,6 +1075,8 @@ const App: React.FC = () => {
             const dbPlaylists = await databaseService.getPlaylists();
             
             // Transform database playlists to match our interface
+            // Filter out any playlist songs that do not exist in the current songs list
+            const currentSongIds = new Set(songs.map(s => s.id));
             const transformedPlaylists: Playlist[] = dbPlaylists.map((dbPlaylist: any) => ({
                 id: dbPlaylist.id.toString(),
                 name: dbPlaylist.name,
@@ -1007,7 +1085,9 @@ const App: React.FC = () => {
                 isQueryBased: dbPlaylist.is_query_based || false,
                 queryCriteria: dbPlaylist.query_criteria,
                 createdAt: new Date(dbPlaylist.created_at),
-                songs: dbPlaylist.songs ? dbPlaylist.songs.map((song: any) => ({
+                songs: dbPlaylist.songs ? dbPlaylist.songs
+                    .filter((song: any) => currentSongIds.has(song.id.toString()))
+                    .map((song: any) => ({
                     id: song.id.toString(),
                     filename: song.filename,
                     file_path: song.file_path,
@@ -1542,6 +1622,7 @@ const App: React.FC = () => {
                             onMultiFileUpload={addFilesToQueue}
                             onFolderUpload={handleFolderUpload}
                             isAnalyzing={isAnalyzing || isProcessingQueue}
+                            downloadPath={downloadPath}
                         />
                     </div>
                 </aside>

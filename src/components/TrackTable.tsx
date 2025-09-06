@@ -14,6 +14,11 @@ interface TrackTableProps {
   onSongUpdate?: (song: Song) => void; // New prop for updating songs
   apiPort: number;
   apiSigningKey: string;
+  // New props for playlist actions
+  selectedPlaylist?: any | null;
+  onPlaylistDelete?: (playlistId: string) => void;
+  onUSBExport?: (playlist: any) => void;
+  onExportPlaylist?: (playlist: any) => void;
 }
 
 type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
@@ -30,7 +35,11 @@ const TrackTable: React.FC<TrackTableProps> = ({
   showCompatibleOnly = false,
   onSongUpdate,
   apiPort,
-  apiSigningKey
+  apiSigningKey,
+  selectedPlaylist,
+  onPlaylistDelete,
+  onUSBExport,
+  onExportPlaylist
 }) => {
   const [sortField, setSortField] = useState<SortField>('filename');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -174,7 +183,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
         (song.artist && song.artist.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.title && song.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.filename && song.filename.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (song.key_name && song.key_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (song.key && song.key.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.camelot_key && song.camelot_key.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.genre && song.genre.toLowerCase().includes(searchTerm.toLowerCase()))
       );
@@ -188,7 +197,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
       filtered = filtered.filter(song => song.energy_level === energyNum);
     }
     if (filterTempo) {
-      filtered = filtered.filter(song => song.tempo === filterTempo);
+      filtered = filtered.filter(song => {
+        const songTempo = song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown';
+        return songTempo === filterTempo;
+      });
     }
     if (filterGenre) {
       filtered = filtered.filter(song => song.genre === filterGenre);
@@ -402,7 +414,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
   }, [enhancedSongs]);
 
   const uniqueTempos = useMemo(() => {
-    return Array.from(new Set(enhancedSongs.map(song => song.tempo).filter(Boolean))).sort();
+    return Array.from(new Set(enhancedSongs.map(song => {
+      return song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown';
+    }).filter(Boolean))).sort();
   }, [enhancedSongs]);
 
   const uniqueGenres = useMemo(() => {
@@ -475,6 +489,65 @@ const TrackTable: React.FC<TrackTableProps> = ({
               <ResetIcon />
               Reset All
             </button>
+            
+            {/* Playlist Actions - only show when a playlist is selected */}
+            {selectedPlaylist && (
+              <>
+                {onUSBExport && (
+                  <button 
+                    className="playlist-action-btn usb-export-btn"
+                    onClick={() => onUSBExport(selectedPlaylist)}
+                    title="Export playlist to USB"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10 2v7.31"/>
+                      <path d="M15 2v7.31"/>
+                      <path d="M8 9.31V2"/>
+                      <path d="M17 9.31V2"/>
+                      <path d="M12 9.31V2"/>
+                      <path d="M2 9.31V2"/>
+                      <path d="M20 9.31V2"/>
+                      <path d="M2 9.31h20"/>
+                      <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
+                    </svg>
+                    USB Export
+                  </button>
+                )}
+                
+                {onExportPlaylist && (
+                  <button 
+                    className="playlist-action-btn export-btn"
+                    onClick={() => onExportPlaylist(selectedPlaylist)}
+                    title="Export playlist as M3U file"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="7,10 12,15 17,10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Export M3U
+                  </button>
+                )}
+                
+                {onPlaylistDelete && (
+                  <button 
+                    className="playlist-action-btn delete-btn"
+                    onClick={() => {
+                      if (window.confirm(`Delete playlist "${selectedPlaylist.name}"?`)) {
+                        onPlaylistDelete(selectedPlaylist.id);
+                      }
+                    }}
+                    title="Delete playlist"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3,6 5,6 21,6"/>
+                      <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/>
+                    </svg>
+                    Delete Playlist
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -631,7 +704,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                               await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
-                                body: JSON.stringify({ song_id: song.id, filename: song.filename, file_path: song.file_path, rating: star, metadata: {} })
+                                body: JSON.stringify({ song_id: song.id, filename: song.filename, file_path: (song as any).file_path, rating: star, metadata: {} })
                               });
                             } catch (err) {
                               console.error('Failed to persist rating', err);

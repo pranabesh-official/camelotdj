@@ -862,6 +862,49 @@ body {
   min-width: 100px;
 }
 
+/* Playlist Action Buttons in Table Controls */
+.playlist-action-btn {
+  background: var(--surface-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.playlist-action-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+  border-color: var(--brand-blue);
+}
+
+.playlist-action-btn.usb-export-btn:hover {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
+.playlist-action-btn.export-btn:hover {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.playlist-action-btn.delete-btn:hover {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.playlist-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 .reset-btn {
   display: flex;
   align-items: center;

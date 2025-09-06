@@ -7,6 +7,7 @@ import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
 import YouTubeMusic from './components/YouTubeMusic';
+import USBExport from './components/USBExport';
 // import AIAgent from './components/AIAgent';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
@@ -14,6 +15,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import AuthGate from './components/AuthGate';
 import { useAuth } from './services/AuthContext';
 import { upsertUserTrack, upsertManyUserTracks, saveToAnalysisSongs } from './services/TrackSyncService';
+import { getMatchingQueryPlaylists, isSongInPlaylist, getUniqueSongs, validatePlaylistSongs } from './utils/queryPlaylistUtils';
 import logoWhite from './assets/logwhite.png';
 
 export interface Song {
@@ -103,6 +105,10 @@ const App: React.FC = () => {
     const [analysisQueue, setAnalysisQueue] = useState<QueuedFile[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
     const [isQueuePaused, setIsQueuePaused] = useState(false);
+    
+    // USB Export State
+    const [showUSBExport, setShowUSBExport] = useState(false);
+    const [playlistToExport, setPlaylistToExport] = useState<Playlist | null>(null);
     const queueProcessingRef = useRef<boolean>(false);
     const downloadManagerRef = useRef<any>(null);
 
@@ -915,6 +921,11 @@ const App: React.FC = () => {
                     return [...prevSongs, newSong];
                 });
 
+                // Auto-add to matching query playlists
+                setTimeout(() => {
+                    addSongToMatchingQueryPlaylists(newSong);
+                }, 100);
+
                 // Update queue item as completed
                 setAnalysisQueue(prev => prev.map(item => 
                     item.id === currentItem.id 
@@ -1242,40 +1253,130 @@ const App: React.FC = () => {
 
     const handleAddToPlaylist = useCallback(async (playlistId: string, songsToAdd: Song[]) => {
         try {
+            // Validate and deduplicate songs to add
+            const uniqueSongsToAdd = getUniqueSongs(songsToAdd);
+            
+            if (uniqueSongsToAdd.length !== songsToAdd.length) {
+                console.warn(`🔍 Removed ${songsToAdd.length - uniqueSongsToAdd.length} duplicate songs before adding to playlist`);
+            }
+            
             if (databaseService) {
                 // Add songs to database
-                for (const song of songsToAdd) {
+                for (const song of uniqueSongsToAdd) {
                     await databaseService.addSongToPlaylist(playlistId, song.id);
                 }
             }
             
             setPlaylists(prev => prev.map(playlist => {
                 if (playlist.id === playlistId) {
-                    const existingSongIds = playlist.songs.map(s => s.id);
-                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
-                    return {
+                    const existingSongIds = new Set(playlist.songs.map(s => s.id));
+                    const newSongs = uniqueSongsToAdd.filter(s => !existingSongIds.has(s.id));
+                    
+                    if (newSongs.length === 0) {
+                        console.log(`🎵 All songs already exist in playlist "${playlist.name}"`);
+                        return playlist;
+                    }
+                    
+                    console.log(`🎵 Adding ${newSongs.length} new songs to playlist "${playlist.name}"`);
+                    
+                    // Validate the final playlist to ensure no duplicates
+                    const updatedPlaylist = {
                         ...playlist,
                         songs: [...playlist.songs, ...newSongs]
                     };
+                    
+                    return validatePlaylistSongs(updatedPlaylist);
                 }
                 return playlist;
             }));
         } catch (error) {
             console.error('❌ Failed to add songs to playlist:', error);
-            // Still update local state
+            // Still update local state with validation
             setPlaylists(prev => prev.map(playlist => {
                 if (playlist.id === playlistId) {
-                    const existingSongIds = playlist.songs.map(s => s.id);
-                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
-                    return {
+                    const uniqueSongsToAdd = getUniqueSongs(songsToAdd);
+                    const existingSongIds = new Set(playlist.songs.map(s => s.id));
+                    const newSongs = uniqueSongsToAdd.filter(s => !existingSongIds.has(s.id));
+                    
+                    const updatedPlaylist = {
                         ...playlist,
                         songs: [...playlist.songs, ...newSongs]
                     };
+                    
+                    return validatePlaylistSongs(updatedPlaylist);
                 }
                 return playlist;
             }));
         }
     }, [databaseService]);
+
+    // Check all songs against all query playlists (for app startup)
+    const checkAllSongsAgainstQueryPlaylists = useCallback(async () => {
+        try {
+            console.log('🔍 Checking all songs against query playlists...');
+            const queryPlaylists = playlists.filter(p => p.isQueryBased && p.queryCriteria);
+            
+            if (queryPlaylists.length === 0) {
+                console.log('No query playlists found');
+                return;
+            }
+
+            // Validate all existing playlists first
+            const validatedPlaylists = queryPlaylists.map(validatePlaylistSongs);
+            const duplicateCounts = queryPlaylists.map((playlist, index) => {
+                const originalCount = playlist.songs.length;
+                const validatedCount = validatedPlaylists[index].songs.length;
+                return originalCount - validatedCount;
+            });
+
+            const totalDuplicatesRemoved = duplicateCounts.reduce((sum, count) => sum + count, 0);
+            if (totalDuplicatesRemoved > 0) {
+                console.warn(`🔍 Removed ${totalDuplicatesRemoved} duplicate songs from existing query playlists`);
+                // Update playlists with validated versions
+                setPlaylists(prev => prev.map(playlist => {
+                    const validated = validatedPlaylists.find(vp => vp.id === playlist.id);
+                    return validated || playlist;
+                }));
+            }
+
+            let totalAdded = 0;
+            const uniqueSongs = getUniqueSongs(songs);
+            
+            console.log(`📊 Processing ${uniqueSongs.length} unique songs against ${queryPlaylists.length} query playlists`);
+            
+            for (const song of uniqueSongs) {
+                const matchingPlaylists = getMatchingQueryPlaylists(song, queryPlaylists);
+                
+                for (const playlist of matchingPlaylists) {
+                    if (!isSongInPlaylist(song, playlist)) {
+                        console.log(`🎵 Adding "${song.filename}" to query playlist "${playlist.name}"`);
+                        await handleAddToPlaylist(playlist.id, [song]);
+                        totalAdded++;
+                    }
+                }
+            }
+            
+            if (totalAdded > 0) {
+                console.log(`✅ Auto-added ${totalAdded} songs to query playlists`);
+            } else {
+                console.log('No new songs to add to query playlists');
+            }
+        } catch (error) {
+            console.error('❌ Failed to check songs against query playlists:', error);
+        }
+    }, [songs, playlists, handleAddToPlaylist]);
+
+    // Check all songs against query playlists after both songs and playlists are loaded
+    useEffect(() => {
+        if (songs.length > 0 && playlists.length > 0 && isLibraryLoaded) {
+            // Add a small delay to ensure all playlists are fully loaded
+            const timer = setTimeout(() => {
+                checkAllSongsAgainstQueryPlaylists();
+            }, 1000);
+            
+            return () => clearTimeout(timer);
+        }
+    }, [songs.length, playlists.length, isLibraryLoaded, checkAllSongsAgainstQueryPlaylists]);
 
     const handleRemoveFromPlaylist = useCallback(async (playlistId: string, songIds: string[]) => {
         try {
@@ -1309,6 +1410,51 @@ const App: React.FC = () => {
             }));
         }
     }, [databaseService]);
+
+    // Auto-add songs to matching query playlists
+    const addSongToMatchingQueryPlaylists = useCallback(async (song: Song) => {
+        try {
+            const matchingPlaylists = getMatchingQueryPlaylists(song, playlists);
+            
+            for (const playlist of matchingPlaylists) {
+                // Check if song is already in the playlist
+                if (!isSongInPlaylist(song, playlist)) {
+                    console.log(`🎵 Auto-adding "${song.filename}" to query playlist "${playlist.name}"`);
+                    await handleAddToPlaylist(playlist.id, [song]);
+                }
+            }
+        } catch (error) {
+            console.error('❌ Failed to auto-add song to query playlists:', error);
+        }
+    }, [playlists, handleAddToPlaylist]);
+
+    // Clean up all playlists to remove duplicates
+    const cleanupAllPlaylists = useCallback(() => {
+        console.log('🧹 Cleaning up all playlists to remove duplicates...');
+        
+        setPlaylists(prev => {
+            const cleanedPlaylists = prev.map(playlist => {
+                const cleaned = validatePlaylistSongs(playlist);
+                if (cleaned.songs.length !== playlist.songs.length) {
+                    console.log(`🧹 Cleaned playlist "${playlist.name}": ${playlist.songs.length} → ${cleaned.songs.length} songs`);
+                }
+                return cleaned;
+            });
+            
+            const totalDuplicatesRemoved = prev.reduce((sum, playlist) => {
+                const cleaned = validatePlaylistSongs(playlist);
+                return sum + (playlist.songs.length - cleaned.songs.length);
+            }, 0);
+            
+            if (totalDuplicatesRemoved > 0) {
+                console.log(`✅ Cleanup complete: Removed ${totalDuplicatesRemoved} duplicate songs from all playlists`);
+            } else {
+                console.log('✅ No duplicates found in any playlists');
+            }
+            
+            return cleanedPlaylists;
+        });
+    }, []);
 
     // Audio player functions
     const handleSongPlay = useCallback((song: Song) => {
@@ -1596,6 +1742,11 @@ const App: React.FC = () => {
                 }
                 return [...prevSongs, newSong];
             });
+
+            // Auto-add to matching query playlists
+            setTimeout(() => {
+                addSongToMatchingQueryPlaylists(newSong);
+            }, 100);
             
             // Set as selected song
             setSelectedSong(newSong);
@@ -1728,6 +1879,9 @@ const App: React.FC = () => {
             }
             
             console.log('Song updated successfully:', updatedSong.filename);
+            
+            // Auto-add to matching query playlists
+            await addSongToMatchingQueryPlaylists(updatedSong);
         } catch (error) {
             console.error('Failed to update song:', error);
         }
@@ -1853,6 +2007,7 @@ const App: React.FC = () => {
                             onFolderUpload={handleFolderUpload}
                             isAnalyzing={isAnalyzing || isProcessingQueue}
                             downloadPath={downloadPath}
+                            onCleanupPlaylists={cleanupAllPlaylists}
                         />
                     </div>
                 </aside>
@@ -1886,6 +2041,31 @@ const App: React.FC = () => {
                                     onSongUpdate={handleSongUpdate}
                                     apiPort={apiPort}
                                     apiSigningKey={apiSigningKey}
+                                    selectedPlaylist={selectedPlaylist}
+                                    onPlaylistDelete={handlePlaylistDelete}
+                                    onUSBExport={(playlist) => {
+                                        setPlaylistToExport(playlist);
+                                        setShowUSBExport(true);
+                                    }}
+                                    onExportPlaylist={(playlist) => {
+                                        // Export playlist as M3U file
+                                        const m3uContent = [
+                                            '#EXTM3U',
+                                            ...playlist.songs.map((song: Song) => 
+                                                `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.file_path || song.filename}`
+                                            )
+                                        ].join('\n');
+
+                                        const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `${playlist.name}.m3u`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        URL.revokeObjectURL(url);
+                                    }}
                                 />
                             </div>
                         </>
@@ -2453,6 +2633,17 @@ const App: React.FC = () => {
                     )}
                 </main>
             </div>
+            
+            {/* USB Export Modal */}
+            {showUSBExport && (
+                <USBExport
+                    playlist={playlistToExport}
+                    onClose={() => {
+                        setShowUSBExport(false);
+                        setPlaylistToExport(null);
+                    }}
+                />
+            )}
         </div>
         </AuthGate>
     );

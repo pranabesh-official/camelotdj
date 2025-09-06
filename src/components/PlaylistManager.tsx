@@ -33,6 +33,7 @@ interface PlaylistManagerProps {
   onFolderUpload?: (files: FileList) => void;
   isAnalyzing?: boolean;
   downloadPath?: string;
+  onCleanupPlaylists?: () => void;
 }
 
 // Simple SVG icons for clean UI
@@ -366,7 +367,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   onMultiFileUpload,
   onFolderUpload,
   isAnalyzing = false,
-  downloadPath
+  downloadPath,
+  onCleanupPlaylists
 }) => {
   const [showAddSongs, setShowAddSongs] = useState(false);
   const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
@@ -692,52 +694,54 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 <div className="playlist-item-info">
                   <span className="playlist-item-name">
                     {playlist.name}
-                    {playlist.isQueryBased && <span className="query-indicator">🔍</span>}
                   </span>
                   <span className="playlist-item-count">({stats.tracks})</span>
                 </div>
-                <div className="playlist-actions">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleUSBExport(playlist);
-                    }}
-                    title="Export to USB"
-                    className="usb-export-btn"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M10 2v7.31"/>
-                      <path d="M15 2v7.31"/>
-                      <path d="M8 9.31V2"/>
-                      <path d="M17 9.31V2"/>
-                      <path d="M12 9.31V2"/>
-                      <path d="M2 9.31V2"/>
-                      <path d="M20 9.31V2"/>
-                      <path d="M2 9.31h20"/>
-                      <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      exportPlaylist(playlist);
-                    }}
-                    title="Export playlist"
-                  >
-                    <ExportIcon />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm(`Delete playlist "${playlist.name}"?`)) {
-                        onPlaylistDelete(playlist.id);
-                      }
-                    }}
-                    title="Delete playlist"
-                  >
-                    <DeleteIcon />
-                  </button>
-                </div>
+                {/* Only show action buttons for non-query playlists */}
+                {!playlist.isQueryBased && (
+                  <div className="playlist-actions">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUSBExport(playlist);
+                      }}
+                      title="Export to USB"
+                      className="usb-export-btn"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10 2v7.31"/>
+                        <path d="M15 2v7.31"/>
+                        <path d="M8 9.31V2"/>
+                        <path d="M17 9.31V2"/>
+                        <path d="M12 9.31V2"/>
+                        <path d="M2 9.31V2"/>
+                        <path d="M20 9.31V2"/>
+                        <path d="M2 9.31h20"/>
+                        <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportPlaylist(playlist);
+                      }}
+                      title="Export playlist"
+                    >
+                      <ExportIcon />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete playlist "${playlist.name}"?`)) {
+                          onPlaylistDelete(playlist.id);
+                        }
+                      }}
+                      title="Delete playlist"
+                    >
+                      <DeleteIcon />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -753,6 +757,24 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           <FilterIcon />
           Create Playlist
         </button>
+        
+        {onCleanupPlaylists && (
+          <button 
+            className="create-playlist-btn cleanup-btn"
+            onClick={() => {
+              if (window.confirm('Clean up all playlists to remove duplicate songs? This action cannot be undone.')) {
+                onCleanupPlaylists();
+              }
+            }}
+            title="Remove duplicate songs from all playlists"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+              <path d="M10 11v6M14 11v6"/>
+            </svg>
+            Cleanup
+          </button>
+        )}
       </div>
 
 

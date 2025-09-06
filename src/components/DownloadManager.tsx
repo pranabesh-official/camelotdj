@@ -154,7 +154,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 
                 const socket = io(`http://127.0.0.1:${apiPort}`, {
                     transports: ['polling', 'websocket'], // Try polling first, then websocket
-                    timeout: 20000,
+                    timeout: 30000,
                     autoConnect: true,
                     reconnection: true,
                     reconnectionAttempts: maxConnectionAttempts,
@@ -163,9 +163,6 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     forceNew: true,
                     upgrade: true,
                     rememberUpgrade: true, // Remember successful transport
-                    // Optimized connection options
-                    pingTimeout: 30000,
-                    pingInterval: 15000,
                     // Better error handling
                     rejectUnauthorized: false,
                     // Connection state management
@@ -210,9 +207,9 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 socket.on('connect_error', (error) => {
                     console.error('❌ WebSocket connection error:', {
                         message: error.message || error,
-                        type: error.type,
-                        description: error.description,
-                        context: error.context,
+                        type: (error as any).type,
+                        description: (error as any).description,
+                        context: (error as any).context,
                         transport: socket.io.engine?.transport?.name || 'unknown'
                     });
                     isConnecting = false;
@@ -239,7 +236,8 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 socket.io.engine?.on('error', (error) => {
                     console.error('❌ WebSocket engine error:', error);
                     // Try to reconnect on frame errors
-                    if (error.message && error.message.includes('Invalid frame header')) {
+                    if (error && typeof error === 'object' && 'message' in error && 
+                        typeof error.message === 'string' && error.message.includes('Invalid frame header')) {
                         console.log('🔄 Invalid frame header detected, reconnecting...');
                         setTimeout(() => {
                             if (isMountedRef.current) {

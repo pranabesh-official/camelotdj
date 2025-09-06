@@ -51,6 +51,28 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // Enhanced song interface for display
   const enhancedSongs = useMemo(() => {
     return songs.map(song => {
+      // Safety check: ensure song object has required properties
+      if (!song || typeof song !== 'object') {
+        console.warn('Invalid song object:', song);
+        return {
+          id: 'invalid',
+          filename: 'Invalid Song',
+          title: 'Invalid Song',
+          artist: 'Unknown Artist',
+          bitrate: 0,
+          duration: 0,
+          file_size: 0,
+          bpm: 0,
+          key: '',
+          camelot_key: '',
+          energy_level: 0,
+          genre: 'Unknown',
+          sharp: '',
+          bitrate_display: '0 kbps',
+          comment: 'Invalid song data'
+        };
+      }
+      
       // Calculate accurate bitrate from multiple sources
       let displayBitrate = song.bitrate;
       
@@ -86,21 +108,27 @@ const TrackTable: React.FC<TrackTableProps> = ({
       
       return {
         ...song,
+        // Ensure we have proper artist and title from the song object first
+        artist: song.artist || (song.filename && song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'),
+        title: song.title || (song.filename && song.filename.includes(' - ') ? 
+          song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
+          song.filename ? song.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title'),
         tempo: song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown',
         genre: song.energy_level && song.bpm ? 
           (song.energy_level > 7 ? 'Tech House' :
            song.energy_level > 5 ? 'House' :
            song.bpm && song.bpm > 140 ? 'Techno' :
            'Minimal / Deep Tech') : 'Unknown',
-        sharp: song.key && song.key.includes('#') ? '#' : song.key && song.key.includes('m') ? 'm' : '',
+        sharp: song.key && typeof song.key === 'string' && song.key.includes('#') ? '#' : song.key && typeof song.key === 'string' && song.key.includes('m') ? 'm' : '',
         bitrate_display: displayBitrate,
-        comment: `${song.camelot_key} - Energy ${song.energy_level}`
+        comment: `${song.camelot_key || 'Unknown'} - Energy ${song.energy_level || 'Unknown'}`
       };
     });
   }, [songs]);
 
   // Duplicate grouping helpers
   const duplicateKeyFor = (song: Song) => {
+    if (!song || typeof song !== 'object') return 'invalid';
     // Prefer strong identifiers if present
     if ((song as any).file_hash) return `hash:${(song as any).file_hash}`;
     if (song.track_id) return `tid:${song.track_id}`;
@@ -143,7 +171,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
     if (searchTerm) {
       filtered = filtered.filter(song => 
-        song.filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (song.artist && song.artist.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (song.title && song.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (song.filename && song.filename.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.key_name && song.key_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.camelot_key && song.camelot_key.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.genre && song.genre.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -527,14 +557,14 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </div>
                 </td>
                 <td className="artist-cell">
-                  {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'UMEK'}
+                  {song.artist || (song.filename && song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist')}
                 </td>
                 <td className="title-cell">
                   <div className="title-content">
                     <span className="title-text">
-                      {song.filename.includes(' - ') ? 
+                      {song.title || (song.filename && song.filename.includes(' - ') ? 
                         song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
-                        song.filename.replace(/\.[^/.]+$/, '')
+                        song.filename ? song.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title')
                       }
                     </span>
                     {currentlyPlaying && currentlyPlaying.id === song.id && (

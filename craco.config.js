@@ -3,8 +3,31 @@ require('dotenv').config();
 
 module.exports = {
     webpack: {
-        configure: {
-            target: 'web'
+        configure: (webpackConfig) => {
+            webpackConfig.target = 'web';
+            
+            // Provide fallback for Node.js globals
+            webpackConfig.resolve.fallback = {
+                ...webpackConfig.resolve.fallback,
+                "process": require.resolve("process/browser"),
+                "util": require.resolve("util/"),
+                "stream": require.resolve("stream-browserify"),
+                "buffer": require.resolve("buffer/"),
+                "path": require.resolve("path-browserify"),
+                "fs": false,
+                "os": false,
+                "crypto": require.resolve("crypto-browserify")
+            };
+            
+            // Provide global process
+            webpackConfig.plugins.push(
+                new webpackConfig.webpack.ProvidePlugin({
+                    process: 'process/browser',
+                    Buffer: ['buffer', 'Buffer']
+                })
+            );
+            
+            return webpackConfig;
         }
     },
     env: {

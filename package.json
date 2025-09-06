@@ -59,16 +59,22 @@
     "devDependencies": {
         "@types/babel__traverse": "^7.0.15",
         "@types/node": "^18.19.123",
+        "buffer": "^6.0.3",
         "concurrently": "^4.1.0",
         "cross-env": "^5.2.0",
+        "crypto-browserify": "^3.12.1",
         "electron": "^13.0.0",
         "electron-builder": "^24.13.3",
+        "path-browserify": "^1.0.1",
+        "process": "^0.11.10",
         "source-map-support": "^0.5.11",
+        "stream-browserify": "^3.0.0",
         "tslint": "^5.9.1",
         "tslint-config-standard": "^7.0.0",
         "tslint-loader": "^3.5.3",
         "tslint-react": "^3.4.0",
         "typescript": "^5.9.2",
+        "util": "^0.12.5",
         "wait-on": "^3.2.0"
     },
     "eslintConfig": {
@@ -116,7 +122,9 @@
             {
                 "from": "build",
                 "to": "build",
-                "filter": ["**/*"]
+                "filter": [
+                    "**/*"
+                ]
             }
         ],
         "extraFiles": [],

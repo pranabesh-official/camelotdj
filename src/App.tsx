@@ -7,6 +7,7 @@ import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
 import YouTubeMusic from './components/YouTubeMusic';
+// import AIAgent from './components/AIAgent';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -19,6 +20,8 @@ export interface Song {
     id: string;
     filename: string;
     file_path?: string;
+    title?: string; // Song title
+    artist?: string; // Artist name
     key?: string;
     scale?: string;
     key_name?: string;
@@ -89,11 +92,19 @@ const App: React.FC = () => {
     const [isLoadingSettings, setIsLoadingSettings] = useState(false);
     const [showSaveSuccess, setShowSaveSuccess] = useState(false);
     
+    // Gemini API Settings
+    // AI Agent related state - commented out for this version
+    // const [geminiApiKey, setGeminiApiKey] = useState<string>('');
+    // const [isGeminiApiKeySet, setIsGeminiApiKeySet] = useState(false);
+    const [isLoadingGeminiSettings, setIsLoadingGeminiSettings] = useState(false);
+    const [showGeminiSaveSuccess, setShowGeminiSaveSuccess] = useState(false);
+    
     // Analysis Queue State
     const [analysisQueue, setAnalysisQueue] = useState<QueuedFile[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
     const [isQueuePaused, setIsQueuePaused] = useState(false);
     const queueProcessingRef = useRef<boolean>(false);
+    const downloadManagerRef = useRef<any>(null);
 
     // Check if running in Electron and get API details
     useEffect(() => {
@@ -396,8 +407,8 @@ const App: React.FC = () => {
             }
         };
 
-        // Check backend health every 30 seconds
-        const healthCheckInterval = setInterval(checkBackendHealth, 30000);
+        // Check backend health every 60 seconds
+        const healthCheckInterval = setInterval(checkBackendHealth, 60000);
         
         // Initial health check
         checkBackendHealth();
@@ -1362,6 +1373,43 @@ const App: React.FC = () => {
         loadDownloadPath();
     }, [databaseService]);
 
+    // AI Agent related function - commented out for this version
+    // Load Gemini API key on component mount
+    // useEffect(() => {
+    //     const loadGeminiApiKey = async () => {
+    //         setIsLoadingGeminiSettings(true);
+    //         
+    //         try {
+    //             // First try to load from localStorage for immediate display
+    //             const savedApiKey = localStorage.getItem('gemini_api_key');
+    //             if (savedApiKey) {
+    //                 setGeminiApiKey(savedApiKey);
+    //                 setIsGeminiApiKeySet(true);
+    //             }
+    //             
+    //             // Then try to load from database (this will override localStorage if different)
+    //             if (databaseService) {
+    //                 try {
+    //                     const dbApiKey = await databaseService.getGeminiApiKey();
+    //                     if (dbApiKey) {
+    //                         setGeminiApiKey(dbApiKey);
+    //                         setIsGeminiApiKeySet(true);
+    //                         // Update localStorage to match database
+    //                         localStorage.setItem('gemini_api_key', dbApiKey);
+    //                     }
+    //                 } catch (error) {
+    //                     console.warn('Failed to load Gemini API key from database:', error);
+    //                     // Keep localStorage value if database fails
+    //                 }
+    //             }
+    //         } finally {
+    //             setIsLoadingGeminiSettings(false);
+    //         }
+    //     };
+    //     
+    //     loadGeminiApiKey();
+    // }, [databaseService]);
+
     // Handle download path selection
     const handleDownloadPathSelect = useCallback(async () => {
         if (isElectronMode) {
@@ -1451,56 +1499,191 @@ const App: React.FC = () => {
         }
     }, [databaseService]);
 
-    // Handle YouTube download completion
-    const handleYouTubeDownloadComplete = useCallback((downloadedSong: any) => {
-        console.log('YouTube download completed:', downloadedSong);
-        
-        // Transform the downloaded song to match our Song interface
-        const newSong: Song = {
-            id: downloadedSong.db_id ? downloadedSong.db_id.toString() : (downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9)),
-            filename: downloadedSong.filename,
-            file_path: downloadedSong.file_path,
-            key: downloadedSong.key,
-            scale: downloadedSong.scale,
-            key_name: downloadedSong.key_name,
-            camelot_key: downloadedSong.camelot_key,
-            bpm: downloadedSong.bpm,
-            energy_level: downloadedSong.energy_level,
-            duration: downloadedSong.duration,
-            file_size: downloadedSong.file_size,
-            bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
-            status: 'analyzed',
-            analysis_date: new Date().toISOString(),
-            cue_points: downloadedSong.cue_points || [],
-            track_id: downloadedSong.track_id, // Ensure track_id is included
-            id3: sanitizeId3(downloadedSong.id3 || downloadedSong.metadata || downloadedSong.tags)
-        };
-        
-        // Add to songs list
-        setSongs(prevSongs => [...prevSongs, newSong]);
-        setSelectedSong(newSong);
-        
-        // Switch to library view to show the new song
-        setCurrentView('library');
+    // Handle Gemini API key save
+    // AI Agent related function - commented out for this version
+    // const handleSaveGeminiApiKey = useCallback(async () => {
+    //     if (!geminiApiKey.trim()) {
+    //         alert('Please enter a valid Gemini API key');
+    //         return;
+    //     }
 
-        // Firestore sync for YouTube downloads
-        (async () => {
-            try {
-                if (user?.uid) {
-                    // Save to user's tracks collection
-                    await upsertUserTrack(user.uid, {
-                        ...newSong,
-                    } as any);
-                    
-                    // Also save to global analysis_songs collection
-                    await saveToAnalysisSongs(user.uid, {
-                        ...newSong,
-                    } as any);
+    //     setIsLoadingGeminiSettings(true);
+    //     try {
+    //         // Save to localStorage for immediate access
+    //         localStorage.setItem('gemini_api_key', geminiApiKey.trim());
+    //         setIsGeminiApiKeySet(true);
+    //         
+    //         // Also save to backend settings
+    //         if (databaseService) {
+    //             try {
+    //                 await databaseService.saveGeminiApiKey(geminiApiKey.trim());
+    //                 setShowGeminiSaveSuccess(true);
+    //                 setTimeout(() => setShowGeminiSaveSuccess(false), 3000);
+    //             } catch (error) {
+    //                 console.warn('Failed to save Gemini API key to backend:', error);
+    //             }
+    //         }
+    //     } catch (error) {
+    //         console.error('Error saving Gemini API key:', error);
+    //         alert('Failed to save Gemini API key. Please try again.');
+    //     } finally {
+    //         setIsLoadingGeminiSettings(false);
+    //     }
+    // }, [geminiApiKey, databaseService]);
+
+    // Clear Gemini API key
+    // AI Agent related function - commented out for this version
+    // const handleClearGeminiApiKey = useCallback(async () => {
+    //     setGeminiApiKey('');
+    //     setIsGeminiApiKeySet(false);
+    //     localStorage.removeItem('gemini_api_key');
+    //     
+    //     if (databaseService) {
+    //         try {
+    //             await databaseService.clearGeminiApiKey();
+    //             setShowGeminiSaveSuccess(true);
+    //             setTimeout(() => setShowGeminiSaveSuccess(false), 3000);
+    //         } catch (error) {
+    //             console.warn('Failed to clear Gemini API key from database:', error);
+    //         }
+    //     }
+    // }, [databaseService]);
+
+    // Handle YouTube download completion
+    const handleYouTubeDownloadComplete = useCallback(async (downloadedSong: any) => {
+        console.log('🎵 YouTube download completed:', downloadedSong);
+        
+        try {
+            // Transform the downloaded song to match our Song interface
+            const newSong: Song = {
+                id: downloadedSong.db_id ? downloadedSong.db_id.toString() : (downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9)),
+                filename: downloadedSong.filename,
+                file_path: downloadedSong.file_path,
+                title: downloadedSong.title || downloadedSong.filename?.replace(/\.[^/.]+$/, '') || 'Unknown Title',
+                artist: downloadedSong.artist || 'Unknown Artist',
+                key: downloadedSong.key,
+                scale: downloadedSong.scale,
+                key_name: downloadedSong.key_name,
+                camelot_key: downloadedSong.camelot_key,
+                bpm: downloadedSong.bpm,
+                energy_level: downloadedSong.energy_level,
+                duration: downloadedSong.duration,
+                file_size: downloadedSong.file_size,
+                bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
+                status: 'analyzed',
+                analysis_date: new Date().toISOString(),
+                cue_points: downloadedSong.cue_points || [],
+                track_id: downloadedSong.track_id, // Ensure track_id is included
+                id3: sanitizeId3(downloadedSong.id3 || downloadedSong.metadata || downloadedSong.tags)
+            };
+            
+            console.log('🎵 Adding song to library:', {
+                title: newSong.title,
+                artist: newSong.artist,
+                bpm: newSong.bpm,
+                camelot_key: newSong.camelot_key,
+                energy_level: newSong.energy_level,
+                status: newSong.status
+            });
+            
+            // Add to songs list
+            setSongs(prevSongs => {
+                // Check if song already exists to avoid duplicates
+                const existingSong = prevSongs.find(s => s.track_id === newSong.track_id || s.filename === newSong.filename);
+                if (existingSong) {
+                    console.log('🎵 Song already exists in library, updating...');
+                    return prevSongs.map(s => s.id === existingSong.id ? newSong : s);
                 }
-            } catch (syncErr) {
-                console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
+                return [...prevSongs, newSong];
+            });
+            
+            // Set as selected song
+            setSelectedSong(newSong);
+            
+            // Switch to library view to show the new song
+            setCurrentView('library');
+            
+            // Show success notification
+            console.log('✅ Song added to library successfully!');
+            
+            // Show visual notification
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: linear-gradient(135deg, #10b981, #059669);
+                color: white;
+                padding: 16px 20px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                z-index: 10000;
+                max-width: 300px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 14px;
+                line-height: 1.4;
+                animation: slideInRight 0.3s ease-out;
+            `;
+            
+            notification.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                    </svg>
+                    <strong>Song Added to Library!</strong>
+                </div>
+                <div style="font-size: 12px; opacity: 0.9;">
+                    "${newSong.title || newSong.filename?.replace(/\.[^/.]+$/, '') || 'Unknown Title'}" by ${newSong.artist || 'Unknown Artist'} has been analyzed and added to your collection.
+                </div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                    }, 300);
+                }
+            }, 5000);
+            
+            // Refresh the library to ensure the new song appears
+            if (databaseService) {
+                try {
+                    // Refresh songs from database
+                    const allSongs = await databaseService.getLibrary();
+                    setSongs(allSongs);
+                    console.log('🔄 Library refreshed after download completion');
+                } catch (error) {
+                    console.warn('⚠️ Failed to refresh library after download:', error);
+                }
             }
-        })();
+            
+            // Firestore sync for YouTube downloads
+            (async () => {
+                try {
+                    if (user?.uid) {
+                        // Save to user's tracks collection
+                        await upsertUserTrack(user.uid, {
+                            ...newSong,
+                        } as any);
+                        
+                        // Also save to global analysis_songs collection
+                        await saveToAnalysisSongs(user.uid, {
+                            ...newSong,
+                        } as any);
+                    }
+                } catch (syncErr) {
+                    console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
+                }
+            })();
+            
+        } catch (error) {
+            console.error('❌ Error handling download completion:', error);
+        }
     }, []);
 
     // Handle song updates from metadata editor
@@ -1563,14 +1746,54 @@ const App: React.FC = () => {
                         </div>
                     </div>
                     {currentView !== 'youtube' && (
-                        <div className="search-box-header search-box-centered">
-                            <input 
-                                type="text" 
-                                placeholder="Search Music online and download to your library..." 
-                                onClick={() => setCurrentView('youtube')}
-                                readOnly
-                                style={{ cursor: 'pointer' }}
-                            />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                            <div className="search-box-header search-box-centered">
+                                <input 
+                                    type="text" 
+                                    placeholder="Search Music online and download to your library..." 
+                                    onClick={() => setCurrentView('youtube')}
+                                    readOnly
+                                    style={{ cursor: 'pointer' }}
+                                />
+                            </div>
+                            {/* AI Agent button - commented out for this version */}
+                            {/* <button
+                                onClick={() => setCurrentView('ai-agent')}
+                                style={{
+                                    padding: '6px',
+                                    background: 'var(--surface-bg)',
+                                    color: 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.2s ease',
+                                    width: '32px',
+                                    height: '32px'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'var(--card-bg)';
+                                    e.currentTarget.style.borderColor = 'var(--brand-blue)';
+                                    e.currentTarget.style.color = 'var(--brand-blue)';
+                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'var(--surface-bg)';
+                                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                                    e.currentTarget.style.color = 'var(--text-secondary)';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                }}
+                                title="AI Agent - Create Smart Playlists"
+                            >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
+                                    <path d="M2 17L12 22L22 17"/>
+                                    <path d="M2 12L12 17L22 12"/>
+                                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                                </svg>
+                            </button> */}
                         </div>
                     )}
                     
@@ -1581,6 +1804,13 @@ const App: React.FC = () => {
                             >
                                 My collection
                             </button>
+
+                            {/* AI Agent button - commented out for this version */}
+                            {/* <button 
+                                onClick={() => setCurrentView('ai-agent')}
+                            >
+                                AI Agent
+                            </button> */}
 
                             <button 
                                 onClick={() => setCurrentView('settings')}
@@ -1699,9 +1929,86 @@ const App: React.FC = () => {
                                 downloadPath={downloadPath}
                                 isDownloadPathSet={isDownloadPathSet}
                                 onDownloadComplete={handleYouTubeDownloadComplete}
+                                downloadManagerRef={downloadManagerRef}
                             />
                         </div>
                     )}
+
+                    {/* AI Agent view - commented out for this version */}
+                    {/* {currentView === 'ai-agent' && (
+                        <div className="ai-agent-view" style={{ height: '100%', overflow: 'auto' }}>
+                            {!isDownloadPathSet && (
+                                <div style={{
+                                    padding: 'var(--space-lg)',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '8px',
+                                    margin: 'var(--space-lg)'
+                                }}>
+                                    <h3 style={{ color: 'rgb(239, 68, 68)', margin: '0 0 8px 0' }}>⚠️ Setup Required</h3>
+                                    <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
+                                        Please configure a download path and Gemini API key in Settings before using AI Agent.
+                                    </p>
+                                    <button 
+                                        onClick={() => setCurrentView('settings')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            background: 'var(--accent-color)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Go to Settings
+                                    </button>
+                                </div>
+                            )}
+                            
+                            {!isGeminiApiKeySet && (
+                                <div style={{
+                                    padding: 'var(--space-lg)',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '8px',
+                                    margin: 'var(--space-lg)'
+                                }}>
+                                    <h3 style={{ color: 'rgb(239, 68, 68)', margin: '0 0 8px 0' }}>⚠️ Gemini API Key Required</h3>
+                                    <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
+                                        Please configure your Gemini API key in Settings to use AI Agent features.
+                                    </p>
+                                    <button 
+                                        onClick={() => setCurrentView('settings')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            background: 'var(--accent-color)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Go to Settings
+                                    </button>
+                                </div>
+                            )}
+                            
+                            {isDownloadPathSet && isGeminiApiKeySet && (
+                                <AIAgent
+                                    databaseService={databaseService}
+                                    downloadPath={downloadPath}
+                                    isDownloadPathSet={isDownloadPathSet}
+                                    onPlaylistCreated={(playlist) => {
+                                        console.log('AI Agent created playlist:', playlist);
+                                        // Refresh playlists
+                                        if (databaseService) {
+                                            loadPlaylistsFromDatabase();
+                                        }
+                                    }}
+                                />
+                            )}
+                        </div>
+                    )} */}
 
                     {currentView === 'upload' && (
                         <div className="upload-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
@@ -1985,6 +2292,133 @@ const App: React.FC = () => {
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* AI Agent related settings - commented out for this version */}
+                                {/* Gemini API Settings */}
+                                {/* <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div className="section-header">
+                                            <svg className="section-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                            </svg>
+                                            <h3 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>AI Integration - Gemini API</h3>
+                                        </div>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                                Configure your Google Gemini API key for AI-powered music analysis and recommendations.
+                                            </p>
+                                        </div>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <label style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', display: 'block', marginBottom: '8px' }}>
+                                                Gemini API Key:
+                                            </label>
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                <input 
+                                                    type="password" 
+                                                    value={geminiApiKey}
+                                                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                                                    placeholder="Enter your Gemini API key"
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px 12px',
+                                                        background: 'var(--surface-bg)',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '14px'
+                                                    }}
+                                                />
+                                                <button 
+                                                    onClick={handleSaveGeminiApiKey}
+                                                    disabled={isLoadingGeminiSettings}
+                                                    style={{
+                                                        padding: '8px 16px',
+                                                        background: isLoadingGeminiSettings ? 'var(--text-secondary)' : 'var(--accent-color)',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        cursor: isLoadingGeminiSettings ? 'not-allowed' : 'pointer',
+                                                        fontSize: '14px',
+                                                        fontWeight: '500'
+                                                    }}
+                                                >
+                                                    {isLoadingGeminiSettings ? 'Saving...' : 'Save'}
+                                                </button>
+                                                {geminiApiKey && (
+                                                    <button 
+                                                        onClick={handleClearGeminiApiKey}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: 'var(--error-color)',
+                                                            color: 'white',
+                                                            border: 'none',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '14px'
+                                                        }}
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="status-indicator" style={{ 
+                                            background: isLoadingGeminiSettings ? 'rgba(255, 193, 7, 0.1)' : (isGeminiApiKeySet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'), 
+                                            border: `1px solid ${isLoadingGeminiSettings ? 'rgba(255, 193, 7, 0.3)' : (isGeminiApiKeySet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`, 
+                                            marginBottom: '16px'
+                                        }}>
+                                            <div className="status-content">
+                                                {isLoadingGeminiSettings ? (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M12 3A9 9 0 0 1 20.4 6.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                ) : isGeminiApiKeySet ? (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                ) : (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M15 9L9 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M9 9L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                )}
+                                                <p style={{ 
+                                                    color: isLoadingGeminiSettings ? 'rgb(255, 193, 7)' : (isGeminiApiKeySet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)'), 
+                                                    margin: 0, 
+                                                    fontSize: '14px',
+                                                    fontWeight: '500'
+                                                }}>
+                                                    {isLoadingGeminiSettings ? 'Loading settings...' : (isGeminiApiKeySet ? 'Gemini API key configured' : 'Gemini API key required for AI features')}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {showGeminiSaveSuccess && (
+                                            <div style={{ 
+                                                padding: '12px', 
+                                                background: 'rgba(34, 197, 94, 0.1)', 
+                                                border: '1px solid rgba(34, 197, 94, 0.3)', 
+                                                borderRadius: '4px'
+                                            }}>
+                                                <p style={{ 
+                                                    color: 'rgb(34, 197, 94)', 
+                                                    margin: 0, 
+                                                    fontSize: '14px',
+                                                    fontWeight: '500'
+                                                }}>
+                                                    Gemini API key saved successfully!
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div> */}
 
                                 {/* Application Information */}
                                 <div className="settings-section">

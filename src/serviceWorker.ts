@@ -26,10 +26,13 @@ interface IConfig {
 }
 
 export function register(config?:IConfig) {
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
+    // Safe access to process.env with fallback
+    const safeProcessEnv = (typeof process !== 'undefined' && process.env) ? process.env : {} as Record<string, string | undefined>;
+    
+    if (safeProcessEnv.NODE_ENV === "production" && "serviceWorker" in navigator) {
         // The URL constructor is available in all browsers that support SW.
         const publicUrl = new URL(
-            (process as { env:{ [key:string]:string } }).env.PUBLIC_URL,
+            safeProcessEnv.PUBLIC_URL || '',
             window.location.href,
         );
         if (publicUrl.origin !== window.location.origin) {
@@ -40,7 +43,7 @@ export function register(config?:IConfig) {
         }
 
         window.addEventListener("load", () => {
-            const swUrl = `${process.env.PUBLIC_URL}/service-worker.js`;
+            const swUrl = `${safeProcessEnv.PUBLIC_URL || ''}/service-worker.js`;
 
             if (isLocalhost) {
                 // This is running on localhost. Let"s check if a service worker still exists or not.

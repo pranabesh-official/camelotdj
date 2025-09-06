@@ -82,7 +82,7 @@ const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
 const DeleteIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <polyline points="3,6 5,6 21,6"></polyline>
-    <path d="19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
+    <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
   </svg>
 );
 
@@ -470,7 +470,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     const m3uContent = [
       '#EXTM3U',
       ...playlist.songs.map(song => 
-        `#EXTINF:${Math.floor(song.duration || 0)},${song.filename}\n${song.file_path || song.filename}`
+        `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.file_path || song.filename}`
       )
     ].join('\n');
 
@@ -505,7 +505,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
         const m3uContent = [
           '#EXTM3U',
           ...playlist.songs.map(song => 
-            `#EXTINF:${Math.floor(song.duration || 0)},${song.filename}\n${song.filename}`
+            `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.filename}`
           )
         ].join('\n');
         
@@ -779,8 +779,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                           }
                         }}
                       />
-                      <span className="song-name">{song.filename}</span>
-                      <span className="song-key">{song.camelot_key}</span>
+                      <span className="song-name">{song.title || song.filename}</span>
+                      <span className="song-key">{song.camelot_key || 'Unknown'}</span>
                     </label>
                   </div>
                 ))}

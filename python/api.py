@@ -2737,6 +2737,9 @@ def youtube_download():
             analysis_result['youtube_url'] = url
             analysis_result['youtube_title'] = title
             analysis_result['youtube_artist'] = artist
+            # Add standard title and artist fields for frontend compatibility
+            analysis_result['title'] = title
+            analysis_result['artist'] = artist
             
             # Set bitrate information
             if actual_bitrate and actual_bitrate >= 300:  # Close to 320kbps
@@ -3034,6 +3037,9 @@ def youtube_download_enhanced():
         analysis_result['youtube_url'] = url
         analysis_result['youtube_title'] = title
         analysis_result['youtube_artist'] = artist
+        # Add standard title and artist fields for frontend compatibility
+        analysis_result['title'] = title
+        analysis_result['artist'] = artist
         
         # Set bitrate information
         if actual_bitrate and actual_bitrate >= 300:  # Close to 320kbps

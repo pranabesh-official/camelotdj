@@ -2108,51 +2108,130 @@ body {
   100% { left: 100%; }
 }
 
-/* Professional Playlist Action Buttons */
+/* Professional Playlist Action Buttons - Icon Only */
 .playlist-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface-bg);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.playlist-action-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.playlist-action-btn:hover::before {
+  opacity: 1;
 }
 
 .playlist-action-btn:hover {
-  background: var(--hover-bg);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   border-color: var(--brand-blue);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .playlist-action-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* USB Export Button */
+.playlist-action-btn.usb-export-btn {
+  background: linear-gradient(135deg, var(--accent-green) 0%, #00b894 100%);
+  border-color: var(--accent-green);
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 208, 132, 0.3);
 }
 
 .playlist-action-btn.usb-export-btn:hover {
-  border-color: var(--accent-green);
-  color: var(--accent-green);
+  background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
+  border-color: #00b894;
+  box-shadow: 0 4px 16px rgba(0, 208, 132, 0.4);
+  transform: translateY(-2px) scale(1.05);
+}
+
+.playlist-action-btn.usb-export-btn:active {
+  transform: translateY(-1px) scale(1.02);
+}
+
+/* M3U Export Button */
+.playlist-action-btn.export-btn {
+  background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-dark) 100%);
+  border-color: var(--brand-blue);
+  color: white;
+  box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
 }
 
 .playlist-action-btn.export-btn:hover {
-  border-color: var(--brand-blue);
-  color: var(--brand-blue);
+  background: linear-gradient(135deg, var(--brand-blue-light) 0%, var(--brand-blue) 100%);
+  border-color: var(--brand-blue-light);
+  box-shadow: 0 4px 16px rgba(74, 144, 226, 0.4);
+  transform: translateY(-2px) scale(1.05);
+}
+
+.playlist-action-btn.export-btn:active {
+  transform: translateY(-1px) scale(1.02);
+}
+
+/* Delete Button */
+.playlist-action-btn.delete-btn {
+  background: linear-gradient(135deg, var(--accent-red) 0%, #e74c3c 100%);
+  border-color: var(--accent-red);
+  color: white;
+  box-shadow: 0 2px 8px rgba(255, 59, 48, 0.3);
 }
 
 .playlist-action-btn.delete-btn:hover {
-  border-color: var(--accent-red);
-  color: var(--accent-red);
-  background: rgba(255, 59, 48, 0.1);
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  border-color: #e74c3c;
+  box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4);
+  transform: translateY(-2px) scale(1.05);
+}
+
+.playlist-action-btn.delete-btn:active {
+  transform: translateY(-1px) scale(1.02);
 }
 
 .playlist-action-btn svg {
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  transition: transform 0.3s ease;
+  z-index: 1;
+  position: relative;
+}
+
+.playlist-action-btn:hover svg {
+  transform: scale(1.1);
+}
+
+/* Icon-specific hover effects */
+.playlist-action-btn.usb-export-btn:hover svg {
+  transform: scale(1.1) rotate(5deg);
+}
+
+.playlist-action-btn.export-btn:hover svg {
+  transform: scale(1.1) translateY(-1px);
+}
+
+.playlist-action-btn.delete-btn:hover svg {
+  transform: scale(1.1) rotate(-5deg);
 }

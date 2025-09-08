@@ -1813,3 +1813,346 @@ body {
     padding: 16px 20px;
   }
 }
+
+/* Enhanced Cover Art Styles */
+.cover-art-container {
+  position: relative;
+  display: inline-block;
+}
+
+.cover-art-image {
+  transition: transform 0.3s ease, box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+.cover-art-image:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  filter: brightness(1.1);
+}
+
+.cover-art-placeholder {
+  width: 40px;
+  height: 40px;
+  background: var(--surface-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.cover-art-placeholder:hover {
+  background: var(--hover-bg);
+  border-color: var(--brand-blue);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Professional Loading Spinner */
+.cover-art-loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+}
+
+.cover-art-loading-spinner {
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+
+.spinner-ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border: 2px solid transparent;
+  border-top: 2px solid var(--brand-blue);
+  border-radius: 50%;
+  animation: spin 1.2s linear infinite;
+}
+
+.spinner-ring:nth-child(2) {
+  animation-delay: -0.4s;
+  border-top-color: rgba(59, 130, 246, 0.6);
+}
+
+.spinner-ring:nth-child(3) {
+  animation-delay: -0.8s;
+  border-top-color: rgba(59, 130, 246, 0.3);
+}
+
+.cover-art-loading-text {
+  font-size: 8px;
+  color: var(--text-tertiary);
+  text-align: center;
+  font-weight: 500;
+}
+
+.loading-dots span {
+  animation: loadingDots 1.4s infinite ease-in-out;
+  animation-fill-mode: both;
+}
+
+.loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+.loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+.loading-dots span:nth-child(3) { animation-delay: 0s; }
+.loading-dots span:nth-child(4) { animation-delay: 0.16s; }
+.loading-dots span:nth-child(5) { animation-delay: 0.32s; }
+.loading-dots span:nth-child(6) { animation-delay: 0.48s; }
+.loading-dots span:nth-child(7) { animation-delay: 0.64s; }
+.loading-dots span:nth-child(8) { animation-delay: 0.8s; }
+.loading-dots span:nth-child(9) { animation-delay: 0.96s; }
+.loading-dots span:nth-child(10) { animation-delay: 1.12s; }
+.loading-dots span:nth-child(11) { animation-delay: 1.28s; }
+.loading-dots span:nth-child(12) { animation-delay: 1.44s; }
+.loading-dots span:nth-child(13) { animation-delay: 1.6s; }
+
+/* Error State */
+.cover-art-error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.cover-art-error-icon {
+  color: var(--error-color);
+  animation: errorPulse 2s infinite;
+}
+
+.cover-art-retry-btn {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.4);
+  z-index: 2;
+}
+
+.cover-art-retry-btn:hover {
+  transform: scale(1.2);
+  box-shadow: 0 4px 10px rgba(239, 68, 68, 0.6);
+}
+
+/* Success State */
+.cover-art-success-overlay {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  animation: successPulse 0.8s ease-in-out;
+  z-index: 2;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+}
+
+/* Enhanced Extract Button */
+.extract-cover-art-btn {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.extract-cover-art-btn:hover {
+  transform: scale(1.15);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.6);
+}
+
+.extract-cover-art-btn:hover .btn-hover-overlay {
+  opacity: 1;
+}
+
+/* Animations */
+@keyframes loadingDots {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes errorPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes successPulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Hover Effects */
+.btn-hover-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.2);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Enhanced Cover Art Loading Animations */
+@keyframes pulse {
+  0%, 100% { 
+    opacity: 1; 
+    transform: scale(1); 
+  }
+  50% { 
+    opacity: 0.7; 
+    transform: scale(1.05); 
+  }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+/* Cover Art Error States */
+.cover-art-error {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  animation: pulse 2s infinite;
+}
+
+.cover-art-success {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Loading States */
+.cover-art-loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.cover-art-loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+/* Professional Playlist Action Buttons */
+.playlist-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.playlist-action-btn:hover {
+  background: var(--hover-bg);
+  border-color: var(--brand-blue);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.playlist-action-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.playlist-action-btn.usb-export-btn:hover {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
+.playlist-action-btn.export-btn:hover {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.playlist-action-btn.delete-btn:hover {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.playlist-action-btn svg {
+  flex-shrink: 0;
+}

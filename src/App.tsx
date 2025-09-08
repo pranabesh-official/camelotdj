@@ -38,6 +38,7 @@ export interface Song {
     cue_points?: number[];
     track_id?: string; // Unique track identifier
     id3?: any; // Raw ID3/metadata blob for cloud sync
+    cover_art?: string; // Base64 encoded cover art image
     // Enhanced analysis tracking
     analysis_status?: 'pending' | 'analyzing' | 'completed' | 'failed';
     id3_tags_written?: boolean;

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Song } from '../App';
 import MetadataEditor from './MetadataEditor';
 
@@ -23,6 +23,15 @@ interface TrackTableProps {
 
 type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
 type SortDirection = 'asc' | 'desc';
+
+// Enhanced song interface that includes all the computed fields
+interface EnhancedSong extends Song {
+  tempo: string;
+  genre: string;
+  sharp: string;
+  bitrate_display: number;
+  comment: string;
+}
 
 const TrackTable: React.FC<TrackTableProps> = ({
   songs,
@@ -56,9 +65,33 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // Metadata editor state
   const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
   const [editingSong, setEditingSong] = useState<Song | null>(null);
+  const [extractingCoverArt, setExtractingCoverArt] = useState<Set<string>>(new Set());
+  const [coverArtErrors, setCoverArtErrors] = useState<Map<string, string>>(new Map());
+  const [coverArtSuccess, setCoverArtSuccess] = useState<Set<string>>(new Set());
+
+  // Auto-extract cover art for songs that don't have it
+  useEffect(() => {
+    const autoExtractCoverArt = async () => {
+      for (const song of songs) {
+        if (song.file_path && !song.cover_art && !extractingCoverArt.has(song.id)) {
+          // Only extract for a few songs at a time to avoid overwhelming the API
+          if (extractingCoverArt.size < 3) {
+            await extractCoverArt(song);
+            // Add a small delay between extractions
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      }
+    };
+
+    // Only auto-extract if we have songs and not already extracting
+    if (songs.length > 0 && extractingCoverArt.size === 0) {
+      autoExtractCoverArt();
+    }
+  }, [songs, extractingCoverArt]);
 
   // Enhanced song interface for display
-  const enhancedSongs = useMemo(() => {
+  const enhancedSongs = useMemo((): EnhancedSong[] => {
     return songs.map(song => {
       // Safety check: ensure song object has required properties
       if (!song || typeof song !== 'object') {
@@ -75,11 +108,13 @@ const TrackTable: React.FC<TrackTableProps> = ({
           key: '',
           camelot_key: '',
           energy_level: 0,
+          tempo: 'Unknown',
           genre: 'Unknown',
           sharp: '',
-          bitrate_display: '0 kbps',
-          comment: 'Invalid song data'
-        };
+          bitrate_display: 0,
+          comment: 'Invalid song data',
+          cover_art: undefined
+        } as EnhancedSong;
       }
       
       // Calculate accurate bitrate from multiple sources
@@ -130,13 +165,15 @@ const TrackTable: React.FC<TrackTableProps> = ({
            'Minimal / Deep Tech') : 'Unknown',
         sharp: song.key && typeof song.key === 'string' && song.key.includes('#') ? '#' : song.key && typeof song.key === 'string' && song.key.includes('m') ? 'm' : '',
         bitrate_display: displayBitrate,
-        comment: `${song.camelot_key || 'Unknown'} - Energy ${song.energy_level || 'Unknown'}`
-      };
+        comment: `${song.camelot_key || 'Unknown'} - Energy ${song.energy_level || 'Unknown'}`,
+        // Preserve cover_art field
+        cover_art: song.cover_art
+      } as EnhancedSong;
     });
   }, [songs]);
 
   // Duplicate grouping helpers
-  const duplicateKeyFor = (song: Song) => {
+  const duplicateKeyFor = (song: EnhancedSong) => {
     if (!song || typeof song !== 'object') return 'invalid';
     // Prefer strong identifiers if present
     if ((song as any).file_hash) return `hash:${(song as any).file_hash}`;
@@ -149,11 +186,11 @@ const TrackTable: React.FC<TrackTableProps> = ({
   };
 
   const duplicateGroups = useMemo(() => {
-    const groups = new Map<string, Song[]>();
+    const groups = new Map<string, EnhancedSong[]>();
     enhancedSongs.forEach(s => {
-      const key = duplicateKeyFor(s as Song);
+      const key = duplicateKeyFor(s);
       const arr = groups.get(key) || [];
-      arr.push(s as Song);
+      arr.push(s);
       groups.set(key, arr);
     });
     return groups;
@@ -340,6 +377,95 @@ const TrackTable: React.FC<TrackTableProps> = ({
     onSongPlay(song);
   };
 
+  // Extract cover art from MP3 file with enhanced error handling and UX
+  const extractCoverArt = async (song: Song) => {
+    if (!song.file_path || song.cover_art || extractingCoverArt.has(song.id)) {
+      return;
+    }
+
+    // Clear any previous errors for this song
+    setCoverArtErrors(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(song.id);
+      return newMap;
+    });
+
+    console.log(`🖼️ Extracting cover art for: ${song.filename}`);
+    setExtractingCoverArt(prev => new Set([...prev, song.id]));
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+      const response = await fetch(`http://127.0.0.1:${apiPort}/library/extract-cover-art`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          'X-Signing-Key': apiSigningKey 
+        },
+        body: JSON.stringify({ file_path: song.file_path }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`Cover art extraction response for ${song.filename}:`, data);
+        
+        if (data.status === 'success' && data.cover_art) {
+          console.log(`✅ Successfully extracted cover art for: ${song.filename}`);
+          
+          // Update the song with cover art
+          const updatedSong = { ...song, cover_art: data.cover_art };
+          if (onSongUpdate) {
+            onSongUpdate(updatedSong);
+          }
+          
+          // Show success state briefly
+          setCoverArtSuccess(prev => new Set([...prev, song.id]));
+          setTimeout(() => {
+            setCoverArtSuccess(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(song.id);
+              return newSet;
+            });
+          }, 2000);
+          
+        } else if (data.status === 'no_cover_art') {
+          console.log(`⚠️ No cover art found in: ${song.filename}`);
+          setCoverArtErrors(prev => new Map([...prev, [song.id, 'No cover art found in file']]));
+          
+        } else if (data.status === 'no_tags') {
+          console.log(`⚠️ No ID3 tags found in: ${song.filename}`);
+          setCoverArtErrors(prev => new Map([...prev, [song.id, 'No ID3 tags found']]));
+          
+        } else {
+          console.error(`❌ Cover art extraction failed for: ${song.filename}`, data);
+          setCoverArtErrors(prev => new Map([...prev, [song.id, data.error || 'Extraction failed']]));
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error(`❌ HTTP error extracting cover art for: ${song.filename}`, response.status, errorData);
+        setCoverArtErrors(prev => new Map([...prev, [song.id, `Server error: ${response.status}`]]));
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error(`⏰ Timeout extracting cover art for: ${song.filename}`);
+        setCoverArtErrors(prev => new Map([...prev, [song.id, 'Request timeout']]));
+      } else {
+        console.error(`❌ Failed to extract cover art for: ${song.filename}`, error);
+        setCoverArtErrors(prev => new Map([...prev, [song.id, 'Network error']]));
+      }
+    } finally {
+      setExtractingCoverArt(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(song.id);
+        return newSet;
+      });
+    }
+  };
+
   // Handle metadata editor save
   const handleMetadataSave = async (updatedSong: Song, renameFile: boolean) => {
     if (onSongUpdate) {
@@ -384,6 +510,37 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const ResetIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
       <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+    </svg>
+  );
+
+  // Professional playlist action icons
+  const USBExportIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+      <line x1="8" y1="21" x2="16" y2="21"/>
+      <line x1="12" y1="17" x2="12" y2="21"/>
+      <path d="M7 7h10"/>
+      <path d="M7 11h10"/>
+      <path d="M7 15h6"/>
+    </svg>
+  );
+
+  const M3UExportIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14,2 14,8 20,8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10,9 9,9 8,9"/>
+    </svg>
+  );
+
+  const DeletePlaylistIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polyline points="3,6 5,6 21,6"/>
+      <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/>
+      <line x1="10" y1="11" x2="10" y2="17"/>
+      <line x1="14" y1="11" x2="14" y2="17"/>
     </svg>
   );
 
@@ -489,6 +646,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               <ResetIcon />
               Reset All
             </button>
+
             
             {/* Playlist Actions - only show when a playlist is selected */}
             {selectedPlaylist && (
@@ -499,17 +657,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     onClick={() => onUSBExport(selectedPlaylist)}
                     title="Export playlist to USB"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M10 2v7.31"/>
-                      <path d="M15 2v7.31"/>
-                      <path d="M8 9.31V2"/>
-                      <path d="M17 9.31V2"/>
-                      <path d="M12 9.31V2"/>
-                      <path d="M2 9.31V2"/>
-                      <path d="M20 9.31V2"/>
-                      <path d="M2 9.31h20"/>
-                      <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
-                    </svg>
+                    <USBExportIcon />
                     USB Export
                   </button>
                 )}
@@ -520,11 +668,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     onClick={() => onExportPlaylist(selectedPlaylist)}
                     title="Export playlist as M3U file"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                      <polyline points="7,10 12,15 17,10"/>
-                      <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
+                    <M3UExportIcon />
                     Export M3U
                   </button>
                 )}
@@ -539,10 +683,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     }}
                     title="Delete playlist"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3,6 5,6 21,6"/>
-                      <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/>
-                    </svg>
+                    <DeletePlaylistIcon />
                     Delete Playlist
                   </button>
                 )}
@@ -625,9 +766,167 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 title="Double-click to edit metadata"
               >
                 <td className="cover-art-cell">
-                  <div className="cover-art-placeholder">
-                    <MusicIcon />
-                  </div>
+                  {song.cover_art ? (
+                    <div className="cover-art-container">
+                      <img
+                        src={`data:image/jpeg;base64,${song.cover_art}`}
+                        alt={`${song.title || song.filename} cover art`}
+                        className="cover-art-image"
+                        style={{
+                          width: '40px',
+                          height: '40px',
+                          objectFit: 'cover',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(59, 130, 246, 0.2)',
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                          transition: 'all 0.3s ease'
+                        }}
+                        onError={(e) => {
+                          // Fallback to placeholder when image fails to load
+                          e.currentTarget.style.display = 'none';
+                          const placeholder = e.currentTarget.nextElementSibling as HTMLElement;
+                          if (placeholder) {
+                            placeholder.style.display = 'flex';
+                          }
+                        }}
+                      />
+                      {/* Success indicator overlay */}
+                      {coverArtSuccess.has(song.id) && (
+                        <div className="cover-art-success-overlay">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="cover-art-placeholder" style={{ 
+                      position: 'relative',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '40px',
+                      height: '40px',
+                      background: coverArtErrors.has(song.id) ? 'rgba(239, 68, 68, 0.1)' : 'var(--surface-bg)',
+                      border: coverArtErrors.has(song.id) ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-color)',
+                      borderRadius: '4px',
+                      transition: 'all 0.2s ease'
+                    }}>
+                      {extractingCoverArt.has(song.id) ? (
+                        <div className="cover-art-loading-container">
+                          <div className="cover-art-loading-spinner">
+                            <div className="spinner-ring"></div>
+                            <div className="spinner-ring"></div>
+                            <div className="spinner-ring"></div>
+                          </div>
+                          <div className="cover-art-loading-text">
+                            <span className="loading-dots">
+                              <span>E</span>
+                              <span>x</span>
+                              <span>t</span>
+                              <span>r</span>
+                              <span>a</span>
+                              <span>c</span>
+                              <span>t</span>
+                              <span>i</span>
+                              <span>n</span>
+                              <span>g</span>
+                              <span>.</span>
+                              <span>.</span>
+                              <span>.</span>
+                            </span>
+                          </div>
+                        </div>
+                      ) : coverArtErrors.has(song.id) ? (
+                        <div className="cover-art-error-container">
+                          <div className="cover-art-error-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCoverArtErrors(prev => {
+                                const newMap = new Map(prev);
+                                newMap.delete(song.id);
+                                return newMap;
+                              });
+                              extractCoverArt(song);
+                            }}
+                            className="cover-art-retry-btn"
+                            title={`Error: ${coverArtErrors.get(song.id)}. Click to retry.`}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexDirection: 'column',
+                          gap: '2px'
+                        }}>
+                          <MusicIcon />
+                          {song.file_path && (
+                            <button
+                              className="extract-cover-art-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                extractCoverArt(song);
+                              }}
+                              title="Extract cover art from MP3 file"
+                              style={{
+                                position: 'absolute',
+                                top: '-2px',
+                                right: '-2px',
+                                width: '18px',
+                                height: '18px',
+                                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                border: 'none',
+                                borderRadius: '50%',
+                                color: 'white',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.3s ease',
+                                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
+                                overflow: 'hidden'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.transform = 'scale(1.15)';
+                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.6)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.transform = 'scale(1)';
+                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.4)';
+                              }}
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                              </svg>
+                              {/* Hover effect overlay */}
+                              <div style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                background: 'rgba(255, 255, 255, 0.2)',
+                                opacity: 0,
+                                transition: 'opacity 0.2s ease',
+                                pointerEvents: 'none'
+                              }} className="btn-hover-overlay" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="artist-cell">
                   {song.artist || (song.filename && song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist')}
@@ -767,7 +1066,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                         onClick={async (e) => {
                           e.stopPropagation();
                           // Delete all other songs in the same duplicate group, keep this one
-                          const key = duplicateKeyFor(song as Song);
+                          const key = duplicateKeyFor(song as EnhancedSong);
                           const group = duplicateGroups.get(key) || [];
                           const others = group.filter(s => s.id !== song.id);
                           if (others.length === 0) return;

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, Response, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import time
@@ -4921,6 +4921,113 @@ def force_update_song_tags():
     except Exception as e:
         return jsonify({
             "error": f"Failed to force update song tags: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/extract-cover-art', methods=['POST', 'OPTIONS'])
+def extract_cover_art():
+    """Extract cover art from MP3 file and return as base64 encoded image."""
+    
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-Signing-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        file_path = data.get('file_path')
+        
+        print(f"🖼️ Extracting cover art from: {file_path}")
+        
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return jsonify({"error": "File not found"}), 404
+        
+        # Extract cover art using mutagen
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3, APIC
+            import base64
+            import io
+            
+            # Load MP3 file with ID3 tags
+            audio = MP3(file_path, ID3=ID3)
+            
+            if audio.tags is None:
+                print(f"⚠️ No ID3 tags found in: {file_path}")
+                return jsonify({
+                    'status': 'no_tags',
+                    'message': 'No ID3 tags found in file',
+                    'cover_art': None
+                })
+            
+            print(f"📋 Found ID3 tags in: {file_path}")
+            print(f"📋 Available tags: {list(audio.tags.keys())}")
+            
+            # Look for cover art (APIC frames)
+            cover_art = None
+            mime_type = 'image/jpeg'  # Default
+            
+            for key in audio.tags.keys():
+                if key.startswith('APIC:'):
+                    apic = audio.tags[key]
+                    print(f"🖼️ Found APIC frame: {key}, type: {apic.type}, mime: {apic.mime}")
+                    
+                    # Prefer cover (front) but accept any image
+                    if apic.type == 3 or cover_art is None:  # Cover (front) or first image found
+                        # Convert to base64
+                        cover_art = base64.b64encode(apic.data).decode('utf-8')
+                        mime_type = apic.mime or 'image/jpeg'
+                        print(f"✅ Successfully extracted cover art ({len(apic.data)} bytes, {mime_type})")
+                        
+                        # If this is a cover (front), we're done
+                        if apic.type == 3:
+                            break
+            
+            if cover_art:
+                return jsonify({
+                    'status': 'success',
+                    'cover_art': cover_art,
+                    'mime_type': mime_type,
+                    'size': len(base64.b64decode(cover_art))
+                })
+            else:
+                print(f"⚠️ No cover art found in: {file_path}")
+                return jsonify({
+                    'status': 'no_cover_art',
+                    'message': 'No cover art found in file',
+                    'cover_art': None
+                })
+                
+        except ImportError:
+            print(f"❌ Mutagen library not available")
+            return jsonify({
+                'error': 'mutagen library not available',
+                'status': 'error'
+            }), 500
+        except Exception as extract_error:
+            print(f"❌ Failed to extract cover art: {str(extract_error)}")
+            return jsonify({
+                'error': f'Failed to extract cover art: {str(extract_error)}',
+                'status': 'error'
+            }), 500
+        
+    except Exception as e:
+        print(f"❌ Error extracting cover art: {str(e)}")
+        return jsonify({
+            "error": f"Failed to extract cover art: {str(e)}",
             "status": "error"
         }), 500
 

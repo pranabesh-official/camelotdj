@@ -995,16 +995,19 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
                 gap: '12px',
                 marginBottom: '8px'
             }}>
-                <img
-                    src={download.thumbnail}
-                    alt={download.title}
-                    style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '6px',
-                        objectFit: 'cover'
-                    }}
-                />
+                <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '6px',
+                    background: '#1f2937',
+                    border: '1px solid #4b5563',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#9ca3af'
+                }}>
+                    <Music size={20} />
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
                         color: '#f9fafb',

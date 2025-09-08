@@ -217,8 +217,8 @@ function createWindow() {
     }
     
     const win = new BrowserWindow({
-        width: 1920,
-        height: 1080,
+        width: 1440,
+        height: 900,
         icon: iconPath,
         title: "CAMELOTDJ - Music Analyzer",
         webPreferences: {

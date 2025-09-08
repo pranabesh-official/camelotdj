@@ -75,6 +75,69 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+    
+    // Table sorting and filtering state
+    const [sortField, setSortField] = useState<'title' | 'artist' | 'album' | 'duration'>('title');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [searchTerm, setSearchTerm] = useState<string>('');
+    
+    // Sorting function
+    const handleSort = (field: 'title' | 'artist' | 'album' | 'duration') => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
+    
+    // Filter and sort search results
+    const filteredAndSortedResults = useMemo(() => {
+        let filtered = searchResults;
+        
+        // Apply search filter
+        if (searchTerm) {
+            filtered = filtered.filter(track => 
+                track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                track.artist.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (track.album && track.album.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+        }
+        
+        // Apply sorting
+        return filtered.sort((a, b) => {
+            let aValue: any = a[sortField];
+            let bValue: any = b[sortField];
+            
+            if (aValue === undefined) aValue = '';
+            if (bValue === undefined) bValue = '';
+            
+            // Handle duration sorting (convert to seconds)
+            if (sortField === 'duration') {
+                const parseDuration = (duration: string) => {
+                    if (!duration) return 0;
+                    const parts = duration.split(':').map(Number);
+                    return parts.length === 2 ? parts[0] * 60 + parts[1] : parts[0];
+                };
+                aValue = parseDuration(aValue);
+                bValue = parseDuration(bValue);
+            }
+            
+            if (sortDirection === 'asc') {
+                return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+            } else {
+                return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+            }
+        });
+    }, [searchResults, searchTerm, sortField, sortDirection]);
+    
+    // Music Icon component for cover art placeholder
+    const MusicIcon = () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+        </svg>
+    );
+    
     const [autocompleteError, setAutocompleteError] = useState<string | null>(null);
     
     // Audio state - centralized and robust
@@ -1626,27 +1689,39 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 background: var(--surface-bg);
                             }
                             
-                            /* YouTube tracks table styles */
+                            /* YouTube tracks table styles - matching TrackTable */
                             .youtube-tracks-table {
                                 width: 100%;
                                 border-collapse: collapse;
-                                background: var(--surface-bg);
+                                background: var(--card-bg);
+                                border-radius: var(--radius-lg);
+                                overflow: hidden;
                             }
                             
                             .youtube-tracks-table thead {
-                                background: var(--card-bg);
-                                border-bottom: 2px solid var(--border-color);
+                                background: var(--elevated-bg);
+                                border-bottom: 2px solid var(--divider-color);
                             }
                             
                             .youtube-tracks-table th {
-                                padding: 12px 8px;
+                                padding: var(--space-md);
                                 text-align: left;
                                 font-weight: 600;
                                 font-size: 12px;
                                 color: var(--text-secondary);
                                 text-transform: uppercase;
                                 letter-spacing: 0.5px;
-                                border-right: 1px solid var(--border-color);
+                                border-right: 1px solid var(--divider-color);
+                            }
+                            
+                            .youtube-tracks-table th.sortable {
+                                cursor: pointer;
+                                user-select: none;
+                                transition: color 0.2s ease;
+                            }
+                            
+                            .youtube-tracks-table th.sortable:hover {
+                                color: var(--text-primary);
                             }
                             
                             .youtube-tracks-table th:last-child {
@@ -1654,10 +1729,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }
                             
                             .youtube-tracks-table td {
-                                padding: 12px 8px;
-                                border-bottom: 1px solid var(--border-color);
-                                border-right: 1px solid var(--border-color);
+                                padding: var(--space-md);
+                                border-bottom: 1px solid var(--divider-color);
+                                border-right: 1px solid var(--divider-color);
                                 vertical-align: middle;
+                                color: var(--text-primary);
+                                font-size: 13px;
                             }
                             
                             .youtube-tracks-table td:last-child {
@@ -1669,7 +1746,33 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }
                             
                             .youtube-track-row:hover {
-                                background: var(--card-bg) !important;
+                                background: var(--hover-bg) !important;
+                            }
+                            
+                            .youtube-track-row.playing {
+                                background: rgba(74, 144, 226, 0.1) !important;
+                            }
+                            
+                            .sort-indicator {
+                                margin-left: 4px;
+                                font-size: 10px;
+                                opacity: 0.7;
+                            }
+                            
+                            .cover-art-cell {
+                                width: 50px;
+                            }
+                            
+                            .cover-art-placeholder {
+                                width: 40px;
+                                height: 40px;
+                                background: var(--elevated-bg);
+                                border-radius: var(--radius-sm);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                color: var(--text-muted);
+                                font-size: 16px;
                             }
                             
                             .youtube-track-row:last-child td {
@@ -1931,56 +2034,81 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             {/* Search Results */}
             <div className="search-results">
                 {searchResults.length > 0 && (
-                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-lg)' }}>
-                        Search Results ({searchResults.length})
-                    </h3>
+                    <div className="table-controls">
+                        <h3 style={{ color: 'var(--text-primary)', margin: 0 }}>
+                            Search Results ({filteredAndSortedResults.length}{searchTerm ? ` of ${searchResults.length}` : ''})
+                        </h3>
+                        <div className="search-and-filters">
+                            <div className="search-box">
+                                <input
+                                    type="text"
+                                    placeholder="Filter results..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
                 )}
 
                 <div className="table-wrapper">
                     <table 
-                        className="youtube-tracks-table"
+                        className="songs-table youtube-tracks-table"
                         role="table"
                         aria-label="YouTube Music search results"
                     >
                         <thead>
                             <tr role="row">
-                                <th className="thumbnail-header" scope="col" aria-label="Track thumbnail">Thumbnail</th>
-                                <th className="title-header" scope="col" aria-label="Track title">Title</th>
-                                <th className="artist-header" scope="col" aria-label="Artist name">Artist</th>
-                                <th className="album-header" scope="col" aria-label="Album name">Album</th>
-                                <th className="duration-header" scope="col" aria-label="Track duration">Duration</th>
-                                <th className="actions-header" scope="col" aria-label="Download actions">Download</th>
+                                <th className="cover-art-header">Cover Art</th>
+                                <th className="sortable" onClick={() => handleSort('title')}>
+                                    Title
+                                    {sortField === 'title' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('artist')}>
+                                    Artist
+                                    {sortField === 'artist' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('album')}>
+                                    Album
+                                    {sortField === 'album' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('duration')}>
+                                    Duration
+                                    {sortField === 'duration' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="actions-header">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {searchResults.map((track) => {
+                            {filteredAndSortedResults.map((track) => {
                                 const isCurrentlyPlaying = currentlyPlayingId === track.id;
                                 const isDownloaded = downloadedTracks.has(track.id);
 
                                 return (
                                     <tr
                                         key={track.id}
-                                        className="youtube-track-row"
+                                        className={`youtube-track-row ${isCurrentlyPlaying ? 'playing' : ''}`}
                                         role="row"
                                         tabIndex={0}
                                         aria-label={`Track: ${track.title} by ${track.artist}`}
                                         style={{
-                                            transition: 'all 0.2s ease',
-                                            cursor: 'pointer',
-                                            background: isCurrentlyPlaying ? 'rgba(59, 130, 246, 0.05)' : 'transparent',
-                                            borderLeft: isCurrentlyPlaying ? '3px solid #3b82f6' : '3px solid transparent'
-                                        }}
-                                                                                 onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = isCurrentlyPlaying 
-                                                ? 'rgba(59, 130, 246, 0.1)' 
-                                                : 'var(--card-bg)';
-                                             e.currentTarget.style.borderColor = 'var(--brand-blue)';
-                                         }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = isCurrentlyPlaying 
-                                                ? 'rgba(59, 130, 246, 0.05)' 
-                                                : 'transparent';
-                                            e.currentTarget.style.borderColor = 'transparent';
+                                            cursor: 'pointer'
                                         }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter' || e.key === ' ') {
@@ -1989,8 +2117,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             }
                                         }}
                                     >
-                                        {/* Thumbnail with Enhanced Play/Pause */}
-                                        <td className="thumbnail-cell" role="gridcell" aria-label="Track thumbnail">
+                                        {/* Cover Art with Enhanced Play/Pause */}
+                                        <td className="cover-art-cell" role="gridcell" aria-label="Track cover art">
                                             <div
                                                 style={{
                                                     position: 'relative',
@@ -2011,20 +2139,44 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                 }}
                                                 onClick={() => togglePlayPause(track)}
                                             >
-                                                <img
-                                                    src={track.thumbnail}
-                                                    alt={`${track.title} by ${track.artist}`}
+                                                {track.thumbnail ? (
+                                                    <img
+                                                        src={track.thumbnail}
+                                                        alt={`${track.title} by ${track.artist}`}
+                                                        style={{
+                                                            width: '100%',
+                                                            height: '100%',
+                                                            objectFit: 'cover',
+                                                            transition: 'filter 0.2s ease'
+                                                        }}
+                                                        onError={(e) => {
+                                                            // Fallback to placeholder when image fails to load
+                                                            e.currentTarget.style.display = 'none';
+                                                            const placeholder = e.currentTarget.nextElementSibling as HTMLElement;
+                                                            if (placeholder) {
+                                                                placeholder.style.display = 'flex';
+                                                            }
+                                                        }}
+                                                    />
+                                                ) : null}
+                                                
+                                                {/* Cover Art Placeholder */}
+                                                <div
+                                                    className="cover-art-placeholder"
                                                     style={{
+                                                        display: track.thumbnail ? 'none' : 'flex',
                                                         width: '100%',
                                                         height: '100%',
-                                                        objectFit: 'cover',
-                                                        transition: 'filter 0.2s ease'
+                                                        background: 'var(--elevated-bg)',
+                                                        borderRadius: '4px',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        color: 'var(--text-muted)',
+                                                        fontSize: '16px'
                                                     }}
-                                                    onError={(e) => {
-                                                        // Fallback for broken images
-                                                        e.currentTarget.style.display = 'none';
-                                                    }}
-                                                />
+                                                >
+                                                    <MusicIcon />
+                                                </div>
                                                 
                                                 {/* Enhanced Play/Pause/Loading Button Overlay */}
                                                 <div
@@ -2095,17 +2247,26 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
                                         {/* Title with Progress Bar for Currently Playing */}
                                         <td className="title-cell" role="gridcell" aria-label="Track title">
-                                            <div style={{
-                                                color: 'var(--text-primary)',
-                                                fontSize: '14px',
-                                                fontWeight: '500',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '200px',
-                                                marginBottom: isCurrentlyPlaying ? '4px' : '0'
-                                            }}>
-                                                {track.title}
+                                            <div className="title-content">
+                                                <span className="title-text" style={{
+                                                    color: 'var(--text-primary)',
+                                                    fontSize: '14px',
+                                                    fontWeight: '500',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                    maxWidth: '200px',
+                                                    marginBottom: isCurrentlyPlaying ? '4px' : '0'
+                                                }}>
+                                                    {track.title}
+                                                </span>
+                                                {isCurrentlyPlaying && (
+                                                    <span className="playing-indicator" style={{
+                                                        marginLeft: '8px',
+                                                        color: 'var(--brand-blue)',
+                                                        fontSize: '12px'
+                                                    }}>♪</span>
+                                                )}
                                             </div>
                                             {isCurrentlyPlaying && audioState.duration > 0 && (
                                                 <div style={{
@@ -2176,7 +2337,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     </table>
                 </div>
 
-                {searchResults.length === 0 && !isSearching && searchQuery && (
+                {filteredAndSortedResults.length === 0 && !isSearching && searchQuery && (
                     <div style={{
                         textAlign: 'center',
                         padding: 'var(--space-xl)',

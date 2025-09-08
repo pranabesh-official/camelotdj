@@ -21,6 +21,10 @@ interface AudioState {
     isMuted: boolean;
     playbackRate: number;
     error: string | null;
+    isBuffering: boolean;
+    bufferProgress: number;
+    isSeeking: boolean;
+    seekPreviewTime: number | null;
 }
 
 interface DownloadState {
@@ -149,7 +153,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         volume: 0.7,
         isMuted: false,
         playbackRate: 1.0,
-        error: null
+        error: null,
+        isBuffering: false,
+        bufferProgress: 0,
+        isSeeking: false,
+        seekPreviewTime: null
     });
     
     // Download state - simplified (handled by DownloadManager)
@@ -160,6 +168,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
     const [isProgressBarExpanded, setIsProgressBarExpanded] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+    const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
     
     // Refs
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -533,11 +542,28 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             if (!isStoppingRef.current) {
                 setAudioState(prev => ({ 
                     ...prev, 
-                    error: 'Failed to load audio. Please try again.',
-                    isLoading: false,
-                    isPlaying: false
+                    error: 'Stream failed. Retrying...',
+                    isLoading: true,
+                    isPlaying: false,
+                    isBuffering: false
                 }));
-                setCurrentlyPlayingId(null);
+                
+                // Auto-retry mechanism
+                setTimeout(() => {
+                    if (audioRef.current && currentlyPlayingId) {
+                        console.log('🔄 Auto-retrying stream...');
+                        audio.load(); // Reload the audio
+                        audio.play().catch((retryError) => {
+                            console.error('❌ Retry failed:', retryError);
+                            setAudioState(prev => ({ 
+                                ...prev, 
+                                error: 'Failed to load audio. Please try again.',
+                                isLoading: false,
+                                isPlaying: false
+                            }));
+                        });
+                    }
+                }, 2000); // Retry after 2 seconds
             }
         };
         
@@ -565,11 +591,40 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         
         audio.onwaiting = () => {
             console.log('⏳ Audio buffering...');
-            setAudioState(prev => ({ ...prev, isLoading: true }));
+            setAudioState(prev => ({ ...prev, isLoading: true, isBuffering: true }));
         };
         
         audio.oncanplaythrough = () => {
-            setAudioState(prev => ({ ...prev, isLoading: false }));
+            setAudioState(prev => ({ ...prev, isLoading: false, isBuffering: false }));
+        };
+
+        audio.onprogress = () => {
+            // Calculate buffer progress
+            if (audio.buffered.length > 0 && audio.duration > 0) {
+                const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+                const bufferProgress = (bufferedEnd / audio.duration) * 100;
+                setAudioState(prev => ({ ...prev, bufferProgress }));
+            }
+        };
+
+        audio.onseeked = () => {
+            console.log(`🎯 Audio seek completed at ${audio.currentTime.toFixed(2)}s`);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: false, 
+                seekPreviewTime: null,
+                isBuffering: false,
+                currentTime: audio.currentTime // Update with actual seek position
+            }));
+        };
+
+        audio.onseeking = () => {
+            console.log(`🔍 Audio seeking to ${audio.currentTime.toFixed(2)}s...`);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: true,
+                currentTime: audio.currentTime // Update current time during seeking
+            }));
         };
         
         return audio;
@@ -692,37 +747,75 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, []);
 
-    const seekTo = useCallback((time: number) => {
-        if (audioRef.current && audioState.duration > 0) {
-            const clampedTime = Math.max(0, Math.min(audioState.duration, time));
+    const seekTo = useCallback((time: number, showPreview = false) => {
+        if (!audioRef.current || audioState.duration <= 0) return;
+        
+        const clampedTime = Math.max(0, Math.min(audioState.duration, time));
+        
+        if (showPreview) {
+            // Show seek preview without actually seeking
+            setAudioState(prev => ({ 
+                ...prev, 
+                seekPreviewTime: clampedTime,
+                isSeeking: true 
+            }));
+            return;
+        }
+        
+        console.log(`🎯 Seeking to ${clampedTime.toFixed(2)}s (was ${audioState.currentTime.toFixed(2)}s)`);
+        
+        try {
+            // Set seeking state immediately for UI feedback
+            setAudioState(prev => ({ 
+                ...prev, 
+                seekPreviewTime: null,
+                isSeeking: true
+            }));
             
-            // Store current playback state
-            const wasPlaying = audioState.isPlaying;
-            
-            // Pause briefly to ensure clean seek
-            if (wasPlaying) {
-                audioRef.current.pause();
-            }
-            
-            // Seek to the new time
+            // For streaming audio, we should NOT pause/resume as it can cause restart
+            // Simply set the currentTime - the audio element will handle seeking internally
             audioRef.current.currentTime = clampedTime;
             
-            // Update state immediately for visual feedback
-            setAudioState(prev => ({ ...prev, currentTime: clampedTime }));
+            // The 'onseeked' event handler will clear the seeking state
+            // and update currentTime when seek is complete
             
-            // Resume playback if it was playing
-            if (wasPlaying) {
-                // Use a small timeout to ensure the seek has processed
-                setTimeout(() => {
-                    if (audioRef.current) {
-                        audioRef.current.play().catch(error => {
-                            console.error('Failed to resume playback after seek:', error);
-                        });
-                    }
-                }, 50);
-            }
+        } catch (error) {
+            console.error('❌ Seek failed:', error);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: false,
+                seekPreviewTime: null,
+                error: 'Seek failed. Please try again.'
+            }));
         }
-    }, [audioState.duration, audioState.isPlaying]);
+    }, [audioState.duration, audioState.currentTime]);
+
+    // Enhanced seeking functions
+    const skipForward = useCallback((seconds: number = 10) => {
+        if (audioRef.current && audioState.duration > 0) {
+            const newTime = Math.min(audioState.duration, audioState.currentTime + seconds);
+            seekTo(newTime);
+            
+            console.log(`⏭️ Skipped forward ${seconds}s to ${Math.floor(newTime)}s`);
+        }
+    }, [audioState.duration, audioState.currentTime, seekTo]);
+
+    const skipBackward = useCallback((seconds: number = 10) => {
+        if (audioRef.current && audioState.duration > 0) {
+            const newTime = Math.max(0, audioState.currentTime - seconds);
+            seekTo(newTime);
+            
+            console.log(`⏮️ Skipped backward ${seconds}s to ${Math.floor(newTime)}s`);
+        }
+    }, [audioState.currentTime, seekTo]);
+
+    const clearSeekPreview = useCallback(() => {
+        setAudioState(prev => ({ 
+            ...prev, 
+            seekPreviewTime: null,
+            isSeeking: false 
+        }));
+    }, []);
 
     // Touch handling for swipe gestures
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -767,12 +860,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
         
-        // Direct seek without affecting playback state
-        if (audioRef.current) {
-            audioRef.current.currentTime = newTime;
-            setAudioState(prev => ({ ...prev, currentTime: newTime }));
-        }
-    }, [audioState.duration]);
+        // Use the proper seekTo function
+        seekTo(newTime);
+    }, [audioState.duration, seekTo]);
 
     const handleProgressMouseMove = useCallback((e: MouseEvent) => {
         if (!isDragging || !progressBarRef.current || !audioState.duration) return;
@@ -784,18 +874,22 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
         
-        // Direct seek without affecting playback state
-        if (audioRef.current) {
-            audioRef.current.currentTime = newTime;
-            setAudioState(prev => ({ ...prev, currentTime: newTime }));
-        }
-    }, [isDragging, audioState.duration]);
+        // While dragging, show preview instead of continuous seeking
+        // This prevents performance issues with streaming audio
+        seekTo(newTime, true); // Show preview only during drag
+    }, [isDragging, audioState.duration, seekTo]);
 
     const handleProgressMouseUp = useCallback((e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        
+        // If we have a seek preview time, seek to it when drag ends
+        if (audioState.seekPreviewTime !== null) {
+            seekTo(audioState.seekPreviewTime); // Actually seek to the final position
+        }
+        
         setIsDragging(false);
-    }, []);
+    }, [audioState.seekPreviewTime, seekTo]);
 
     // Touch handling for progress bar
     const handleProgressTouchStart = useCallback((e: React.TouchEvent) => {
@@ -810,12 +904,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
         
-        // Direct seek without affecting playback state
-        if (audioRef.current) {
-            audioRef.current.currentTime = newTime;
-            setAudioState(prev => ({ ...prev, currentTime: newTime }));
-        }
-    }, [audioState.duration]);
+        // Use the proper seekTo function
+        seekTo(newTime);
+    }, [audioState.duration, seekTo]);
 
     const handleProgressTouchMove = useCallback((e: TouchEvent) => {
         if (!isDragging || !progressBarRef.current || !audioState.duration) return;
@@ -827,18 +918,21 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
         
-        // Direct seek without affecting playback state
-        if (audioRef.current) {
-            audioRef.current.currentTime = newTime;
-            setAudioState(prev => ({ ...prev, currentTime: newTime }));
-        }
-    }, [isDragging, audioState.duration]);
+        // While dragging, show preview instead of continuous seeking
+        seekTo(newTime, true); // Show preview only during drag
+    }, [isDragging, audioState.duration, seekTo]);
 
     const handleProgressTouchEnd = useCallback((e: TouchEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        
+        // If we have a seek preview time, seek to it when touch ends
+        if (audioState.seekPreviewTime !== null) {
+            seekTo(audioState.seekPreviewTime); // Actually seek to the final position
+        }
+        
         setIsDragging(false);
-    }, []);
+    }, [audioState.seekPreviewTime, seekTo]);
 
     // Add global mouse event listeners for dragging
     useEffect(() => {
@@ -915,7 +1009,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }, 5000);
     }, []);
     
-    // Keyboard shortcuts
+    // Enhanced keyboard shortcuts
     useEffect(() => {
         const handleKeyPress = (e: KeyboardEvent) => {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -945,17 +1039,68 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     e.preventDefault();
                     setVolume(Math.max(0, audioState.volume - 0.1));
                     break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const seconds = e.shiftKey ? 5 : 10; // Fine control with Shift
+                        skipBackward(seconds);
+                    }
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const seconds = e.shiftKey ? 5 : 10; // Fine control with Shift
+                        skipForward(seconds);
+                    }
+                    break;
+                case 'j':
+                case 'J':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        skipBackward(10);
+                    }
+                    break;
+                case 'l':
+                case 'L':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        skipForward(10);
+                    }
+                    break;
+                case 'k':
+                case 'K':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
+                        if (currentTrack) {
+                            togglePlayPause(currentTrack);
+                        }
+                    }
+                    break;
                 case 'm':
                 case 'M':
                     e.preventDefault();
                     toggleMute();
+                    break;
+                case '0':
+                case 'Home':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        seekTo(0);
+                    }
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    if (currentlyPlayingId && audioState.duration > 0) {
+                        seekTo(audioState.duration - 1);
+                    }
                     break;
             }
         };
         
         document.addEventListener('keydown', handleKeyPress);
         return () => document.removeEventListener('keydown', handleKeyPress);
-    }, [currentlyPlayingId, searchResults, togglePlayPause, stopAudio, audioState.volume, setVolume, toggleMute]);
+    }, [currentlyPlayingId, searchResults, togglePlayPause, stopAudio, audioState.volume, audioState.duration, setVolume, toggleMute, skipForward, skipBackward, seekTo]);
 
     // Cleanup on unmount
     useEffect(() => {
@@ -1028,82 +1173,248 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
-            {/* Global Audio Controls with Swipe Functionality */}
+            {/* Ultra-Elegant Global Audio Player */}
             {currentlyPlayingId && (
                 <div 
+                    className="elegant-player"
                     style={{
                         position: 'fixed',
-                        bottom: '20px',
+                        bottom: '32px',
                         left: '50%',
                         transform: 'translateX(-50%)',
-                        background: 'linear-gradient(135deg, #1f2937, #111827)',
-                        borderRadius: '12px',
-                        padding: '16px 24px',
-                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                        background: 'linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(30, 39, 50, 0.95))',
+                        borderRadius: '24px',
+                        padding: '24px 32px 28px 32px',
+                        boxShadow: `
+                            0 32px 80px rgba(0, 0, 0, 0.4),
+                            0 8px 32px rgba(0, 0, 0, 0.2),
+                            0 0 0 1px rgba(255, 255, 255, 0.05),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.1)
+                        `,
+                        backdropFilter: 'blur(24px) saturate(180%)',
                         zIndex: 1000,
-                        minWidth: '300px',
-                        maxWidth: '500px',
+                        minWidth: '480px',
+                        maxWidth: '720px',
+                        width: '92vw',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '12px',
-                        transition: 'all 0.3s ease',
-                        cursor: 'grab'
+                        gap: '20px',
+                        transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
+                        cursor: 'grab',
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
                     }}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}
                     onTouchEnd={handleTouchEnd}
                 >
-                    {/* Swipe Indicator */}
+                    {/* Elegant Swipe Indicator */}
                     <div style={{
-                        width: '40px',
-                        height: '4px',
-                        background: 'rgba(255, 255, 255, 0.3)',
-                        borderRadius: '2px',
-                        margin: '0 auto',
-                        transition: 'opacity 0.3s ease',
-                        opacity: isProgressBarExpanded ? 0 : 1
-                    }} />
+                        width: '56px',
+                        height: '6px',
+                        background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.8), rgba(139, 92, 246, 0.8))',
+                        borderRadius: '6px',
+                        margin: '0 auto -6px auto',
+                        transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                        opacity: isProgressBarExpanded ? 0 : 0.9,
+                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+                        position: 'relative'
+                    }}>
+                        <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            width: '20px',
+                            height: '2px',
+                            background: 'rgba(255, 255, 255, 0.6)',
+                            borderRadius: '1px',
+                            opacity: 0.7
+                        }} />
+                    </div>
 
                     {/* Main Controls Row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        {/* Track Info */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        {/* Elegant Track Info Section */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            {/* Album Art Placeholder */}
                             <div style={{
-                                color: 'white',
-                                fontSize: '14px',
-                                fontWeight: '600',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
+                                width: '56px',
+                                height: '56px',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2))',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.2)',
+                                position: 'relative',
+                                overflow: 'hidden'
                             }}>
-                                {searchResults.find(track => track.id === currentlyPlayingId)?.title || 'Unknown Track'}
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="rgba(255, 255, 255, 0.7)">
+                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                                </svg>
+                                {/* Subtle animation overlay */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    background: 'linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%)',
+                                    animation: 'shimmer 3s infinite'
+                                }} />
                             </div>
-                            <div style={{
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                fontSize: '12px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                            }}>
-                                {searchResults.find(track => track.id === currentlyPlayingId)?.artist || 'Unknown Artist'}
+                            
+                            {/* Track Details */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                    color: '#ffffff',
+                                    fontSize: '16px',
+                                    fontWeight: '600',
+                                    lineHeight: '1.4',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    marginBottom: '4px',
+                                    letterSpacing: '-0.01em'
+                                }}>
+                                    {searchResults.find(track => track.id === currentlyPlayingId)?.title || 'Unknown Track'}
+                                </div>
+                                <div style={{
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    fontSize: '13px',
+                                    fontWeight: '500',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    marginBottom: '6px'
+                                }}>
+                                    {searchResults.find(track => track.id === currentlyPlayingId)?.artist || 'Unknown Artist'}
+                                </div>
+                                {/* Elegant Status Indicator */}
+                                <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    fontSize: '10px',
+                                    color: audioState.error ? '#ff6b6b' 
+                                         : audioState.isBuffering ? '#fbbf24' 
+                                         : audioState.isSeeking ? '#fbbf24'
+                                         : audioState.isLoading ? '#60a5fa'
+                                         : audioState.isPlaying ? '#34d399' 
+                                         : 'rgba(255, 255, 255, 0.6)',
+                                    fontWeight: '600',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    background: audioState.error ? 'rgba(255, 107, 107, 0.15)' 
+                                              : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
+                                              : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                              : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
+                                              : 'rgba(255, 255, 255, 0.08)',
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    border: `1px solid ${
+                                        audioState.error ? 'rgba(255, 107, 107, 0.2)' 
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.2)' 
+                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.2)'
+                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.2)' 
+                                        : 'rgba(255, 255, 255, 0.1)'
+                                    }`,
+                                    backdropFilter: 'blur(8px)',
+                                    boxShadow: `0 2px 8px ${
+                                        audioState.error ? 'rgba(255, 107, 107, 0.15)' 
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
+                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
+                                        : 'rgba(0, 0, 0, 0.1)'
+                                    }`
+                                }}>
+                                    {audioState.error ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                            </svg>
+                                            Error
+                                        </>
+                                    ) : audioState.isBuffering ? (
+                                        <>
+                                            <div style={{
+                                                width: '10px',
+                                                height: '10px',
+                                                border: '1.5px solid currentColor',
+                                                borderTop: '1.5px solid transparent',
+                                                borderRadius: '50%',
+                                                animation: 'spin 1s linear infinite'
+                                            }} />
+                                            Buffering
+                                        </>
+                                    ) : audioState.isSeeking ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="3" fill="currentColor"/>
+                                                <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3"/>
+                                            </svg>
+                                            Seeking
+                                        </>
+                                    ) : audioState.isLoading ? (
+                                        <>
+                                            <div style={{
+                                                width: '10px',
+                                                height: '10px',
+                                                border: '1.5px solid currentColor',
+                                                borderTop: '1.5px solid transparent',
+                                                borderRadius: '50%',
+                                                animation: 'spin 1s linear infinite'
+                                            }} />
+                                            Loading
+                                        </>
+                                    ) : audioState.isPlaying ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
+                                                <polygon points="9,7 15,12 9,17" fill="white"/>
+                                            </svg>
+                                            Playing
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
+                                                <rect x="8" y="8" width="2" height="8" fill="white"/>
+                                                <rect x="14" y="8" width="2" height="8" fill="white"/>
+                                            </svg>
+                                            Paused
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
-                        {/* Compact Progress Bar (when not expanded) */}
+                        {/* Elegant Compact Progress Bar (when not expanded) */}
                         {!isProgressBarExpanded && (
-                            <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '11px', minWidth: '35px' }}>
-                                    {formatTime(audioState.currentTime)}
+                            <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                <span style={{ 
+                                    color: audioState.seekPreviewTime ? '#fbbf24' : 'rgba(255, 255, 255, 0.8)', 
+                                    fontSize: '12px', 
+                                    fontWeight: '500',
+                                    minWidth: '40px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                                    letterSpacing: '0.025em'
+                                }}>
+                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
                                 </span>
                                 <div style={{
                                     flex: 1,
-                                    height: '4px',
-                                    background: 'rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '2px',
+                                    height: '8px',
+                                    background: 'rgba(255, 255, 255, 0.1)',
+                                    borderRadius: '8px',
                                     cursor: 'pointer',
-                                    position: 'relative'
-                                }} onClick={(e) => {
+                                    position: 'relative',
+                                    boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
+                                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                                    overflow: 'hidden'
+                                }} 
+                                onClick={(e) => {
                                     if (isDragging) return; // Prevent click during drag
                                     
                                     e.preventDefault();
@@ -1116,24 +1427,139 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     
                                     // Use the robust seekTo function for clicks
                                     seekTo(newTime);
-                                }}>
+                                }}
+                                onMouseMove={(e) => {
+                                    if (!isDragging) {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const x = e.clientX - rect.left;
+                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
+                                        const hoverTime = hoverProgress * audioState.duration;
+                                        seekTo(hoverTime, true); // Show preview
+                                    }
+                                }}
+                                onMouseLeave={() => {
+                                    if (!isDragging) {
+                                        clearSeekPreview();
+                                    }
+                                }}
+                                >
+                                    {/* Elegant Buffer Progress */}
                                     <div style={{
-                                        width: `${audioState.duration > 0 ? (audioState.currentTime / audioState.duration) * 100 : 0}%`,
+                                        width: `${audioState.bufferProgress}%`,
                                         height: '100%',
-                                        background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
-                                        borderRadius: '2px',
-                                        transition: isDragging ? 'none' : 'width 0.1s ease'
+                                        background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.3))',
+                                        borderRadius: '8px',
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        transition: 'width 0.3s ease'
                                     }} />
+                                    
+                                    {/* Elegant Playback Progress */}
+                                    <div style={{
+                                        width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
+                                        height: '100%',
+                                        background: audioState.isSeeking || audioState.seekPreviewTime
+                                            ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' 
+                                            : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                                        borderRadius: '8px',
+                                        transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
+                                        position: 'relative',
+                                        boxShadow: audioState.isPlaying ? '0 0 16px rgba(99, 102, 241, 0.3)' : 'none'
+                                    }}>
+                                        {/* Elegant Progress Handle */}
+                                        <div style={{
+                                            position: 'absolute',
+                                            right: '-6px',
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            width: '16px',
+                                            height: '16px',
+                                            background: audioState.isSeeking || audioState.seekPreviewTime ? '#fbbf24' : '#ffffff',
+                                            borderRadius: '50%',
+                                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(255, 255, 255, 0.1)',
+                                            border: '2px solid rgba(255, 255, 255, 0.9)',
+                                            opacity: audioState.duration > 0 ? 1 : 0,
+                                            transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                            cursor: 'grab'
+                                        }}>
+                                            {/* Seeking pulse indicator */}
+                                            {(audioState.isSeeking || audioState.seekPreviewTime) && (
+                                                <div style={{
+                                                    position: 'absolute',
+                                                    top: '-4px',
+                                                    left: '-4px',
+                                                    right: '-4px',
+                                                    bottom: '-4px',
+                                                    borderRadius: '50%',
+                                                    border: '2px solid #fbbf24',
+                                                    animation: 'pulse 1.5s infinite'
+                                                }} />
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
-                                <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '11px', minWidth: '35px' }}>
+                                <span style={{ 
+                                    color: 'rgba(255, 255, 255, 0.8)', 
+                                    fontSize: '12px', 
+                                    fontWeight: '500',
+                                    minWidth: '40px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                                    letterSpacing: '0.025em'
+                                }}>
                                     {formatTime(audioState.duration)}
                                 </span>
                             </div>
                         )}
 
-                        {/* Controls */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {/* Play/Pause Button */}
+                        {/* Elegant Control Buttons */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {/* Elegant Skip Backward Button */}
+                            <button
+                                onClick={() => skipBackward(10)}
+                                disabled={!currentlyPlayingId || audioState.isLoading}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: 'rgba(255, 255, 255, 0.8)',
+                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
+                                    padding: '12px',
+                                    borderRadius: '16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '48px',
+                                    minHeight: '48px',
+                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
+                                    backdropFilter: 'blur(12px)',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                    }
+                                }}
+                                title="Skip backward 10s (←)"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                                </svg>
+                            </button>
+                            
+                            {/* Ultra-Elegant Play/Pause Button */}
                             <button
                                 onClick={() => {
                                     const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
@@ -1143,72 +1569,153 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }}
                                 disabled={audioState.isLoading}
                                 style={{
-                                    background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+                                    background: audioState.isPlaying 
+                                        ? 'linear-gradient(135deg, #34d399, #10b981)' 
+                                        : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                                     border: 'none',
                                     color: 'white',
                                     cursor: audioState.isLoading ? 'not-allowed' : 'pointer',
-                                    padding: '10px',
-                                    borderRadius: '50%',
+                                    padding: '16px',
+                                    borderRadius: '20px',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    transition: 'all 0.2s ease',
-                                    minWidth: '40px',
-                                    minHeight: '40px',
-                                    boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
-                                    opacity: audioState.isLoading ? 0.7 : 1
+                                    transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '64px',
+                                    minHeight: '64px',
+                                    boxShadow: audioState.isPlaying 
+                                        ? '0 12px 32px rgba(52, 211, 153, 0.4), 0 0 0 1px rgba(52, 211, 153, 0.2)' 
+                                        : '0 12px 32px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.2)',
+                                    opacity: audioState.isLoading ? 0.7 : 1,
+                                    position: 'relative',
+                                    overflow: 'hidden',
+                                    backdropFilter: 'blur(16px)'
                                 }}
                                 onMouseEnter={(e) => {
                                     if (!audioState.isLoading) {
-                                        e.currentTarget.style.transform = 'scale(1.05)';
-                                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(59, 130, 246, 0.6)';
+                                        e.currentTarget.style.transform = 'scale(1.08)';
+                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.6)' : 'rgba(99, 102, 241, 0.6)';
+                                        e.currentTarget.style.boxShadow = `0 16px 40px ${color}, 0 0 0 1px ${color}`;
                                     }
                                 }}
                                 onMouseLeave={(e) => {
                                     if (!audioState.isLoading) {
                                         e.currentTarget.style.transform = 'scale(1)';
-                                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4)';
+                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.4)' : 'rgba(99, 102, 241, 0.4)';
+                                        e.currentTarget.style.boxShadow = `0 12px 32px ${color}, 0 0 0 1px ${color}`;
                                     }
                                 }}
                             >
+                                {/* Elegant Ripple Effect */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '50%',
+                                    left: '50%',
+                                    transform: 'translate(-50%, -50%)',
+                                    width: '100%',
+                                    height: '100%',
+                                    borderRadius: '20px',
+                                    background: 'radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%)',
+                                    opacity: audioState.isPlaying ? 1 : 0,
+                                    animation: audioState.isPlaying ? 'ripple 3s infinite' : 'none'
+                                }} />
+                                
                                 {audioState.isLoading ? (
                                     <div style={{
-                                        width: '16px',
-                                        height: '16px',
-                                        border: '2px solid rgba(255,255,255,0.3)',
-                                        borderTop: '2px solid white',
+                                        width: '24px',
+                                        height: '24px',
+                                        border: '3px solid rgba(255,255,255,0.3)',
+                                        borderTop: '3px solid white',
                                         borderRadius: '50%',
-                                        animation: 'spin 1s linear infinite'
+                                        animation: 'spin 1s linear infinite',
+                                        position: 'relative',
+                                        zIndex: 1
                                     }} />
                                 ) : audioState.isPlaying ? (
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                        <rect x="6" y="4" width="4" height="16" rx="1"/>
-                                        <rect x="14" y="4" width="4" height="16" rx="1"/>
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1 }}>
+                                        <rect x="6" y="4" width="4" height="16" rx="2"/>
+                                        <rect x="14" y="4" width="4" height="16" rx="2"/>
                                     </svg>
                                 ) : (
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1, marginLeft: '3px' }}>
                                         <polygon points="5,3 19,12 5,21"/>
                                     </svg>
                                 )}
                             </button>
 
-                            {/* Volume Control */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {/* Elegant Skip Forward Button */}
+                            <button
+                                onClick={() => skipForward(10)}
+                                disabled={!currentlyPlayingId || audioState.isLoading}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: 'rgba(255, 255, 255, 0.8)',
+                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
+                                    padding: '12px',
+                                    borderRadius: '16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '48px',
+                                    minHeight: '48px',
+                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
+                                    backdropFilter: 'blur(12px)',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                    }
+                                }}
+                                title="Skip forward 10s (→)"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                                </svg>
+                            </button>
+
+                            {/* Elegant Volume Control */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <button
                                     onClick={toggleMute}
                                     style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: 'white',
+                                        background: 'rgba(255, 255, 255, 0.08)',
+                                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                                        color: 'rgba(255, 255, 255, 0.8)',
                                         cursor: 'pointer',
-                                        padding: '4px',
-                                        borderRadius: '4px',
+                                        padding: '8px',
+                                        borderRadius: '12px',
                                         display: 'flex',
                                         alignItems: 'center',
-                                        justifyContent: 'center'
+                                        justifyContent: 'center',
+                                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                        minWidth: '36px',
+                                        minHeight: '36px'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
                                     }}
                                 >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                         {audioState.isMuted ? (
                                             <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
                                         ) : (
@@ -1224,43 +1731,175 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     value={audioState.volume}
                                     onChange={(e) => setVolume(parseFloat(e.target.value))}
                                     style={{
-                                        width: '60px',
-                                        height: '4px',
-                                        background: 'rgba(255, 255, 255, 0.2)',
+                                        width: '80px',
+                                        height: '6px',
+                                        background: 'rgba(255, 255, 255, 0.1)',
                                         outline: 'none',
-                                        borderRadius: '2px',
-                                        cursor: 'pointer'
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        appearance: 'none',
+                                        WebkitAppearance: 'none'
                                     }}
                                 />
                             </div>
 
-                            {/* Stop Button */}
+                            {/* Elegant Stop Button */}
                             <button
                                 onClick={stopAudio}
                                 style={{
-                                    background: 'rgba(239, 68, 68, 0.8)',
-                                    border: 'none',
-                                    color: 'white',
+                                    background: 'rgba(239, 68, 68, 0.15)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    color: 'rgba(239, 68, 68, 0.9)',
                                     cursor: 'pointer',
                                     padding: '8px',
-                                    borderRadius: '6px',
+                                    borderRadius: '12px',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    transition: 'all 0.2s ease'
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '36px',
+                                    minHeight: '36px',
+                                    backdropFilter: 'blur(8px)'
                                 }}
                                 onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 1)';
+                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)';
+                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 1)';
+                                    e.currentTarget.style.transform = 'scale(1.05)';
                                 }}
                                 onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.8)';
+                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 0.9)';
+                                    e.currentTarget.style.transform = 'scale(1)';
                                 }}
+                                title="Stop playback (Esc)"
                             >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                     <rect x="6" y="6" width="12" height="12" rx="2"/>
                                 </svg>
                             </button>
+
+                            {/* Elegant Keyboard Help Button */}
+                            <button
+                                onClick={() => setShowKeyboardHelp(!showKeyboardHelp)}
+                                style={{
+                                    background: showKeyboardHelp ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: showKeyboardHelp ? 'rgba(99, 102, 241, 1)' : 'rgba(255, 255, 255, 0.8)',
+                                    cursor: 'pointer',
+                                    padding: '8px',
+                                    borderRadius: '12px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '36px',
+                                    minHeight: '36px',
+                                    backdropFilter: 'blur(8px)'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!showKeyboardHelp) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!showKeyboardHelp) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                    }
+                                }}
+                                title="Keyboard shortcuts"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2"/>
+                                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2"/>
+                                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2"/>
+                                    <rect x="6" y="7" width="2" height="2" rx="0.5"/>
+                                    <rect x="10" y="7" width="2" height="2" rx="0.5"/>
+                                    <rect x="14" y="7" width="2" height="2" rx="0.5"/>
+                                </svg>
+                            </button>
                         </div>
+                        
+                        {/* Elegant Keyboard Help Tooltip */}
+                        {showKeyboardHelp && (
+                            <div style={{
+                                position: 'absolute',
+                                bottom: '100%',
+                                right: '0',
+                                marginBottom: '12px',
+                                background: 'rgba(15, 20, 25, 0.95)',
+                                borderRadius: '16px',
+                                padding: '20px',
+                                boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+                                border: '1px solid rgba(99, 102, 241, 0.2)',
+                                minWidth: '320px',
+                                zIndex: 1001,
+                                fontSize: '13px',
+                                lineHeight: '1.5',
+                                animation: 'fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                                backdropFilter: 'blur(20px)'
+                            }}>
+                                <div style={{
+                                    color: 'white',
+                                    fontWeight: '600',
+                                    marginBottom: '16px',
+                                    fontSize: '14px',
+                                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                                    paddingBottom: '12px',
+                                    letterSpacing: '0.025em'
+                                }}>
+                                    Keyboard Shortcuts
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Play/Pause</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Space</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip forward 10s</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>→ or L</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip backward 10s</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>← or J</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip 5s (fine control)</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Shift + ←/→</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Volume up/down</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>↑/↓</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Mute/unmute</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>M</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Stop</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Esc</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Go to start</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>0 or Home</kbd>
+                                    </div>
+                                </div>
+                                {/* Elegant Arrow pointing down */}
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '-10px',
+                                    right: '24px',
+                                    width: 0,
+                                    height: 0,
+                                    borderLeft: '10px solid transparent',
+                                    borderRight: '10px solid transparent',
+                                    borderTop: '10px solid rgba(15, 20, 25, 0.95)'
+                                }} />
+                            </div>
+                        )}
                     </div>
 
                     {/* Expanded Progress Bar (revealed on swipe up) */}
@@ -1278,11 +1917,26 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 color: 'rgba(255, 255, 255, 0.8)',
                                 fontSize: '12px'
                             }}>
-                                <span>{formatTime(audioState.currentTime)}</span>
+                                <span style={{ 
+                                    color: audioState.seekPreviewTime ? '#f59e0b' : 'rgba(255, 255, 255, 0.8)',
+                                    fontWeight: audioState.seekPreviewTime ? '600' : '400',
+                                    transition: 'all 0.2s ease'
+                                }}>
+                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
+                                </span>
+                                {audioState.seekPreviewTime && (
+                                    <span style={{
+                                        color: '#f59e0b',
+                                        fontSize: '10px',
+                                        fontWeight: '500'
+                                    }}>
+                                        PREVIEW
+                                    </span>
+                                )}
                                 <span>{formatTime(audioState.duration)}</span>
                             </div>
                             
-                            {/* Enhanced Draggable Progress Bar */}
+                            {/* Enhanced Draggable Progress Bar with Buffer Visualization */}
                             <div
                                 ref={progressBarRef}
                                 style={{
@@ -1296,14 +1950,42 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }}
                                 onMouseDown={handleProgressMouseDown}
                                 onTouchStart={handleProgressTouchStart}
+                                onMouseMove={(e) => {
+                                    if (!isDragging) {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const x = e.clientX - rect.left;
+                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
+                                        const hoverTime = hoverProgress * audioState.duration;
+                                        seekTo(hoverTime, true); // Show preview
+                                    }
+                                }}
+                                onMouseLeave={() => {
+                                    if (!isDragging) {
+                                        clearSeekPreview();
+                                    }
+                                }}
                             >
+                                {/* Buffer Progress */}
+                                <div style={{
+                                    width: `${audioState.bufferProgress}%`,
+                                    height: '100%',
+                                    background: 'rgba(255, 255, 255, 0.4)',
+                                    borderRadius: '4px',
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    transition: 'width 0.3s ease'
+                                }} />
+                                
                                 {/* Progress Fill */}
                                 <div style={{
-                                    width: `${audioState.duration > 0 ? (audioState.currentTime / audioState.duration) * 100 : 0}%`,
+                                    width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
                                     height: '100%',
-                                    background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
+                                    background: audioState.isSeeking || audioState.seekPreviewTime
+                                        ? 'linear-gradient(90deg, #f59e0b, #d97706)'
+                                        : 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
                                     borderRadius: '4px',
-                                    transition: isDragging ? 'none' : 'width 0.1s ease',
+                                    transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
                                     position: 'relative'
                                 }}>
                                     {/* Draggable Handle */}
@@ -1314,14 +1996,44 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         transform: 'translateY(-50%)',
                                         width: '12px',
                                         height: '12px',
-                                        background: 'white',
+                                        background: audioState.isSeeking || audioState.seekPreviewTime ? '#f59e0b' : 'white',
                                         borderRadius: '50%',
                                         boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
                                         cursor: isDragging ? 'grabbing' : 'grab',
                                         transition: isDragging ? 'none' : 'all 0.2s ease',
-                                        opacity: isDragging ? 1 : 0.8
-                                    }} />
+                                        opacity: isDragging || audioState.isSeeking ? 1 : 0.8,
+                                        border: '2px solid rgba(255, 255, 255, 0.3)'
+                                    }}>
+                                        {/* Seeking indicator */}
+                                        {(audioState.isSeeking || audioState.seekPreviewTime) && (
+                                            <div style={{
+                                                position: 'absolute',
+                                                top: '-2px',
+                                                left: '-2px',
+                                                right: '-2px',
+                                                bottom: '-2px',
+                                                borderRadius: '50%',
+                                                border: '2px solid #f59e0b',
+                                                animation: 'pulse 1s infinite'
+                                            }} />
+                                        )}
+                                    </div>
                                 </div>
+                                
+                                {/* Buffering Progress Indicator */}
+                                {audioState.isBuffering && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '50%',
+                                        left: `${audioState.bufferProgress}%`,
+                                        transform: 'translateY(-50%)',
+                                        width: '4px',
+                                        height: '12px',
+                                        background: '#3b82f6',
+                                        borderRadius: '2px',
+                                        animation: 'pulse 1s infinite'
+                                    }} />
+                                )}
                                 
                                 {/* Hover Effect Overlay */}
                                 <div style={{
@@ -1490,8 +2202,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         fontSize: '14px',
                                                         fontWeight: '500',
                                                         overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap'
+                                                        display: '-webkit-box',
+                                                        WebkitLineClamp: 2,
+                                                        WebkitBoxOrient: 'vertical',
+                                                        lineHeight: '1.4',
+                                                        wordBreak: 'break-word'
                                                     }}>
                                                         {suggestion.text}
                                                     </div>
@@ -1501,8 +2216,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                             fontSize: '12px',
                                                             marginTop: '2px',
                                                             overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
+                                                            display: '-webkit-box',
+                                                            WebkitLineClamp: 1,
+                                                            WebkitBoxOrient: 'vertical',
+                                                            lineHeight: '1.4',
+                                                            wordBreak: 'break-word'
                                                         }}>
                                                             {suggestion.title} • {suggestion.artist}
                                                         </div>
@@ -1732,9 +2450,10 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 padding: var(--space-md);
                                 border-bottom: 1px solid var(--divider-color);
                                 border-right: 1px solid var(--divider-color);
-                                vertical-align: middle;
+                                vertical-align: top;
                                 color: var(--text-primary);
                                 font-size: 13px;
+                                min-height: 60px;
                             }
                             
                             .youtube-tracks-table td:last-child {
@@ -1837,27 +2556,30 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 
                                 .title-cell div {
                                     max-width: 150px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .artist-cell div {
                                     max-width: 120px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .actions-cell {
                                     min-width: 100px !important;
                                 }
                                 
-                                /* Global audio controls mobile */
-                                .youtube-music-container > div[style*="position: fixed"] {
-                                    bottom: 10px !important;
-                                    left: 10px !important;
-                                    right: 10px !important;
+                                /* Enhanced Global audio controls mobile */
+                                .youtube-music-container .enhanced-player {
+                                    bottom: 16px !important;
+                                    left: 8px !important;
+                                    right: 8px !important;
                                     transform: none !important;
                                     min-width: auto !important;
                                     max-width: none !important;
-                                    padding: 12px 16px !important;
-                                    flex-direction: column !important;
-                                    gap: 12px !important;
+                                    width: calc(100vw - 16px) !important;
+                                    padding: 16px 20px 20px 20px !important;
+                                    border-radius: 12px !important;
+                                    gap: 14px !important;
                                 }
                                 
                                 .youtube-music-container > div[style*="position: fixed"] > div:first-child {
@@ -1928,10 +2650,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 
                                 .title-cell div {
                                     max-width: 100px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .artist-cell div {
                                     max-width: 80px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .actions-cell button {
@@ -1981,6 +2705,51 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             
                             .download-complete {
                                 animation: downloadComplete 0.6s ease-in-out;
+                            }
+                            
+                            /* Enhanced Audio Player Animations */
+                            @keyframes ripple {
+                                0% { 
+                                    transform: translate(-50%, -50%) scale(0.8);
+                                    opacity: 0.8;
+                                }
+                                50% { 
+                                    transform: translate(-50%, -50%) scale(1.2);
+                                    opacity: 0.4;
+                                }
+                                100% { 
+                                    transform: translate(-50%, -50%) scale(1.6);
+                                    opacity: 0;
+                                }
+                            }
+                            
+                            @keyframes breathe {
+                                0%, 100% { 
+                                    box-shadow: 0 0 20px rgba(77, 171, 247, 0.3);
+                                }
+                                50% { 
+                                    box-shadow: 0 0 30px rgba(77, 171, 247, 0.6);
+                                }
+                            }
+                            
+                            @keyframes slideInUp {
+                                from {
+                                    opacity: 0;
+                                    transform: translate(-50%, 100%);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: translate(-50%, 0);
+                                }
+                            }
+                            
+                            /* Enhanced Media Player Styles */
+                            .youtube-music-container .enhanced-player {
+                                animation: slideInUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                            }
+                            
+                            .youtube-music-container .playing-indicator {
+                                animation: breathe 3s infinite ease-in-out;
                             }
                         `}</style>
                     </div>
@@ -2248,18 +3017,21 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         {/* Title with Progress Bar for Currently Playing */}
                                         <td className="title-cell" role="gridcell" aria-label="Track title">
                                             <div className="title-content">
-                                                <span className="title-text" style={{
+                                                <div className="title-text" style={{
                                                     color: 'var(--text-primary)',
                                                     fontSize: '14px',
                                                     fontWeight: '500',
                                                     overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
+                                                    display: '-webkit-box',
+                                                    WebkitLineClamp: 2,
+                                                    WebkitBoxOrient: 'vertical',
+                                                    lineHeight: '1.4',
                                                     maxWidth: '200px',
-                                                    marginBottom: isCurrentlyPlaying ? '4px' : '0'
+                                                    marginBottom: isCurrentlyPlaying ? '4px' : '0',
+                                                    wordBreak: 'break-word'
                                                 }}>
                                                     {track.title}
-                                                </span>
+                                                </div>
                                                 {isCurrentlyPlaying && (
                                                     <span className="playing-indicator" style={{
                                                         marginLeft: '8px',
@@ -2293,9 +3065,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                 color: 'var(--text-secondary)',
                                                 fontSize: '14px',
                                                 overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '150px'
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 2,
+                                                WebkitBoxOrient: 'vertical',
+                                                lineHeight: '1.4',
+                                                maxWidth: '150px',
+                                                wordBreak: 'break-word'
                                             }}>
                                                 {track.artist}
                                             </div>
@@ -2307,9 +3082,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                 color: 'var(--text-tertiary)',
                                                 fontSize: '12px',
                                                 overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '150px'
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 2,
+                                                WebkitBoxOrient: 'vertical',
+                                                lineHeight: '1.4',
+                                                maxWidth: '150px',
+                                                wordBreak: 'break-word'
                                             }}>
                                                 {track.album || '—'}
                                             </div>

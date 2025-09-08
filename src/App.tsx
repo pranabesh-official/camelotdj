@@ -1761,58 +1761,10 @@ const App: React.FC = () => {
                 addSongToMatchingQueryPlaylists(newSong);
             }, 100);
             
-            // Set as selected song
-            setSelectedSong(newSong);
-            
-            // Switch to library view to show the new song
-            goToLibraryAndRefresh();
-            
-            // Show success notification
-            console.log('✅ Song added to library successfully!');
-            
-            // Show visual notification
-            const notification = document.createElement('div');
-            notification.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: linear-gradient(135deg, #10b981, #059669);
-                color: white;
-                padding: 16px 20px;
-                border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-                z-index: 10000;
-                max-width: 300px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 14px;
-                line-height: 1.4;
-                animation: slideInRight 0.3s ease-out;
-            `;
-            
-            notification.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                    </svg>
-                    <strong>Song Added to Library!</strong>
-                </div>
-                <div style="font-size: 12px; opacity: 0.9;">
-                    "${newSong.title || newSong.filename?.replace(/\.[^/.]+$/, '') || 'Unknown Title'}" by ${newSong.artist || 'Unknown Artist'} has been analyzed and added to your collection.
-                </div>
-            `;
-            
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.style.animation = 'slideInRight 0.3s ease-out reverse';
-                    setTimeout(() => {
-                        if (notification.parentNode) {
-                            notification.parentNode.removeChild(notification);
-                        }
-                    }, 300);
-                }
-            }, 5000);
+            // Background processing - no UI interruptions
+            // Just refresh the playlist list without switching views
+            setListRefreshKey(prev => prev + 1);
+            console.log('✅ Song added to library successfully in background!');
             
             // Refresh the library to ensure the new song appears
             if (databaseService) {

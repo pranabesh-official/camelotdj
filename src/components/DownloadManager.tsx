@@ -381,7 +381,8 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             return newMap;
         });
         
-        showNotification('Download Added', `${track.title} added to download queue`, 'success');
+        // Background processing - no notification needed
+        console.log(`✅ ${track.title} added to download queue`);
     }, [downloadPath, maxConcurrentDownloads, downloads]);
     
     // Expose methods to parent component
@@ -468,7 +469,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     return newMap;
                 });
                 
-                showNotification('Download Queued', `${download.title} added to download queue`, 'success');
+                console.log(`✅ ${download.title} queued successfully`);
             } else {
                 throw new Error(result.error || 'Failed to queue download');
             }
@@ -575,7 +576,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     return newMap;
                 });
                 
-                showNotification('Download Retry', 'Download retry initiated', 'success');
+                console.log('✅ Download retry initiated');
             } else {
                 throw new Error('Failed to retry download');
             }
@@ -671,7 +672,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             });
             
             if (response.ok) {
-                showNotification('Settings Updated', `Max concurrent downloads set to ${newMax}`, 'success');
+                console.log(`✅ Max concurrent downloads set to ${newMax}`);
             } else {
                 throw new Error('Failed to update settings');
             }

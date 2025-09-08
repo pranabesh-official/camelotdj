@@ -31,6 +31,7 @@ from PIL import Image
 import io
 import platform
 import psutil
+from download_queue_manager import download_queue_manager, DownloadTask, DownloadPriority, DownloadStatus
 
 #
 # Notes on setting up a flask GraphQL server
@@ -142,6 +143,68 @@ if not apiSigningKey:
 
 # Initialize database manager
 db_manager = DatabaseManager()
+
+# Setup download queue manager callbacks
+def setup_download_queue_callbacks():
+    """Setup callbacks for the download queue manager"""
+    
+    def progress_callback(task):
+        """Handle progress updates from download queue"""
+        emit_progress(task.id, {
+            'stage': task.stage,
+            'progress': task.progress,
+            'message': task.message,
+            'quality': task.quality,
+            'format': task.format,
+            'timestamp': time.time(),
+            'percentage': task.progress
+        })
+    
+    def completion_callback(task):
+        """Handle download completion"""
+        print(f"🎵 Queue completion callback for {task.id}")
+        print(f"🎵 Task metadata keys: {list(task.metadata.keys()) if task.metadata else 'None'}")
+        
+        # Include song data from task metadata if available
+        completion_data = {
+            'stage': 'complete',
+            'progress': 100,
+            'message': 'Download complete!',
+            'quality': task.quality,
+            'format': task.format,
+            'timestamp': time.time(),
+            'percentage': 100,
+            'completed': True,
+            'file_size': task.file_size,
+            'duration': task.metadata.get('duration', 0)
+        }
+        
+        # Add song data if available in task metadata
+        if task.metadata and 'analysis_result' in task.metadata:
+            completion_data['song'] = task.metadata['analysis_result']
+            print(f"🎵 Including song data in completion callback: {task.metadata['analysis_result'].get('title', 'Unknown')}")
+        else:
+            print(f"🎵 No song data available in task metadata")
+            
+        emit_progress(task.id, completion_data)
+    
+    def error_callback(task):
+        """Handle download errors"""
+        emit_progress(task.id, {
+            'stage': 'error',
+            'progress': 0,
+            'message': task.error or 'Download failed',
+            'timestamp': time.time(),
+            'error': task.error
+        })
+    
+    # Register callbacks
+    download_queue_manager.add_progress_callback(progress_callback)
+    download_queue_manager.add_completion_callback(completion_callback)
+    download_queue_manager.add_error_callback(error_callback)
+
+# Initialize callbacks
+setup_download_queue_callbacks()
 
 app = Flask(__name__)
 app.add_url_rule("/graphql/", view_func=view_func)
@@ -3040,6 +3103,13 @@ def youtube_download_enhanced():
         # Add standard title and artist fields for frontend compatibility
         analysis_result['title'] = title
         analysis_result['artist'] = artist
+
+        # Ensure a stable track_id for robust frontend updates/deduplication
+        try:
+            generated_track_id = db_manager.generate_unique_track_id(final_path, final_filename)
+            analysis_result['track_id'] = generated_track_id
+        except Exception as _e:
+            print(f"⚠️ Failed to generate track_id: {_e}")
         
         # Set bitrate information
         if actual_bitrate and actual_bitrate >= 300:  # Close to 320kbps
@@ -3080,11 +3150,30 @@ def youtube_download_enhanced():
                 'youtube_url': url,
                 'youtube_title': title,
                 'youtube_artist': artist,
-                'bitrate': analysis_result.get('bitrate', 320)
+                'bitrate': analysis_result.get('bitrate', 320),
+                'track_id': analysis_result.get('track_id')
             }
             db_id = db_manager.add_music_file(file_data)
             analysis_result['db_id'] = db_id
             print(f"💾 Saved to database with ID: {db_id}")
+
+            # Ensure 'Downloads' playlist exists and add this song
+            try:
+                playlists = db_manager.get_all_playlists()
+                downloads_playlist = next((p for p in playlists if p.get('name') == 'Downloads'), None)
+                if not downloads_playlist:
+                    downloads_playlist_id = db_manager.create_playlist(
+                        name='Downloads', description='Auto-added downloads', color='#4ecdc4',
+                        is_query_based=False, query_criteria=None
+                    )
+                else:
+                    downloads_playlist_id = downloads_playlist['id']
+                try:
+                    db_manager.add_song_to_playlist(downloads_playlist_id, int(db_id))
+                except Exception:
+                    pass
+            except Exception as _e:
+                print(f"⚠️ Failed to update Downloads playlist: {_e}")
         except Exception as e:
             print(f"⚠️ Failed to save to database: {str(e)}")
             # Continue without database save
@@ -3099,18 +3188,28 @@ def youtube_download_enhanced():
         
         # Final success progress
         final_bitrate = analysis_result.get('bitrate', 320)
-        emit_progress(download_id, {
-            'stage': 'complete',
-            'progress': 100,
-            'message': f'Download complete! {final_bitrate}kbps MP3 ready.',
-            'quality': f"{final_bitrate}kbps",
-            'format': 'mp3',
-            'timestamp': time.time(),
-            'percentage': 100,
-            'completed': True,
-            'file_size': analysis_result.get('file_size', 0),
-            'duration': analysis_result.get('duration', 0)
-        })
+        
+        # Debug: Log the song payload being sent
+        print(f"🎵 Backend sending completion with song payload: {analysis_result.get('title')} by {analysis_result.get('artist')}")
+        print(f"🎵 Song payload keys: {list(analysis_result.keys())}")
+        
+        # Note: When using queue system, completion is handled by queue manager
+        # Only emit direct completion if not using queue (for backward compatibility)
+        if '_' not in download_id:  # Queue downloads have format "trackId_timestamp"
+            emit_progress(download_id, {
+                'stage': 'complete',
+                'progress': 100,
+                'message': f'Download complete! {final_bitrate}kbps MP3 ready.',
+                'quality': f"{final_bitrate}kbps",
+                'format': 'mp3',
+                'timestamp': time.time(),
+                'percentage': 100,
+                'completed': True,
+                'file_size': analysis_result.get('file_size', 0),
+                'duration': analysis_result.get('duration', 0),
+                'song': analysis_result,
+                'download_path': download_path
+            })
         
         print(f"🎉 Enhanced download completed successfully: {final_path}")
         
@@ -3143,6 +3242,278 @@ def youtube_download_enhanced():
         })
         return jsonify({
             "error": f"Enhanced download failed: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/download-queued', methods=['POST'])
+def youtube_download_queued():
+    """Add a download to the queue system for efficient multi-download handling."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        url = request_json.get('url')
+        title = request_json.get('title', 'Unknown Title')
+        artist = request_json.get('artist', 'Unknown Artist')
+        album = request_json.get('album')
+        download_path = request_json.get('download_path')
+        download_id = request_json.get('download_id')
+        priority = request_json.get('priority', 'normal')
+        
+        if not url:
+            return jsonify({"error": "No URL provided"}), 400
+            
+        if not download_path:
+            return jsonify({"error": "No download path provided"}), 400
+        
+        # Create download path if it doesn't exist
+        if not os.path.exists(download_path):
+            try:
+                os.makedirs(download_path, exist_ok=True)
+                print(f"📁 Created download directory: {download_path}")
+            except Exception as e:
+                return jsonify({"error": f"Failed to create download path: {str(e)}"}), 400
+        
+        if not download_id:
+            download_id = f"download_{int(time.time())}_{hash(url) % 10000}"
+        
+        # Convert priority string to enum
+        priority_map = {
+            'low': DownloadPriority.LOW,
+            'normal': DownloadPriority.NORMAL,
+            'high': DownloadPriority.HIGH,
+            'urgent': DownloadPriority.URGENT
+        }
+        download_priority = priority_map.get(priority.lower(), DownloadPriority.NORMAL)
+        
+        # Create download task
+        task = DownloadTask(
+            id=download_id,
+            url=url,
+            title=title,
+            artist=artist,
+            album=album,
+            download_path=download_path,
+            priority=download_priority,
+            quality=request_json.get('quality', '320kbps'),
+            format=request_json.get('format', 'mp3')
+        )
+        
+        # Add to queue
+        task_id = download_queue_manager.add_download(task)
+        
+        print(f"🚀 Added download to queue: {title} by {artist} (Priority: {priority})")
+        print(f"📁 Download path: {download_path}")
+        print(f"🔗 URL: {url}")
+        print(f"🆔 Download ID: {task_id}")
+        
+        # Get queue stats
+        stats = download_queue_manager.get_queue_stats()
+        
+        return jsonify({
+            "status": "queued",
+            "message": "Download added to queue successfully",
+            "download_id": task_id,
+            "queue_stats": stats,
+            "estimated_wait_time": stats['queued'] * 30  # Rough estimate: 30 seconds per queued item
+        })
+        
+    except Exception as e:
+        print(f"❌ Queue download error: {str(e)}")
+        return jsonify({
+            "error": f"Failed to add download to queue: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/status', methods=['GET'])
+def get_queue_status():
+    """Get the current status of the download queue"""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        stats = download_queue_manager.get_queue_stats()
+        all_downloads = download_queue_manager.get_all_downloads()
+        
+        # Convert downloads to serializable format
+        downloads_list = []
+        for task_id, task in all_downloads.items():
+            downloads_list.append({
+                'id': task.id,
+                'title': task.title,
+                'artist': task.artist,
+                'album': task.album,
+                'status': task.status.value,
+                'progress': task.progress,
+                'stage': task.stage,
+                'message': task.message,
+                'priority': task.priority.value,
+                'quality': task.quality,
+                'format': task.format,
+                'file_size': task.file_size,
+                'start_time': task.start_time,
+                'end_time': task.end_time,
+                'error': task.error,
+                'retry_count': task.retry_count,
+                'can_cancel': task.can_cancel,
+                'can_retry': task.can_retry,
+                'created_at': task.created_at
+            })
+        
+        return jsonify({
+            "status": "success",
+            "queue_stats": stats,
+            "downloads": downloads_list
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to get queue status: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/cancel', methods=['POST'])
+def cancel_queued_download():
+    """Cancel a download in the queue"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        success = download_queue_manager.cancel_download(download_id)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Download cancelled successfully"
+            })
+        else:
+            return jsonify({
+                "error": "Download not found or could not be cancelled",
+                "status": "error"
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to cancel download: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/retry', methods=['POST'])
+def retry_queued_download():
+    """Retry a failed download"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        success = download_queue_manager.retry_download(download_id)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Download retry initiated successfully"
+            })
+        else:
+            return jsonify({
+                "error": "Download not found or could not be retried",
+                "status": "error"
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to retry download: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/clear', methods=['POST'])
+def clear_queue():
+    """Clear completed or failed downloads from the queue"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        clear_type = request_json.get('type', 'completed')  # 'completed', 'failed', or 'all'
+        
+        if clear_type == 'completed':
+            download_queue_manager.clear_completed_downloads()
+            message = "Cleared completed downloads"
+        elif clear_type == 'failed':
+            download_queue_manager.clear_failed_downloads()
+            message = "Cleared failed downloads"
+        elif clear_type == 'all':
+            download_queue_manager.clear_completed_downloads()
+            download_queue_manager.clear_failed_downloads()
+            message = "Cleared all completed and failed downloads"
+        else:
+            return jsonify({"error": "Invalid clear type. Use 'completed', 'failed', or 'all'"}), 400
+        
+        return jsonify({
+            "status": "success",
+            "message": message
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to clear queue: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/settings', methods=['POST'])
+def update_queue_settings():
+    """Update queue settings like max concurrent downloads"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        max_concurrent = request_json.get('max_concurrent_downloads')
+        
+        if max_concurrent is not None:
+            if not isinstance(max_concurrent, int) or max_concurrent < 1 or max_concurrent > 10:
+                return jsonify({"error": "max_concurrent_downloads must be an integer between 1 and 10"}), 400
+            
+            download_queue_manager.update_max_concurrent_downloads(max_concurrent)
+            
+            return jsonify({
+                "status": "success",
+                "message": f"Updated max concurrent downloads to {max_concurrent}",
+                "max_concurrent_downloads": max_concurrent
+            })
+        else:
+            return jsonify({"error": "No settings provided"}), 400
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to update queue settings: {str(e)}",
             "status": "error"
         }), 500
 

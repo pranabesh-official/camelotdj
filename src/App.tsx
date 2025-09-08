@@ -112,6 +112,12 @@ const App: React.FC = () => {
     const [playlistToExport, setPlaylistToExport] = useState<Playlist | null>(null);
     const queueProcessingRef = useRef<boolean>(false);
     const downloadManagerRef = useRef<any>(null);
+    const [listRefreshKey, setListRefreshKey] = useState<number>(0);
+
+    const goToLibraryAndRefresh = useCallback(() => {
+        setListRefreshKey(prev => prev + 1);
+        setCurrentView('library');
+    }, []);
 
     // Check if running in Electron and get API details
     useEffect(() => {
@@ -600,7 +606,7 @@ const App: React.FC = () => {
                         return [...prevSongs, newSong];
                     });
                     setSelectedSong(newSong);
-                    setCurrentView('library');
+                    goToLibraryAndRefresh();
                     console.log('Song added successfully:', newSong.filename);
 
                     // Firestore sync (offline-first; will upload when online)
@@ -1699,6 +1705,7 @@ const App: React.FC = () => {
     // Handle YouTube download completion
     const handleYouTubeDownloadComplete = useCallback(async (downloadedSong: any) => {
         console.log('🎵 YouTube download completed:', downloadedSong);
+        console.log('🎵 Current songs count before adding:', songs.length);
         
         try {
             // Transform the downloaded song to match our Song interface
@@ -1735,13 +1742,18 @@ const App: React.FC = () => {
             
             // Add to songs list
             setSongs(prevSongs => {
+                console.log('🎵 setSongs called with prevSongs.length:', prevSongs.length);
                 // Check if song already exists to avoid duplicates
                 const existingSong = prevSongs.find(s => s.track_id === newSong.track_id || s.filename === newSong.filename);
                 if (existingSong) {
                     console.log('🎵 Song already exists in library, updating...');
-                    return prevSongs.map(s => s.id === existingSong.id ? newSong : s);
+                    const updatedSongs = prevSongs.map(s => s.id === existingSong.id ? newSong : s);
+                    console.log('🎵 Updated songs count:', updatedSongs.length);
+                    return updatedSongs;
                 }
-                return [...prevSongs, newSong];
+                const newSongs = [...prevSongs, newSong];
+                console.log('🎵 Added new song, total count now:', newSongs.length);
+                return newSongs;
             });
 
             // Auto-add to matching query playlists
@@ -1753,7 +1765,7 @@ const App: React.FC = () => {
             setSelectedSong(newSong);
             
             // Switch to library view to show the new song
-            setCurrentView('library');
+            goToLibraryAndRefresh();
             
             // Show success notification
             console.log('✅ Song added to library successfully!');
@@ -1836,7 +1848,7 @@ const App: React.FC = () => {
         } catch (error) {
             console.error('❌ Error handling download completion:', error);
         }
-    }, []);
+    }, [setSongs, addSongToMatchingQueryPlaylists, goToLibraryAndRefresh, setSelectedSong, databaseService, user?.uid, upsertUserTrack, saveToAnalysisSongs]);
 
     // Handle song updates from metadata editor
     const handleSongUpdate = async (updatedSong: Song) => {
@@ -1955,7 +1967,7 @@ const App: React.FC = () => {
                     {currentView === 'youtube' && (
                         <nav className="nav-tabs">
                             <button 
-                                onClick={() => setCurrentView('library')}
+                                onClick={() => goToLibraryAndRefresh()}
                             >
                                 My collection
                             </button>
@@ -1994,6 +2006,7 @@ const App: React.FC = () => {
                     {/* Bottom Left - Playlist Section */}
                     <div className="playlist-section">
                         <PlaylistManager
+                            key={`pm-${listRefreshKey}`}
                             playlists={playlists}
                             songs={songs}
                             selectedPlaylist={selectedPlaylist}
@@ -2031,6 +2044,7 @@ const App: React.FC = () => {
                             {/* Scrollable Track Table */}
                             <div className="table-section">
                                 <TrackTable
+                                    key={`tt-${listRefreshKey}`}
                                     songs={currentSongs}
                                     selectedSong={selectedSong}
                                     onSongSelect={setSelectedSong}

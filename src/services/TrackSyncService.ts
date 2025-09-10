@@ -23,9 +23,9 @@ export interface TrackMetadataPayload {
 export async function upsertUserTrack(userId: string, track: TrackMetadataPayload): Promise<void> {
     // Store per-user track under users/{uid}/tracks/{track_id}
     const tid = track.track_id || track.id;
-    if (!tid) {
-        console.error('[FS] Error: No track_id or id provided for track', track.filename);
-        throw new Error('No track_id or id provided for Firestore sync');
+    if (!tid || tid === 'undefined' || tid === 'null') {
+        console.error('[FS] Error: No valid track_id or id provided for track', track.filename, 'track_id:', track.track_id, 'id:', track.id);
+        throw new Error('No valid track_id or id provided for Firestore sync');
     }
     
     const ref = doc(db, 'users', userId, 'tracks', String(tid));
@@ -61,8 +61,8 @@ export async function upsertManyUserTracks(userId: string, tracks: TrackMetadata
     // Filter out tracks without track_id or id
     const validTracks = tracks.filter(track => {
         const tid = track.track_id || track.id;
-        if (!tid) {
-            console.error('[FS] Skipping track with no track_id or id:', track.filename);
+        if (!tid || tid === 'undefined' || tid === 'null') {
+            console.error('[FS] Skipping track with no valid track_id or id:', track.filename, 'track_id:', track.track_id, 'id:', track.id);
             return false;
         }
         return true;
@@ -118,9 +118,9 @@ export async function writeAuthHealth(userId: string): Promise<void> {
 export async function saveToAnalysisSongs(userId: string, track: TrackMetadataPayload): Promise<void> {
     // Use track_id or id as the document ID in analysis_songs collection
     const tid = track.track_id || track.id;
-    if (!tid) {
-        console.error('[FS] Error: No track_id or id provided for analysis_songs', track.filename);
-        throw new Error('No track_id or id provided for analysis_songs sync');
+    if (!tid || tid === 'undefined' || tid === 'null') {
+        console.error('[FS] Error: No valid track_id or id provided for analysis_songs', track.filename, 'track_id:', track.track_id, 'id:', track.id);
+        throw new Error('No valid track_id or id provided for analysis_songs sync');
     }
     
     const ref = doc(db, 'analysis_songs', String(tid));

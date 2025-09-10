@@ -1169,21 +1169,37 @@ def upload_and_analyze():
             print(f"❌ Analysis failed for {file.filename}: {str(e)}")
             print(f"📋 Full error traceback:")
             traceback.print_exc()
+            
+            # Generate track_id even for error cases to prevent Firestore sync issues
+            try:
+                track_id = db_manager.generate_unique_track_id(permanent_path, file.filename)
+            except Exception as track_id_error:
+                print(f"⚠️ Failed to generate track_id for error case: {track_id_error}")
+                import time
+                track_id = f"error_{int(time.time())}"
+            
             return jsonify({
                 "error": f"Analysis failed: {str(e)}",
                 "status": "error",
                 "filename": file.filename,
-                "file_path": permanent_path
+                "file_path": permanent_path,
+                "track_id": track_id
             }), 500
             
     except Exception as e:
         import traceback
+        import time
         print(f"❌ Upload and analysis failed: {str(e)}")
         print(f"📋 Full error traceback:")
         traceback.print_exc()
+        
+        # Generate a fallback track_id for outer exception cases
+        track_id = f"error_{int(time.time())}"
+        
         return jsonify({
             "error": f"Upload and analysis failed: {str(e)}",
-            "status": "error"
+            "status": "error",
+            "track_id": track_id
         }), 500
 
 @app.route('/analyze-file', methods=['POST'])
@@ -1274,7 +1290,37 @@ def get_library():
                 'file_size': file_record['file_size'],
                 'status': file_record['status'],
                 'analysis_date': file_record['analysis_date'],
-                'cue_points': json.loads(file_record['cue_points']) if file_record['cue_points'] else []
+                'cue_points': json.loads(file_record['cue_points']) if file_record['cue_points'] else [],
+                # ID3 metadata
+                'title': file_record.get('title'),
+                'artist': file_record.get('artist'),
+                'album': file_record.get('album'),
+                'albumartist': file_record.get('albumartist'),
+                'date': file_record.get('date'),
+                'year': file_record.get('year'),
+                'genre': file_record.get('genre'),
+                'composer': file_record.get('composer'),
+                'tracknumber': file_record.get('tracknumber'),
+                'discnumber': file_record.get('discnumber'),
+                'comment': file_record.get('comment'),
+                'initialkey': file_record.get('initialkey'),
+                'bpm_from_tags': file_record.get('bpm_from_tags'),
+                'website': file_record.get('website'),
+                'isrc': file_record.get('isrc'),
+                'language': file_record.get('language'),
+                'organization': file_record.get('organization'),
+                'copyright': file_record.get('copyright'),
+                'encodedby': file_record.get('encodedby'),
+                # Cover art
+                'cover_art': file_record.get('cover_art'),
+                'cover_art_extracted': bool(file_record.get('cover_art_extracted', 0)),
+                # Analysis tracking
+                'analysis_status': file_record.get('analysis_status', 'pending'),
+                'id3_tags_written': bool(file_record.get('id3_tags_written', 0)),
+                'last_analysis_attempt': file_record.get('last_analysis_attempt'),
+                'analysis_attempts': file_record.get('analysis_attempts', 0),
+                'file_hash': file_record.get('file_hash'),
+                'prevent_reanalysis': bool(file_record.get('prevent_reanalysis', 0))
             }
             songs.append(song)
         
@@ -5326,6 +5372,17 @@ def extract_cover_art():
             print(f"❌ File not found: {file_path}")
             return jsonify({"error": "File not found"}), 404
         
+        # Check if cover art already exists in database
+        existing_cover_art = db_manager.get_cover_art(file_path)
+        if existing_cover_art:
+            print(f"✅ Cover art already exists in database for: {file_path}")
+            return jsonify({
+                'status': 'success',
+                'cover_art': existing_cover_art,
+                'mime_type': 'image/jpeg',  # Default assumption
+                'from_cache': True
+            })
+        
         # Extract cover art using mutagen
         try:
             from mutagen.mp3 import MP3
@@ -5368,11 +5425,18 @@ def extract_cover_art():
                             break
             
             if cover_art:
+                # Save cover art to database
+                if db_manager.update_cover_art(file_path, cover_art):
+                    print(f"✅ Cover art saved to database for: {file_path}")
+                else:
+                    print(f"⚠️ Failed to save cover art to database for: {file_path}")
+                
                 return jsonify({
                     'status': 'success',
                     'cover_art': cover_art,
                     'mime_type': mime_type,
-                    'size': len(base64.b64decode(cover_art))
+                    'size': len(base64.b64decode(cover_art)),
+                    'from_cache': False
                 })
             else:
                 print(f"⚠️ No cover art found in: {file_path}")
@@ -5399,6 +5463,56 @@ def extract_cover_art():
         print(f"❌ Error extracting cover art: {str(e)}")
         return jsonify({
             "error": f"Failed to extract cover art: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/update-cover-art', methods=['POST', 'OPTIONS'])
+def update_cover_art():
+    """Update cover art in database for a music file."""
+    
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-Signing-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        file_path = data.get('file_path')
+        cover_art = data.get('cover_art')
+        
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        if not cover_art:
+            return jsonify({"error": "No cover art provided"}), 400
+        
+        # Update cover art in database
+        if db_manager.update_cover_art(file_path, cover_art):
+            print(f"✅ Cover art updated in database for: {file_path}")
+            return jsonify({
+                'status': 'success',
+                'message': 'Cover art updated successfully'
+            })
+        else:
+            print(f"❌ Failed to update cover art in database for: {file_path}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to update cover art in database'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error updating cover art: {str(e)}")
+        return jsonify({
+            "error": f"Failed to update cover art: {str(e)}",
             "status": "error"
         }), 500
 

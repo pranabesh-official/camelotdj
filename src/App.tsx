@@ -12,6 +12,7 @@ import USBExport from './components/USBExport';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Volume2 } from 'lucide-react';
 import AuthGate from './components/AuthGate';
 import { useAuth } from './services/AuthContext';
 import { upsertUserTrack, upsertManyUserTracks, saveToAnalysisSongs } from './services/TrackSyncService';
@@ -39,6 +40,7 @@ export interface Song {
     track_id?: string; // Unique track identifier
     id3?: any; // Raw ID3/metadata blob for cloud sync
     cover_art?: string; // Base64 encoded cover art image
+    cover_art_extracted?: boolean; // Flag to track if cover art has been extracted
     // Enhanced analysis tracking
     analysis_status?: 'pending' | 'analyzing' | 'completed' | 'failed';
     id3_tags_written?: boolean;
@@ -88,6 +90,10 @@ const App: React.FC = () => {
     const [showCompatibleOnly, setShowCompatibleOnly] = useState(false);
     const [databaseService, setDatabaseService] = useState<DatabaseService | null>(null);
     const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
+    const [isCoverArtExtractionComplete, setIsCoverArtExtractionComplete] = useState(true);
+    
+    // Audio Player Settings
+    const [volume, setVolume] = useState(1);
     
     // YouTube Music Settings
     const [downloadPath, setDownloadPath] = useState<string>('');
@@ -611,7 +617,7 @@ const App: React.FC = () => {
 
                     // Firestore sync (offline-first; will upload when online)
                     try {
-                        if (user?.uid) {
+                        if (user?.uid && newSong.track_id) {
                             console.log('Syncing to Firestore:', { uid: user.uid, track_id: newSong.track_id });
                             // Save to user's tracks collection
                             await upsertUserTrack(user.uid, {
@@ -626,6 +632,8 @@ const App: React.FC = () => {
                             } as any);
                             
                             console.log('Firestore sync successful');
+                        } else if (user?.uid && !newSong.track_id) {
+                            console.warn('Skipping Firestore sync - track_id is undefined for song:', newSong.filename);
                         } else {
                             console.warn('User not authenticated, skipping Firestore sync');
                         }
@@ -1469,6 +1477,10 @@ const App: React.FC = () => {
         setSelectedSong(song);
     }, []);
 
+    const handleVolumeChange = useCallback((newVolume: number) => {
+        setVolume(newVolume);
+    }, []);
+
     const handleNextSong = useCallback(() => {
         const currentSongs = selectedPlaylist ? selectedPlaylist.songs : songs;
         const currentIndex = currentSongs.findIndex(song => song.id === (currentlyPlaying ? currentlyPlaying.id : null));
@@ -1484,6 +1496,11 @@ const App: React.FC = () => {
             handleSongPlay(currentSongs[currentIndex - 1]);
         }
     }, [currentlyPlaying, selectedPlaylist, songs, handleSongPlay]);
+
+    // Handle cover art extraction status change
+    const handleCoverArtExtractionStatusChange = useCallback((isComplete: boolean) => {
+        setIsCoverArtExtractionComplete(isComplete);
+    }, []);
 
     // Get current song list based on selected playlist
     const currentSongs = useMemo(() => {
@@ -1781,7 +1798,7 @@ const App: React.FC = () => {
             // Firestore sync for YouTube downloads
             (async () => {
                 try {
-                    if (user?.uid) {
+                    if (user?.uid && newSong.track_id) {
                         // Save to user's tracks collection
                         await upsertUserTrack(user.uid, {
                             ...newSong,
@@ -1791,6 +1808,8 @@ const App: React.FC = () => {
                         await saveToAnalysisSongs(user.uid, {
                             ...newSong,
                         } as any);
+                    } else if (user?.uid && !newSong.track_id) {
+                        console.warn('Skipping Firestore sync for YouTube download - track_id is undefined for song:', newSong.filename);
                     }
                 } catch (syncErr) {
                     console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
@@ -1823,7 +1842,7 @@ const App: React.FC = () => {
             }
             
             // Sync updated metadata to Firestore
-            if (user?.uid) {
+            if (user?.uid && updatedSong.track_id) {
                 try {
                     // Update in user's tracks collection
                     await upsertUserTrack(user.uid, {
@@ -1841,6 +1860,8 @@ const App: React.FC = () => {
                 } catch (syncErr) {
                     console.warn('Firestore metadata sync failed - will retry when online:', syncErr);
                 }
+            } else if (user?.uid && !updatedSong.track_id) {
+                console.warn('Skipping Firestore sync for song update - track_id is undefined for song:', updatedSong.filename);
             }
             
             console.log('Song updated successfully:', updatedSong.filename);
@@ -1866,6 +1887,24 @@ const App: React.FC = () => {
                     </div>
                     {currentView !== 'youtube' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                            {/* Volume Display - Show when track is loaded */}
+                            {currentlyPlaying && (
+                                <div className="volume-display" style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '6px 12px',
+                                    background: 'var(--surface-bg)',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    fontSize: '14px',
+                                    color: 'var(--text-secondary)'
+                                }}>
+                                    <Volume2 size={16} />
+                                    <span>{Math.round(volume * 100)}%</span>
+                                </div>
+                            )}
+                            
                             <div className="search-box-header search-box-centered">
                                 <input 
                                     type="text" 
@@ -1990,6 +2029,10 @@ const App: React.FC = () => {
                                     onPrevious={handlePreviousSong}
                                     apiPort={apiPort}
                                     apiSigningKey={apiSigningKey}
+                                    volume={volume}
+                                    onVolumeChange={handleVolumeChange}
+                                    isLibraryLoaded={isLibraryLoaded}
+                                    isCoverArtExtractionComplete={isCoverArtExtractionComplete}
                                 />
                             </div>
 
@@ -2033,6 +2076,7 @@ const App: React.FC = () => {
                                         document.body.removeChild(a);
                                         URL.revokeObjectURL(url);
                                     }}
+                                    onCoverArtExtractionStatusChange={handleCoverArtExtractionStatusChange}
                                 />
                             </div>
                         </>

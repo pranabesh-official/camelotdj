@@ -19,6 +19,8 @@ interface TrackTableProps {
   onPlaylistDelete?: (playlistId: string) => void;
   onUSBExport?: (playlist: any) => void;
   onExportPlaylist?: (playlist: any) => void;
+  // Cover art extraction status callback
+  onCoverArtExtractionStatusChange?: (isComplete: boolean) => void;
 }
 
 type SortField = 'filename' | 'camelot_key' | 'bpm' | 'energy_level' | 'duration' | 'tempo' | 'genre' | 'bitrate_display';
@@ -48,7 +50,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
   selectedPlaylist,
   onPlaylistDelete,
   onUSBExport,
-  onExportPlaylist
+  onExportPlaylist,
+  onCoverArtExtractionStatusChange
 }) => {
   const [sortField, setSortField] = useState<SortField>('filename');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -76,7 +79,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
       const processed = new Set<string>();
       
       for (const song of songs) {
-        if (song.file_path && !song.cover_art && !extractingCoverArt.has(song.id) && !processed.has(song.id)) {
+        // Check if song has cover art OR has already been processed for extraction
+        if (song.file_path && !song.cover_art && !song.cover_art_extracted && !extractingCoverArt.has(song.id) && !processed.has(song.id)) {
           // Only extract for a few songs at a time to avoid overwhelming the API
           if (extractingCoverArt.size < 3) {
             processed.add(song.id);
@@ -387,7 +391,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // Extract cover art from MP3 file with enhanced error handling and UX
   const extractCoverArt = async (song: Song) => {
     // Enhanced validation to prevent duplicate processing
-    if (!song.file_path || song.cover_art || extractingCoverArt.has(song.id)) {
+    if (!song.file_path || song.cover_art || song.cover_art_extracted || extractingCoverArt.has(song.id)) {
       console.log(`🚫 Skipping cover art extraction for ${song.filename} - already has cover art or is being processed`);
       return;
     }
@@ -423,10 +427,14 @@ const TrackTable: React.FC<TrackTableProps> = ({
         console.log(`Cover art extraction response for ${song.filename}:`, data);
         
         if (data.status === 'success' && data.cover_art) {
-          console.log(`✅ Successfully extracted cover art for: ${song.filename}`);
+          console.log(`✅ Successfully extracted cover art for: ${song.filename}${data.from_cache ? ' (from cache)' : ''}`);
           
           // Update the song with cover art
-          const updatedSong = { ...song, cover_art: data.cover_art };
+          const updatedSong = { 
+            ...song, 
+            cover_art: data.cover_art,
+            cover_art_extracted: true
+          };
           if (onSongUpdate) {
             onSongUpdate(updatedSong);
           }
@@ -443,10 +451,26 @@ const TrackTable: React.FC<TrackTableProps> = ({
           
         } else if (data.status === 'no_cover_art') {
           console.log(`⚠️ No cover art found in: ${song.filename}`);
+          // Mark as processed even if no cover art found
+          const updatedSong = { 
+            ...song, 
+            cover_art_extracted: true
+          };
+          if (onSongUpdate) {
+            onSongUpdate(updatedSong);
+          }
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No cover art found in file']]));
           
         } else if (data.status === 'no_tags') {
           console.log(`⚠️ No ID3 tags found in: ${song.filename}`);
+          // Mark as processed even if no tags found
+          const updatedSong = { 
+            ...song, 
+            cover_art_extracted: true
+          };
+          if (onSongUpdate) {
+            onSongUpdate(updatedSong);
+          }
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No ID3 tags found']]));
           
         } else {
@@ -582,6 +606,31 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const uniqueGenres = useMemo(() => {
     return Array.from(new Set(enhancedSongs.map(song => song.genre).filter(Boolean))).sort();
   }, [enhancedSongs]);
+
+  // Check if all cover art extraction is complete
+  const isCoverArtExtractionComplete = useMemo(() => {
+    if (enhancedSongs.length === 0) return true;
+    
+    // Check if any songs are still being processed or need processing
+    const songsNeedingProcessing = enhancedSongs.filter(song => 
+      song.file_path && 
+      !song.cover_art && 
+      !song.cover_art_extracted && 
+      !extractingCoverArt.has(song.id)
+    );
+    
+    // Check if any songs are currently being processed
+    const songsBeingProcessed = extractingCoverArt.size > 0;
+    
+    return songsNeedingProcessing.length === 0 && !songsBeingProcessed;
+  }, [enhancedSongs, extractingCoverArt]);
+
+  // Notify parent component when cover art extraction status changes
+  useEffect(() => {
+    if (onCoverArtExtractionStatusChange) {
+      onCoverArtExtractionStatusChange(isCoverArtExtractionComplete);
+    }
+  }, [isCoverArtExtractionComplete, onCoverArtExtractionStatusChange]);
 
   return (
     <div className="track-table">
@@ -807,8 +856,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
                       justifyContent: 'center',
                       width: '40px',
                       height: '40px',
-                      background: coverArtErrors.has(song.id) ? 'rgba(239, 68, 68, 0.1)' : 'var(--surface-bg)',
-                      border: coverArtErrors.has(song.id) ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-color)',
+                      background: coverArtErrors.has(song.id) ? 'rgba(239, 68, 68, 0.1)' : 
+                                 song.cover_art_extracted ? 'rgba(34, 197, 94, 0.1)' : 'var(--surface-bg)',
+                      border: coverArtErrors.has(song.id) ? '1px solid rgba(239, 68, 68, 0.3)' : 
+                              song.cover_art_extracted ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid var(--border-color)',
                       borderRadius: '4px',
                       transition: 'all 0.2s ease'
                     }}>
@@ -871,7 +922,23 @@ const TrackTable: React.FC<TrackTableProps> = ({
                           gap: '2px'
                         }}>
                           <MusicIcon />
-                          {song.file_path && (
+                          {song.cover_art_extracted && !song.cover_art ? (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '18px',
+                              height: '18px',
+                              background: 'rgba(34, 197, 94, 0.1)',
+                              border: '1px solid rgba(34, 197, 94, 0.3)',
+                              borderRadius: '50%',
+                              color: 'rgba(34, 197, 94, 0.8)'
+                            }} title="Cover art extraction attempted - no art found">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                              </svg>
+                            </div>
+                          ) : song.file_path && !song.cover_art && !song.cover_art_extracted && (
                             <button
                               className="extract-cover-art-btn"
                               onClick={(e) => {

@@ -222,6 +222,35 @@ body {
   color: var(--text-muted);
 }
 
+/* Volume Display in Header */
+.volume-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-bg);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.volume-display:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.volume-display svg {
+  color: var(--accent-color);
+  transition: color 0.2s ease;
+}
+
+.volume-display:hover svg {
+  color: var(--brand-blue);
+}
+
 /* YouTube Search Input - Remove focus highlight */
 .youtube-music-container input:focus {
   outline: none;
@@ -513,12 +542,94 @@ body {
   opacity: 1;
 }
 
+/* Main Player Layout - Compact */
+.player-layout-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.player-layout-compact::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.02) 50%, transparent 70%);
+  pointer-events: none;
+  animation: subtleShimmer 8s ease-in-out infinite;
+}
+
 /* Main Player Layout */
 .player-layout {
   display: flex;
-  align-items: center;
-  gap: 20px;
+  flex-direction: column;
+  gap: 12px;
   width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.player-layout::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.02) 50%, transparent 70%);
+  pointer-events: none;
+  animation: subtleShimmer 8s ease-in-out infinite;
+}
+
+@keyframes subtleShimmer {
+  0%, 100% { transform: translateX(-100%); }
+  50% { transform: translateX(100%); }
+}
+
+/* Player Layout - Responsive */
+@media (max-width: 1200px) {
+  .player-layout {
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .player-layout {
+    gap: 10px;
+    padding: 10px;
+  }
+  
+  .controls-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  
+  .track-info-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
 }
 
 /* Transport Controls */

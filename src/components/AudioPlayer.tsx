@@ -9,7 +9,9 @@ import {
   Music2,
   Clock,
   Zap,
-  Music
+  Music,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { Song } from '../App';
 import './AudioPlayer.css';
@@ -27,9 +29,13 @@ interface AudioPlayerProps {
   onPrevious?: () => void;
   apiPort?: number;
   apiSigningKey?: string;
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
+  isLibraryLoaded?: boolean;
+  isCoverArtExtractionComplete?: boolean;
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, apiPort = 5002, apiSigningKey = 'devkey' }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, apiPort = 5002, apiSigningKey = 'devkey', volume = 1, onVolumeChange, isLibraryLoaded = true, isCoverArtExtractionComplete = true }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -38,6 +44,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
   const [audioError, setAudioError] = useState<string | null>(null);
   const [waveformError, setWaveformError] = useState<string | null>(null);
   const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [localVolume, setLocalVolume] = useState(volume);
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformData = useRef<number[]>([]);
@@ -218,8 +226,10 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    // Get the actual display size of the canvas
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
     const data = waveformData.current;
 
     // Clear canvas with subtle gradient background
@@ -375,11 +385,46 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       ctx.lineTo(width, gridY);
       ctx.stroke();
     }
-}, [currentTime, duration, isLoading, audioError, isLoadingWaveform, waveformError]);
+  }, [currentTime, duration, isLoading, audioError, isLoadingWaveform, waveformError]);
 
   useEffect(() => {
     drawWaveform();
   }, [drawWaveform]);
+
+  // Volume control effects
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.volume = isMuted ? 0 : localVolume;
+    }
+  }, [localVolume, isMuted]);
+
+  // Sync with parent volume prop
+  useEffect(() => {
+    setLocalVolume(volume);
+  }, [volume]);
+
+  // Keyboard shortcuts for volume control
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Only handle volume shortcuts when audio player is focused or when a song is playing
+      if (!song) return;
+      
+      if (e.key === 'ArrowUp' && e.ctrlKey) {
+        e.preventDefault();
+        handleVolumeChange(Math.min(1, localVolume + 0.1));
+      } else if (e.key === 'ArrowDown' && e.ctrlKey) {
+        e.preventDefault();
+        handleVolumeChange(Math.max(0, localVolume - 0.1));
+      } else if (e.key === 'm' && e.ctrlKey) {
+        e.preventDefault();
+        handleMuteToggle();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyPress);
+    return () => document.removeEventListener('keydown', handleKeyPress);
+  }, [localVolume, song]);
 
   // Add smooth animation loop for loading state
   useEffect(() => {
@@ -412,9 +457,40 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     }
   }, [isLoadingWaveform, drawWaveform]);
 
+  // Handle canvas resize
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleResize = () => {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = rect.height * window.devicePixelRatio;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      }
+      
+      drawWaveform();
+    };
+
+    // Initial resize
+    handleResize();
+
+    // Listen for resize events
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [drawWaveform]);
+
   const togglePlayPause = async () => {
     const audio = audioRef.current;
-    if (!audio || !song || isLoading || audioError) return;
+    if (!audio || !song || isLoading || audioError || !isLibraryLoaded || !isCoverArtExtractionComplete) return;
 
     try {
       if (isPlaying) {
@@ -434,7 +510,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
   const handleSeek = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     const audio = audioRef.current;
-    if (!canvas || !audio || !duration || isLoading || audioError) return;
+    if (!canvas || !audio || !duration || isLoading || audioError || !isLibraryLoaded || !isCoverArtExtractionComplete) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -461,6 +537,53 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  const handleVolumeChange = (newVolume: number) => {
+    const clampedVolume = Math.max(0, Math.min(1, newVolume));
+    setLocalVolume(clampedVolume);
+    setIsMuted(clampedVolume === 0);
+    onVolumeChange?.(clampedVolume);
+  };
+
+  const handleMuteToggle = () => {
+    if (isMuted) {
+      // Unmute - restore previous volume or default to 0.5
+      const newVolume = localVolume > 0 ? localVolume : 0.5;
+      setLocalVolume(newVolume);
+      setIsMuted(false);
+      onVolumeChange?.(newVolume);
+    } else {
+      // Mute
+      setIsMuted(true);
+      onVolumeChange?.(0);
+    }
+  };
+
+  if (!isLibraryLoaded) {
+    return (
+      <div className="audio-player library-loading">
+        <div className="player-placeholder">
+          <div className="placeholder-icon">
+            <Loader2 size={24} className="animate-spin text-yellow-500" />
+          </div>
+          <p className="placeholder-text">Loading music library...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isCoverArtExtractionComplete) {
+    return (
+      <div className="audio-player cover-art-loading">
+        <div className="player-placeholder">
+          <div className="placeholder-icon">
+            <Loader2 size={24} className="animate-spin text-blue-500" />
+          </div>
+          <p className="placeholder-text">Extracting cover art...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!song) {
     return (
       <div className="audio-player no-song">
@@ -482,100 +605,140 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
         crossOrigin="anonymous"
       />
       
-      <div className="player-layout">
-        {/* Transport Controls */}
-        <div className="transport-controls">
-          <button className="control-btn" onClick={onPrevious} disabled={!onPrevious} title="Previous track">
-            <SkipBack size={20} />
-          </button>
-          <button 
-            className="control-btn play-btn" 
-            onClick={togglePlayPause} 
-            disabled={isLoading || !!audioError}
-            title={isLoading ? 'Loading...' : audioError ? 'Audio Error' : isPlaying ? 'Pause' : 'Play'}
-          >
-            {isLoading ? (
-              <Loader2 size={24} className="animate-spin" />
-            ) : audioError ? (
-              <AlertCircle size={24} className="text-red-500" />
-            ) : isPlaying ? (
-              <Pause size={24} />
-            ) : (
-              <Play size={24} />
+      <div className="player-layout-compact">
+        {/* Waveform and Controls Combined */}
+        <div className="waveform-controls-container">
+          {/* Waveform */}
+          <div className="waveform-container">
+            <canvas
+              ref={canvasRef}
+              width={800}
+              height={40}
+              onClick={handleSeek}
+              className="waveform-canvas"
+              title={!isLibraryLoaded ? 'Library loading...' : !isCoverArtExtractionComplete ? 'Extracting cover art...' : isLoading ? 'Loading...' : audioError ? 'Audio Error' : 'Click to seek'}
+              style={{ 
+                cursor: !isLibraryLoaded || !isCoverArtExtractionComplete || isLoading || audioError ? 'default' : 'pointer',
+                opacity: !isLibraryLoaded || !isCoverArtExtractionComplete ? 0.5 : 1
+              }}
+            />
+          </div>
+
+          {/* Controls Row */}
+          <div className="controls-row-compact">
+            {/* Transport Controls */}
+            <div className="transport-controls">
+              <button className="control-btn" onClick={onPrevious} disabled={!onPrevious || !isLibraryLoaded || !isCoverArtExtractionComplete} title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : "Previous track"}>
+                <SkipBack size={16} />
+              </button>
+              <button 
+                className="control-btn play-btn" 
+                onClick={togglePlayPause} 
+                disabled={isLoading || !!audioError || !isLibraryLoaded || !isCoverArtExtractionComplete}
+                title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : isLoading ? 'Loading...' : audioError ? 'Audio Error' : isPlaying ? 'Pause' : 'Play'}
+              >
+                {!isLibraryLoaded ? (
+                  <Loader2 size={18} className="animate-spin text-yellow-500" />
+                ) : !isCoverArtExtractionComplete ? (
+                  <Loader2 size={18} className="animate-spin text-blue-500" />
+                ) : isLoading ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : audioError ? (
+                  <AlertCircle size={18} className="text-red-500" />
+                ) : isPlaying ? (
+                  <Pause size={18} />
+                ) : (
+                  <Play size={18} />
+                )}
+              </button>
+              <button className="control-btn" onClick={onNext} disabled={!onNext || !isLibraryLoaded || !isCoverArtExtractionComplete} title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : "Next track"}>
+                <SkipForward size={16} />
+              </button>
+            </div>
+
+            {/* Volume Controls */}
+            <div className="volume-controls">
+              <button 
+                className="control-btn volume-btn" 
+                onClick={handleMuteToggle}
+                disabled={!isLibraryLoaded || !isCoverArtExtractionComplete}
+                title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : isMuted ? 'Unmute' : 'Mute'}
+              >
+                {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              </button>
+              <div className="volume-slider-container">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={isMuted ? 0 : localVolume}
+                  onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                  className="volume-slider"
+                  disabled={!isLibraryLoaded || !isCoverArtExtractionComplete}
+                  title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : `Volume: ${Math.round((isMuted ? 0 : localVolume) * 100)}%`}
+                />
+              </div>
+              <span className="volume-percentage">
+                {Math.round((isMuted ? 0 : localVolume) * 100)}%
+              </span>
+            </div>
+
+            {/* Time Display */}
+            <div className="time-display">
+              <Clock size={12} className="mr-1 text-gray-400" />
+              <span className="current-time">{formatTime(currentTime)}</span>
+              <span className="time-separator"> / </span>
+              <span className="total-time">{formatTime(duration)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Track Info and Analysis Row */}
+        <div className="track-info-row-compact">
+          {/* Track Info */}
+          <div className="track-info">
+            <div className="track-title" title={song.filename}>
+              {song.filename.replace(/\.[^/.]+$/, '')}
+            </div>
+            <div className="track-artist">
+              {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'}
+            </div>
+            {isLoading && (
+              <div className="loading-indicator">
+                <Loader2 size={12} className="animate-spin mr-1" />
+                Loading...
+              </div>
             )}
-          </button>
-          <button className="control-btn" onClick={onNext} disabled={!onNext} title="Next track">
-            <SkipForward size={20} />
-          </button>
-
-        </div>
-
-        {/* Track Info */}
-        <div className="track-info">
-          <div className="track-title">
-            {song.filename.includes(' - ') ? 
-              song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
-              song.filename.replace(/\.[^/.]+$/, '')
-            }
+            {audioError && (
+              <div className="error-indicator">
+                <AlertCircle size={12} className="mr-1" />
+                Error: {audioError}
+              </div>
+            )}
           </div>
-          <div className="track-artist">
-            {song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'}
-          </div>
-          {isLoading && (
-            <div className="loading-indicator">
-              <Loader2 size={16} className="animate-spin mr-2" />
-              Loading audio...
+
+          {/* Track Analysis */}
+          <div className="track-analysis">
+            <div className="analysis-item">
+              <Music size={12} className="mr-1 text-gray-400" />
+              <span className="analysis-label">Key</span>
+              <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key) }}>
+                {song.camelot_key || 'N/A'}
+              </span>
             </div>
-          )}
-          {audioError && (
-            <div className="error-indicator">
-              <AlertCircle size={16} className="mr-2" />
-              Error: {audioError}
+            <div className="analysis-item">
+              <Clock size={12} className="mr-1 text-gray-400" />
+              <span className="analysis-label">BPM</span>
+              <span className="bpm-value">{song.bpm ? Math.round(song.bpm) : '--'}</span>
             </div>
-          )}
-        </div>
-
-        {/* Waveform */}
-        <div className="waveform-container">
-          <canvas
-            ref={canvasRef}
-            width={600}
-            height={40}
-            onClick={handleSeek}
-            className="waveform-canvas"
-            title={isLoading ? 'Loading...' : audioError ? 'Audio Error' : 'Click to seek'}
-            style={{ cursor: isLoading || audioError ? 'default' : 'pointer' }}
-          />
-        </div>
-
-        {/* Time Display */}
-        <div className="time-display">
-          <Clock size={16} className="mr-1 text-gray-400" />
-          <span className="current-time">{formatTime(currentTime)}</span>
-          <span className="time-separator"> / </span>
-          <span className="total-time">{formatTime(duration)}</span>
-        </div>
-
-        {/* Track Analysis */}
-        <div className="track-analysis">
-          <div className="analysis-item">
-            <Music size={16} className="mr-1 text-gray-400" />
-            <span className="analysis-label">Key</span>
-            <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key) }}>
-              {song.camelot_key || 'N/A'}
-            </span>
-          </div>
-          <div className="analysis-item">
-            <Clock size={16} className="mr-1 text-gray-400" />
-            <span className="analysis-label">BPM</span>
-            <span className="bpm-value">{song.bpm ? Math.round(song.bpm) : '--'}</span>
-          </div>
-          <div className="analysis-item">
-            <Zap size={16} className="mr-1 text-gray-400" />
-            <span className="analysis-label">Energy</span>
-            <span className="energy-badge" style={{ backgroundColor: getEnergyColor(song.energy_level) }}>
-              {song.energy_level || '--'}
-            </span>
+            <div className="analysis-item">
+              <Zap size={12} className="mr-1 text-gray-400" />
+              <span className="analysis-label">Energy</span>
+              <span className="energy-badge" style={{ backgroundColor: getEnergyColor(song.energy_level) }}>
+                {song.energy_level || '--'}
+              </span>
+            </div>
           </div>
         </div>
       </div>

@@ -71,19 +71,43 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [extractingCoverArt, setExtractingCoverArt] = useState<Set<string>>(new Set());
   const [coverArtErrors, setCoverArtErrors] = useState<Map<string, string>>(new Map());
   const [coverArtSuccess, setCoverArtSuccess] = useState<Set<string>>(new Set());
+  const [processedSongs, setProcessedSongs] = useState<Set<string>>(new Set());
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [debouncedExtractionComplete, setDebouncedExtractionComplete] = useState(true);
+
+  // Clear processed songs when songs array changes (new songs added)
+  useEffect(() => {
+    setProcessedSongs(new Set());
+    // Also clear cover art extraction status for songs without cover art
+    setCoverArtErrors(new Map());
+    setCoverArtSuccess(new Set());
+  }, [songs.length]); // Only clear when number of songs changes
 
   // Auto-extract cover art for songs that don't have it
   useEffect(() => {
     const autoExtractCoverArt = async () => {
-      // Track songs we've already processed to prevent duplicates
-      const processed = new Set<string>();
+      if (isProcessing) return; // Prevent concurrent processing
       
-      for (const song of songs) {
-        // Check if song has cover art OR has already been processed for extraction
-        if (song.file_path && !song.cover_art && !song.cover_art_extracted && !extractingCoverArt.has(song.id) && !processed.has(song.id)) {
-          // Only extract for a few songs at a time to avoid overwhelming the API
+      // Only process songs that haven't been processed yet
+      const songsToProcess = songs.filter(song => 
+        song.file_path && 
+        (!song.cover_art || song.cover_art.trim() === '') && 
+        !song.cover_art_extracted && 
+        !extractingCoverArt.has(song.id) && 
+        !processedSongs.has(song.id)
+      );
+      
+      if (songsToProcess.length === 0) return;
+      
+      setIsProcessing(true);
+      
+      try {
+        // Mark songs as being processed to prevent duplicate processing
+        setProcessedSongs(prev => new Set([...prev, ...songsToProcess.slice(0, 3).map(s => s.id)]));
+        
+        for (const song of songsToProcess.slice(0, 3)) { // Limit to 3 concurrent extractions
+          // Only extract if we haven't hit the concurrent limit
           if (extractingCoverArt.size < 3) {
-            processed.add(song.id);
             await extractCoverArt(song);
             // Add a small delay between extractions
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -92,14 +116,16 @@ const TrackTable: React.FC<TrackTableProps> = ({
             break;
           }
         }
+      } finally {
+        setIsProcessing(false);
       }
     };
 
-    // Only auto-extract if we have songs
+    // Only auto-extract if we have songs and there are songs that need processing
     if (songs.length > 0) {
       autoExtractCoverArt();
     }
-  }, [songs]); // Removed extractingCoverArt from dependencies to prevent loop
+  }, [songs, processedSongs, isProcessing]); // Added isProcessing to dependencies
 
   // Enhanced song interface for display
   const enhancedSongs = useMemo((): EnhancedSong[] => {
@@ -436,8 +462,29 @@ const TrackTable: React.FC<TrackTableProps> = ({
             cover_art_extracted: true
           };
           if (onSongUpdate) {
-            onSongUpdate(updatedSong);
+            await onSongUpdate(updatedSong);
           }
+          
+          // Also update the database directly to ensure persistence
+          try {
+            await fetch(`http://127.0.0.1:${apiPort}/library/update-cover-art`, {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json', 
+                'X-Signing-Key': apiSigningKey 
+              },
+              body: JSON.stringify({ 
+                file_path: song.file_path, 
+                cover_art: data.cover_art 
+              })
+            });
+            console.log('✅ Cover art saved to database for:', song.filename);
+          } catch (dbError) {
+            console.warn('⚠️ Failed to save cover art to database:', dbError);
+          }
+          
+          // Mark as processed since we successfully got cover art
+          setProcessedSongs(prev => new Set([...prev, song.id]));
           
           // Show success state briefly
           setCoverArtSuccess(prev => new Set([...prev, song.id]));
@@ -449,46 +496,43 @@ const TrackTable: React.FC<TrackTableProps> = ({
             });
           }, 2000);
           
+          // Add a small delay to ensure database update is complete
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
         } else if (data.status === 'no_cover_art') {
           console.log(`⚠️ No cover art found in: ${song.filename}`);
-          // Mark as processed even if no cover art found
-          const updatedSong = { 
-            ...song, 
-            cover_art_extracted: true
-          };
-          if (onSongUpdate) {
-            onSongUpdate(updatedSong);
-          }
+          // Don't mark as extracted if no cover art found - allow retry
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No cover art found in file']]));
           
         } else if (data.status === 'no_tags') {
           console.log(`⚠️ No ID3 tags found in: ${song.filename}`);
-          // Mark as processed even if no tags found
-          const updatedSong = { 
-            ...song, 
-            cover_art_extracted: true
-          };
-          if (onSongUpdate) {
-            onSongUpdate(updatedSong);
-          }
+          // Don't mark as extracted if no tags found - allow retry
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No ID3 tags found']]));
           
         } else {
           console.error(`❌ Cover art extraction failed for: ${song.filename}`, data);
           setCoverArtErrors(prev => new Map([...prev, [song.id, data.error || 'Extraction failed']]));
+          // Mark as processed for definitive failures to prevent infinite retries
+          setProcessedSongs(prev => new Set([...prev, song.id]));
         }
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         console.error(`❌ HTTP error extracting cover art for: ${song.filename}`, response.status, errorData);
         setCoverArtErrors(prev => new Map([...prev, [song.id, `Server error: ${response.status}`]]));
+        // Mark as processed for server errors to prevent infinite retries
+        setProcessedSongs(prev => new Set([...prev, song.id]));
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
         console.error(`⏰ Timeout extracting cover art for: ${song.filename}`);
         setCoverArtErrors(prev => new Map([...prev, [song.id, 'Request timeout']]));
+        // Mark as processed for timeouts to prevent infinite retries
+        setProcessedSongs(prev => new Set([...prev, song.id]));
       } else {
         console.error(`❌ Failed to extract cover art for: ${song.filename}`, error);
         setCoverArtErrors(prev => new Map([...prev, [song.id, 'Network error']]));
+        // Mark as processed for network errors to prevent infinite retries
+        setProcessedSongs(prev => new Set([...prev, song.id]));
       }
     } finally {
       setExtractingCoverArt(prev => {
@@ -611,26 +655,36 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const isCoverArtExtractionComplete = useMemo(() => {
     if (enhancedSongs.length === 0) return true;
     
-    // Check if any songs are still being processed or need processing
-    const songsNeedingProcessing = enhancedSongs.filter(song => 
-      song.file_path && 
-      !song.cover_art && 
-      !song.cover_art_extracted && 
-      !extractingCoverArt.has(song.id)
-    );
-    
-    // Check if any songs are currently being processed
+    // Check if any songs are still being processed
     const songsBeingProcessed = extractingCoverArt.size > 0;
     
+    // Check if any songs still need processing (not processed yet and not currently being processed)
+    const songsNeedingProcessing = enhancedSongs.filter(song => 
+      song.file_path && 
+      (!song.cover_art || song.cover_art.trim() === '') && 
+      !song.cover_art_extracted && 
+      !extractingCoverArt.has(song.id) &&
+      !processedSongs.has(song.id)
+    );
+    
     return songsNeedingProcessing.length === 0 && !songsBeingProcessed;
-  }, [enhancedSongs, extractingCoverArt]);
+  }, [enhancedSongs, extractingCoverArt, processedSongs]);
+
+  // Debounce cover art extraction status to prevent flickering
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedExtractionComplete(isCoverArtExtractionComplete);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [isCoverArtExtractionComplete]);
 
   // Notify parent component when cover art extraction status changes
   useEffect(() => {
     if (onCoverArtExtractionStatusChange) {
-      onCoverArtExtractionStatusChange(isCoverArtExtractionComplete);
+      onCoverArtExtractionStatusChange(debouncedExtractionComplete);
     }
-  }, [isCoverArtExtractionComplete, onCoverArtExtractionStatusChange]);
+  }, [debouncedExtractionComplete, onCoverArtExtractionStatusChange]);
 
   return (
     <div className="track-table">
@@ -815,7 +869,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 title="Double-click to edit metadata"
               >
                 <td className="cover-art-cell">
-                  {song.cover_art ? (
+                  {song.cover_art && song.cover_art.trim() !== '' ? (
                     <div className="cover-art-container">
                       <img
                         src={`data:image/jpeg;base64,${song.cover_art}`}
@@ -922,74 +976,6 @@ const TrackTable: React.FC<TrackTableProps> = ({
                           gap: '2px'
                         }}>
                           <MusicIcon />
-                          {song.cover_art_extracted && !song.cover_art ? (
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              width: '18px',
-                              height: '18px',
-                              background: 'rgba(34, 197, 94, 0.1)',
-                              border: '1px solid rgba(34, 197, 94, 0.3)',
-                              borderRadius: '50%',
-                              color: 'rgba(34, 197, 94, 0.8)'
-                            }} title="Cover art extraction attempted - no art found">
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                              </svg>
-                            </div>
-                          ) : song.file_path && !song.cover_art && !song.cover_art_extracted && (
-                            <button
-                              className="extract-cover-art-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                extractCoverArt(song);
-                              }}
-                              title="Extract cover art from MP3 file"
-                              style={{
-                                position: 'absolute',
-                                top: '-2px',
-                                right: '-2px',
-                                width: '18px',
-                                height: '18px',
-                                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                                border: 'none',
-                                borderRadius: '50%',
-                                color: 'white',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                transition: 'all 0.3s ease',
-                                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
-                                overflow: 'hidden'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.transform = 'scale(1.15)';
-                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.6)';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.transform = 'scale(1)';
-                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.4)';
-                              }}
-                            >
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                              </svg>
-                              {/* Hover effect overlay */}
-                              <div style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                background: 'rgba(255, 255, 255, 0.2)',
-                                opacity: 0,
-                                transition: 'opacity 0.2s ease',
-                                pointerEvents: 'none'
-                              }} className="btn-hover-overlay" />
-                            </button>
-                          )}
                         </div>
                       )}
                     </div>

@@ -19,8 +19,8 @@ export interface ScanLocation {
 }
 
 export class DatabaseService {
-    private apiPort: number;
-    private apiSigningKey: string;
+    protected apiPort: number;
+    protected apiSigningKey: string;
 
     constructor(apiPort: number, apiSigningKey: string) {
         this.apiPort = apiPort;

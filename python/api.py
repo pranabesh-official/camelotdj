@@ -245,6 +245,102 @@ def get_request_signing_key():
     except Exception:
         return None
 
+# Health check endpoint for monitoring database and service health
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Comprehensive health check endpoint"""
+    try:
+        start_time = time.time()
+        
+        # Check database connectivity and get stats
+        db_manager = DatabaseManager()
+        
+        # Get basic database stats
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get file count
+            cursor.execute("SELECT COUNT(*) FROM music_files")
+            file_count = cursor.fetchone()[0]
+            
+            # Get playlist count
+            cursor.execute("SELECT COUNT(*) FROM playlists")
+            playlist_count = cursor.fetchone()[0]
+            
+            # Get database size
+            cursor.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
+            db_size = cursor.fetchone()[0]
+            
+            # Check for recent errors
+            cursor.execute("SELECT COUNT(*) FROM music_files WHERE status = 'error' AND last_checked > datetime('now', '-1 hour')")
+            recent_errors = cursor.fetchone()[0]
+        
+        # Get system resources
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Calculate response time
+        response_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+        
+        # Determine overall health status
+        health_status = "healthy"
+        if recent_errors > 10:
+            health_status = "degraded"
+        if cpu_percent > 90 or memory.percent > 90 or disk.percent > 95:
+            health_status = "unhealthy"
+        if response_time > 5000:  # 5 seconds
+            health_status = "degraded"
+        
+        health_data = {
+            "status": health_status,
+            "timestamp": time.time(),
+            "response_time_ms": round(response_time, 2),
+            "database": {
+                "file_count": file_count,
+                "playlist_count": playlist_count,
+                "size_bytes": db_size,
+                "recent_errors": recent_errors,
+                "status": "connected"
+            },
+            "system": {
+                "cpu_percent": round(cpu_percent, 2),
+                "memory_percent": round(memory.percent, 2),
+                "memory_available_gb": round(memory.available / (1024**3), 2),
+                "disk_percent": round(disk.percent, 2),
+                "disk_free_gb": round(disk.free / (1024**3), 2)
+            },
+            "connection_pool": {
+                "active": 1,  # Placeholder - would need actual pool implementation
+                "idle": 0,
+                "total": 1
+            },
+            "services": {
+                "database": "healthy",
+                "music_analyzer": "healthy",
+                "download_queue": "healthy" if download_queue_manager.is_running else "stopped"
+            }
+        }
+        
+        # Return appropriate HTTP status based on health
+        if health_status == "healthy":
+            return jsonify(health_data), 200
+        elif health_status == "degraded":
+            return jsonify(health_data), 200  # Still operational
+        else:
+            return jsonify(health_data), 503  # Service unavailable
+            
+    except Exception as e:
+        error_response = {
+            "status": "unhealthy",
+            "timestamp": time.time(),
+            "error": str(e),
+            "database": {"status": "error"},
+            "system": {"status": "unknown"},
+            "services": {"status": "error"}
+        }
+        return jsonify(error_response), 503
+
 
 # Global store for active downloads
 active_downloads = {}

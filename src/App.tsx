@@ -1788,7 +1788,24 @@ const App: React.FC = () => {
                 try {
                     // Refresh songs from database
                     const allSongs = await databaseService.getLibrary();
-                    setSongs(allSongs);
+                    
+                    // Preserve local cover art updates that might not be in database yet
+                    setSongs(prevSongs => {
+                        const updatedSongs = allSongs.map(dbSong => {
+                            const localSong = prevSongs.find(prev => prev.id === dbSong.id);
+                            // If local song has cover art but database doesn't, keep the local version
+                            if (localSong && localSong.cover_art && (!dbSong.cover_art || dbSong.cover_art.trim() === '')) {
+                                console.log('🖼️ Preserving local cover art for:', dbSong.filename);
+                                return {
+                                    ...dbSong,
+                                    cover_art: localSong.cover_art,
+                                    cover_art_extracted: localSong.cover_art_extracted
+                                };
+                            }
+                            return dbSong;
+                        });
+                        return updatedSongs;
+                    });
                     console.log('🔄 Library refreshed after download completion');
                 } catch (error) {
                     console.warn('⚠️ Failed to refresh library after download:', error);

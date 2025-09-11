@@ -4724,6 +4724,43 @@ def test_database():
             'error': str(e)
         }), 500
 
+@app.route('/database/clear-all', methods=['POST'])
+def clear_all_database_data():
+    """Clear all data from the database (songs, playlists, settings)."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        print("🗑️ Clearing all database data...")
+        
+        # Clear all data using database manager
+        success = db_manager.clear_all_data()
+        
+        if success:
+            print("✅ Database cleared successfully")
+            return jsonify({
+                'status': 'success',
+                'message': 'All database data cleared successfully'
+            })
+        else:
+            print("❌ Failed to clear database")
+            return jsonify({
+                'status': 'error',
+                'error': 'Failed to clear database data'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Database clear failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
 @app.route('/library/check-metadata', methods=['POST'])
 def check_song_metadata():
     """Check if a song already has key and BPM metadata."""

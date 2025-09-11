@@ -674,6 +674,27 @@ export class DatabaseService {
             throw error;
         }
     }
+
+    /**
+     * Clear all data from the database (songs, playlists, settings)
+     */
+    async clearAllData(): Promise<void> {
+        try {
+            const result = await this.makeRequest('/database/clear-all', {
+                method: 'POST',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to clear database');
+            }
+        } catch (error) {
+            console.error('Error clearing database:', error);
+            throw error;
+        }
+    }
 }
 
 export default DatabaseService;

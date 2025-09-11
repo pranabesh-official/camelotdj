@@ -1938,6 +1938,64 @@ const App: React.FC = () => {
     //     }
     // }, [databaseService]);
 
+    // Database cleanup function
+    const handleDatabaseCleanup = useCallback(async () => {
+        if (!databaseService) {
+            alert('Database service not available');
+            return;
+        }
+
+        // Show confirmation dialog
+        const confirmed = window.confirm(
+            '⚠️ WARNING: This will permanently delete ALL data from the database!\n\n' +
+            'This includes:\n' +
+            '• All music files and their analysis data\n' +
+            '• All playlists\n' +
+            '• All settings\n' +
+            '• All scan locations\n\n' +
+            'This action cannot be undone!\n\n' +
+            'Are you sure you want to continue?'
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        // Second confirmation for extra safety
+        const doubleConfirmed = window.confirm(
+            'Are you absolutely sure? This will delete everything and cannot be undone!'
+        );
+
+        if (!doubleConfirmed) {
+            return;
+        }
+
+        try {
+            console.log('🗑️ Clearing all database data...');
+            await databaseService.clearAllData();
+            
+            // Clear local state
+            setSongs([]);
+            setPlaylists([]);
+            setSelectedSong(null);
+            setCurrentlyPlaying(null);
+            setSelectedPlaylist(null);
+            setAnalysisQueue([]);
+            
+            // Clear localStorage
+            localStorage.removeItem('youtube_download_path');
+            localStorage.removeItem('gemini_api_key');
+            
+            // Show success message
+            alert('✅ Database cleared successfully! All data has been removed.');
+            
+            console.log('✅ Database cleanup completed');
+        } catch (error) {
+            console.error('❌ Failed to clear database:', error);
+            alert(`Failed to clear database: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }, [databaseService]);
+
     // Handle YouTube download completion
     const handleYouTubeDownloadComplete = useCallback(async (downloadedSong: any) => {
         console.log('🎵 YouTube download completed:', downloadedSong);
@@ -2743,7 +2801,8 @@ const App: React.FC = () => {
 
                                         <div className="status-indicator" style={{ 
                                             background: isLibraryLoaded ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 193, 7, 0.1)', 
-                                            border: `1px solid ${isLibraryLoaded ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255, 193, 7, 0.3)'}`
+                                            border: `1px solid ${isLibraryLoaded ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255, 193, 7, 0.3)'}`,
+                                            marginBottom: '16px'
                                         }}>
                                             <div className="status-content">
                                                 {isLibraryLoaded ? (
@@ -2765,6 +2824,77 @@ const App: React.FC = () => {
                                                     {isLibraryLoaded ? `Library loaded (${songs.length} tracks)` : 'Loading library...'}
                                                 </p>
                                             </div>
+                                        </div>
+
+                                        {/* Database Cleanup Section */}
+                                        <div style={{ 
+                                            marginTop: '24px', 
+                                            padding: '16px', 
+                                            background: 'rgba(239, 68, 68, 0.05)', 
+                                            border: '1px solid rgba(239, 68, 68, 0.2)', 
+                                            borderRadius: '6px' 
+                                        }}>
+                                            <div style={{ marginBottom: '12px' }}>
+                                                <h4 style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    margin: '0 0 8px 0', 
+                                                    fontSize: '16px',
+                                                    fontWeight: '600',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px'
+                                                }}>
+                                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <path d="M3 6H5L5.4 8M7 13H17L21 5H5.4M7 13L5.4 8M7 13L4.7 15.3C4.3 15.7 4.6 16.5 5.1 16.5H17M17 13V19C17 20.1 16.1 21 15 21H9C7.9 21 7 20.1 7 19V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                    Database Cleanup
+                                                </h4>
+                                                <p style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    margin: '0 0 12px 0', 
+                                                    fontSize: '14px',
+                                                    lineHeight: '1.4'
+                                                }}>
+                                                    Clear all data from the database. This will permanently delete all music files, playlists, settings, and scan locations. This action cannot be undone.
+                                                </p>
+                                            </div>
+                                            
+                                            <button 
+                                                onClick={handleDatabaseCleanup}
+                                                disabled={!databaseService}
+                                                style={{
+                                                    padding: '10px 16px',
+                                                    background: databaseService ? 'var(--error-color)' : 'var(--text-secondary)',
+                                                    color: 'white',
+                                                    border: 'none',
+                                                    borderRadius: '6px',
+                                                    cursor: databaseService ? 'pointer' : 'not-allowed',
+                                                    fontSize: '14px',
+                                                    fontWeight: '500',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    transition: 'all 0.2s ease',
+                                                    opacity: databaseService ? 1 : 0.6
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (databaseService) {
+                                                        e.currentTarget.style.background = '#dc2626';
+                                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (databaseService) {
+                                                        e.currentTarget.style.background = 'var(--error-color)';
+                                                        e.currentTarget.style.transform = 'translateY(0)';
+                                                    }
+                                                }}
+                                            >
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                    <path d="M3 6H5L5.4 8M7 13H17L21 5H5.4M7 13L5.4 8M7 13L4.7 15.3C4.3 15.7 4.6 16.5 5.1 16.5H17M17 13V19C17 20.1 16.1 21 15 21H9C7.9 21 7 20.1 7 19V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                </svg>
+                                                Clear All Database Data
+                                            </button>
                                         </div>
                                     </div>
                                 </div>

@@ -1349,3 +1349,27 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error clearing playlist: {str(e)}")
             return False
+
+    def clear_all_data(self) -> bool:
+        """Clear all data from the database (songs, playlists, settings)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Clear all tables in the correct order to avoid foreign key constraints
+                cursor.execute("DELETE FROM playlist_items")
+                cursor.execute("DELETE FROM playlists")
+                cursor.execute("DELETE FROM music_files")
+                cursor.execute("DELETE FROM app_settings")
+                cursor.execute("DELETE FROM scan_locations")
+                
+                # Reset auto-increment counters
+                cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('music_files', 'playlists', 'playlist_items', 'scan_locations')")
+                
+                conn.commit()
+                print("✅ All database data cleared successfully")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error clearing all database data: {str(e)}")
+            return False

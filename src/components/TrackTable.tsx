@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Song } from '../App';
 import MetadataEditor from './MetadataEditor';
+import CoverArt from './CoverArt';
 
 interface TrackTableProps {
   songs: Song[];
@@ -75,30 +76,150 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [debouncedExtractionComplete, setDebouncedExtractionComplete] = useState(true);
 
+  // Cover art validation state
+  const [coverArtValidation, setCoverArtValidation] = useState<Map<string, {
+    isValid: boolean;
+    hasData: boolean;
+    isCorrupted: boolean;
+    needsExtraction: boolean;
+    lastValidated: number;
+    displayData: string | null;
+  }>>(new Map());
+
   // Clear processed songs when songs array changes (new songs added)
   useEffect(() => {
     setProcessedSongs(new Set());
     // Also clear cover art extraction status for songs without cover art
     setCoverArtErrors(new Map());
     setCoverArtSuccess(new Set());
+    // Clear validation cache when songs change
+    setCoverArtValidation(new Map());
   }, [songs.length]); // Only clear when number of songs changes
 
-  // Auto-extract cover art for songs that don't have it
+  // Ultra-permissive cover art validation - show everything that looks like an image
+  const validateCoverArt = (song: Song): {
+    isValid: boolean;
+    hasData: boolean;
+    isCorrupted: boolean;
+    needsExtraction: boolean;
+    lastValidated: number;
+    displayData: string | null;
+  } => {
+    const now = Date.now();
+    const cached = coverArtValidation.get(song.id);
+    
+    // Return cached validation if it's recent (within 5 minutes)
+    if (cached && (now - cached.lastValidated) < 300000) {
+      return cached;
+    }
+
+    const validation = {
+      isValid: false,
+      hasData: false,
+      isCorrupted: false,
+      needsExtraction: false,
+      lastValidated: now,
+      displayData: null as string | null
+    };
+
+    // Check if song has cover art data
+    if (!song.cover_art || song.cover_art.trim() === '') {
+      validation.needsExtraction = true;
+      validation.hasData = false;
+      validation.displayData = null;
+    } else {
+      validation.hasData = true;
+      
+      // Ultra-permissive approach - try to show any data that looks like an image
+      let displayData = song.cover_art;
+      
+      try {
+        // Check if it already has a data URL prefix
+        const hasDataUrlPrefix = /^data:image\/(jpeg|jpg|png|gif|webp|bmp|tiff);base64,/.test(song.cover_art);
+        
+        if (!hasDataUrlPrefix) {
+          // Try to fix by adding data URL prefix if it looks like raw base64
+          if (song.cover_art.match(/^[A-Za-z0-9+/=]+$/)) {
+            displayData = `data:image/jpeg;base64,${song.cover_art}`;
+            validation.isValid = true;
+            validation.displayData = displayData;
+          } else {
+            // Even if it doesn't look like base64, try to show it anyway
+            displayData = song.cover_art;
+            validation.isValid = true;
+            validation.displayData = displayData;
+          }
+        } else {
+          // It already has a proper data URL prefix, just use it
+          validation.isValid = true;
+          validation.displayData = displayData;
+        }
+      } catch (error) {
+        // Even if there's an error, try to show the original data
+        console.warn(`Cover art validation failed for ${song.filename}, showing anyway:`, error);
+        validation.isValid = true;
+        validation.displayData = song.cover_art;
+      }
+    }
+
+    // Cache the validation result
+    setCoverArtValidation(prev => new Map(prev.set(song.id, validation)));
+    
+    return validation;
+  };
+
+  // Get cover art display data with ultra-permissive validation
+  const getCoverArtDisplayData = (song: Song) => {
+    const validation = validateCoverArt(song);
+    
+    // Ultra-permissive: show any cover art data that exists
+    const shouldShow = validation.hasData && validation.displayData !== null;
+    
+    return {
+      ...validation,
+      shouldShow: shouldShow,
+      shouldExtract: validation.needsExtraction,
+      displayData: validation.displayData,
+      isFallback: false
+    };
+  };
+
+  // Debug function to log cover art validation status for all songs
+  const logCoverArtValidationStatus = () => {
+    console.log('🔍 Cover art validation status for all songs:');
+    enhancedSongs.forEach(song => {
+      const displayData = getCoverArtDisplayData(song);
+      console.log(`  ${song.filename}:`, {
+        shouldShow: displayData.shouldShow,
+        shouldExtract: displayData.shouldExtract,
+        hasData: displayData.hasData,
+        isValid: displayData.isValid,
+        isCorrupted: displayData.isCorrupted,
+        needsExtraction: displayData.needsExtraction
+      });
+    });
+  };
+
+  // Add debug logging when songs change (moved after enhancedSongs definition)
+
+  // Auto-extract cover art for songs that need it (using validation layer)
   useEffect(() => {
     const autoExtractCoverArt = async () => {
       if (isProcessing) return; // Prevent concurrent processing
       
-      // Only process songs that haven't been processed yet
-      const songsToProcess = songs.filter(song => 
-        song.file_path && 
-        (!song.cover_art || song.cover_art.trim() === '') && 
-        !song.cover_art_extracted && 
-        !extractingCoverArt.has(song.id) && 
-        !processedSongs.has(song.id)
-      );
+      // Use validation layer to determine which songs need processing
+      const songsToProcess = songs.filter(song => {
+        if (!song.file_path || extractingCoverArt.has(song.id) || processedSongs.has(song.id)) {
+          return false;
+        }
+        
+        const displayData = getCoverArtDisplayData(song);
+        return displayData.shouldExtract;
+      });
       
       if (songsToProcess.length === 0) return;
       
+      console.log(`🖼️ Found ${songsToProcess.length} songs needing cover art extraction`);
       setIsProcessing(true);
       
       try {
@@ -125,7 +246,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
     if (songs.length > 0) {
       autoExtractCoverArt();
     }
-  }, [songs, processedSongs, isProcessing]); // Added isProcessing to dependencies
+  }, [songs, processedSongs, isProcessing, coverArtValidation]); // Added coverArtValidation to dependencies
 
   // Enhanced song interface for display
   const enhancedSongs = useMemo((): EnhancedSong[] => {
@@ -208,6 +329,28 @@ const TrackTable: React.FC<TrackTableProps> = ({
       } as EnhancedSong;
     });
   }, [songs]);
+
+  // Add debug logging when songs change
+  useEffect(() => {
+    if (enhancedSongs.length > 0) {
+      console.log('🎵 Songs loaded, checking cover art validation status...');
+      
+      // Debug: Check if any songs have cover art data at all
+      const songsWithCoverArt = enhancedSongs.filter(song => song.cover_art && song.cover_art.trim() !== '');
+      console.log(`📊 Found ${songsWithCoverArt.length} songs with cover art data out of ${enhancedSongs.length} total songs`);
+      
+      if (songsWithCoverArt.length > 0) {
+        console.log('🔍 Sample cover art data:', {
+          filename: songsWithCoverArt[0].filename,
+          coverArtLength: songsWithCoverArt[0].cover_art?.length,
+          coverArtPrefix: songsWithCoverArt[0].cover_art?.substring(0, 100),
+          hasDataUrlPrefix: songsWithCoverArt[0].cover_art?.startsWith('data:image/')
+        });
+      }
+      
+      logCoverArtValidationStatus();
+    }
+  }, [enhancedSongs.length]); // Only log when number of songs changes
 
   // Duplicate grouping helpers
   const duplicateKeyFor = (song: EnhancedSong) => {
@@ -416,9 +559,17 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
   // Extract cover art from MP3 file with enhanced error handling and UX
   const extractCoverArt = async (song: Song) => {
-    // Enhanced validation to prevent duplicate processing
-    if (!song.file_path || song.cover_art || song.cover_art_extracted || extractingCoverArt.has(song.id)) {
-      console.log(`🚫 Skipping cover art extraction for ${song.filename} - already has cover art or is being processed`);
+    // Enhanced validation using validation layer
+    const displayData = getCoverArtDisplayData(song);
+    
+    if (!song.file_path || extractingCoverArt.has(song.id)) {
+      console.log(`🚫 Skipping cover art extraction for ${song.filename} - no file path or already being processed`);
+      return;
+    }
+    
+    // Only extract if validation indicates it's needed
+    if (!displayData.shouldExtract) {
+      console.log(`🚫 Skipping cover art extraction for ${song.filename} - validation indicates no extraction needed`);
       return;
     }
 
@@ -651,24 +802,25 @@ const TrackTable: React.FC<TrackTableProps> = ({
     return Array.from(new Set(enhancedSongs.map(song => song.genre).filter(Boolean))).sort();
   }, [enhancedSongs]);
 
-  // Check if all cover art extraction is complete
+  // Check if all cover art extraction is complete using validation layer
   const isCoverArtExtractionComplete = useMemo(() => {
     if (enhancedSongs.length === 0) return true;
     
     // Check if any songs are still being processed
     const songsBeingProcessed = extractingCoverArt.size > 0;
     
-    // Check if any songs still need processing (not processed yet and not currently being processed)
-    const songsNeedingProcessing = enhancedSongs.filter(song => 
-      song.file_path && 
-      (!song.cover_art || song.cover_art.trim() === '') && 
-      !song.cover_art_extracted && 
-      !extractingCoverArt.has(song.id) &&
-      !processedSongs.has(song.id)
-    );
+    // Check if any songs still need processing using validation layer
+    const songsNeedingProcessing = enhancedSongs.filter(song => {
+      if (!song.file_path || extractingCoverArt.has(song.id) || processedSongs.has(song.id)) {
+        return false;
+      }
+      
+      const displayData = getCoverArtDisplayData(song);
+      return displayData.shouldExtract;
+    });
     
     return songsNeedingProcessing.length === 0 && !songsBeingProcessed;
-  }, [enhancedSongs, extractingCoverArt, processedSongs]);
+  }, [enhancedSongs, extractingCoverArt, processedSongs, coverArtValidation]);
 
   // Debounce cover art extraction status to prevent flickering
   useEffect(() => {
@@ -752,6 +904,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               <ResetIcon />
               Reset All
             </button>
+
 
             
             {/* Playlist Actions - only show when a playlist is selected */}
@@ -869,117 +1022,37 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 title="Double-click to edit metadata"
               >
                 <td className="cover-art-cell">
-                  {song.cover_art && song.cover_art.trim() !== '' ? (
-                    <div className="cover-art-container">
-                      <img
-                        src={`data:image/jpeg;base64,${song.cover_art}`}
-                        alt={`${song.title || song.filename} cover art`}
-                        className="cover-art-image"
-                        style={{
-                          width: '40px',
-                          height: '40px',
-                          objectFit: 'cover',
-                          borderRadius: '6px',
-                          border: '1px solid rgba(59, 130, 246, 0.2)',
-                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                          transition: 'all 0.3s ease'
-                        }}
-                        onError={(e) => {
-                          // Fallback to placeholder when image fails to load
-                          e.currentTarget.style.display = 'none';
-                          const placeholder = e.currentTarget.nextElementSibling as HTMLElement;
-                          if (placeholder) {
-                            placeholder.style.display = 'flex';
-                          }
-                        }}
-                      />
-                      {/* Success indicator overlay */}
-                      {coverArtSuccess.has(song.id) && (
-                        <div className="cover-art-success-overlay">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="cover-art-placeholder" style={{ 
-                      position: 'relative',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '40px',
-                      height: '40px',
-                      background: coverArtErrors.has(song.id) ? 'rgba(239, 68, 68, 0.1)' : 
-                                 song.cover_art_extracted ? 'rgba(34, 197, 94, 0.1)' : 'var(--surface-bg)',
-                      border: coverArtErrors.has(song.id) ? '1px solid rgba(239, 68, 68, 0.3)' : 
-                              song.cover_art_extracted ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid var(--border-color)',
-                      borderRadius: '4px',
-                      transition: 'all 0.2s ease'
-                    }}>
-                      {extractingCoverArt.has(song.id) ? (
-                        <div className="cover-art-loading-container">
-                          <div className="cover-art-loading-spinner">
-                            <div className="spinner-ring"></div>
-                            <div className="spinner-ring"></div>
-                            <div className="spinner-ring"></div>
-                          </div>
-                          <div className="cover-art-loading-text">
-                            <span className="loading-dots">
-                              <span>E</span>
-                              <span>x</span>
-                              <span>t</span>
-                              <span>r</span>
-                              <span>a</span>
-                              <span>c</span>
-                              <span>t</span>
-                              <span>i</span>
-                              <span>n</span>
-                              <span>g</span>
-                              <span>.</span>
-                              <span>.</span>
-                              <span>.</span>
-                            </span>
-                          </div>
-                        </div>
-                      ) : coverArtErrors.has(song.id) ? (
-                        <div className="cover-art-error-container">
-                          <div className="cover-art-error-icon">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                            </svg>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCoverArtErrors(prev => {
-                                const newMap = new Map(prev);
-                                newMap.delete(song.id);
-                                return newMap;
-                              });
-                              extractCoverArt(song);
-                            }}
-                            className="cover-art-retry-btn"
-                            title={`Error: ${coverArtErrors.get(song.id)}. Click to retry.`}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                            </svg>
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexDirection: 'column',
-                          gap: '2px'
-                        }}>
-                          <MusicIcon />
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <CoverArt
+                    song={song as any}
+                    apiPort={apiPort}
+                    apiSigningKey={apiSigningKey}
+                    onSongUpdate={onSongUpdate}
+                    width={40}
+                    height={40}
+                    isExtracting={extractingCoverArt.has(song.id)}
+                    setExtracting={(id, flag) => {
+                      if (flag) {
+                        setExtractingCoverArt(prev => new Set([...prev, id]));
+                      } else {
+                        setExtractingCoverArt(prev => {
+                          const ns = new Set(prev);
+                          ns.delete(id);
+                          return ns;
+                        });
+                      }
+                    }}
+                    setError={(id, message) => {
+                      setCoverArtErrors(prev => {
+                        const map = new Map(prev);
+                        if (!message) {
+                          map.delete(id);
+                        } else {
+                          map.set(id, message);
+                        }
+                        return map;
+                      });
+                    }}
+                  />
                 </td>
                 <td className="artist-cell">
                   {song.artist || (song.filename && song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist')}

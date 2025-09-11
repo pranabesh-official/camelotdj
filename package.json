@@ -94,7 +94,7 @@
         "forceCodeSigning": false,
         "asar": true,
         "asarUnpack": [
-            "pythondist/**",
+            "pythondist/api/api",
             "python/**"
         ],
         "icon": "applogo.icns",

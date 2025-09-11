@@ -768,24 +768,35 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
   const getKeyColor = (camelotKey?: string) => {
     if (!camelotKey) return '#ccc';
-    const keyMap: { [key: string]: string } = {
-      '1A': '#ff9999', '1B': '#ffb366', '2A': '#66ff66', '2B': '#66ffb3',
-      '3A': '#66b3ff', '3B': '#9966ff', '4A': '#ffff66', '4B': '#ffb366',
-      '5A': '#ff6666', '5B': '#ff9966', '6A': '#ff66ff', '6B': '#b366ff',
-      '7A': '#66ffff', '7B': '#66b3ff', '8A': '#99ff66', '8B': '#66ff99',
-      '9A': '#ffcc66', '9B': '#ff9966', '10A': '#ff6699', '10B': '#ff66cc',
-      '11A': '#9999ff', '11B': '#cc66ff', '12A': '#66ccff', '12B': '#66ffcc'
-    };
-    return keyMap[camelotKey] || '#ccc';
+    // Match CamelotWheel.tsx which uses CSS variables like --camelot-1a / --camelot-1b
+    const letter = camelotKey.slice(-1).toLowerCase();
+    const number = camelotKey.slice(0, -1);
+    return `var(--camelot-${number}${letter})`;
   };
 
   const getEnergyColor = (level?: number) => {
-    if (!level) return '#666';
-    const colors = {
-      1: '#000080', 2: '#0000FF', 3: '#0080FF', 4: '#00FFFF', 5: '#00FF80',
-      6: '#00FF00', 7: '#80FF00', 8: '#FFFF00', 9: '#FF8000', 10: '#FF0000'
+    if (!level) return '#445';
+    // Smooth green-forward palette for readability from low (darker green) to high (brighter lime)
+    const colors: { [k: number]: string } = {
+      1: '#0d3b2e', 2: '#11553f', 3: '#156a4c', 4: '#1b7d59', 5: '#208e64',
+      6: '#27a56f', 7: '#2fbd78', 8: '#48d482', 9: '#7ae08f', 10: '#a8e6a1'
     };
-    return colors[level as keyof typeof colors] || '#666';
+    return colors[level] || '#48d482';
+  };
+
+  const getContrastingTextColor = (hex: string) => {
+    // Fallback
+    if (!hex || typeof hex !== 'string') return '#fff';
+    // Expand shorthand
+    const full = hex.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3');
+    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(full);
+    if (!m) return '#fff';
+    const r = parseInt(m[1], 16);
+    const g = parseInt(m[2], 16);
+    const b = parseInt(m[3], 16);
+    // Relative luminance
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luminance > 0.6 ? '#111' : '#fff';
   };
 
   const uniqueKeys = useMemo(() => {
@@ -1088,12 +1099,22 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 </td>
                 <td className="energy-cell">
                   {song.energy_level ? (
-                    <span 
-                      className="energy-indicator"
-                      style={{ backgroundColor: getEnergyColor(song.energy_level) }}
-                    >
-                      {renderEditableCell(song, 'energy_level', song.energy_level, 'energy-value')}
-                    </span>
+                    (() => {
+                      const bg = getEnergyColor(song.energy_level);
+                      const fg = getContrastingTextColor(bg);
+                      return (
+                        <span 
+                          className="energy-indicator"
+                          style={{ 
+                            backgroundColor: bg,
+                            color: fg,
+                            boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)'
+                          }}
+                        >
+                          {renderEditableCell(song, 'energy_level', song.energy_level, 'energy-value')}
+                        </span>
+                      );
+                    })()
                   ) : (
                     renderEditableCell(song, 'energy_level', '--', 'energy-value')
                   )}

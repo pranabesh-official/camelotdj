@@ -948,7 +948,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
             <div className="analysis-item">
               <Music size={12} className="mr-1 text-gray-400" />
               <span className="analysis-label">Key</span>
-              <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key) }}>
+              <span className="key-badge" style={{ backgroundColor: getKeyColor(song.camelot_key), color: '#111', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)' }}>
                 {song.camelot_key || 'N/A'}
               </span>
             </div>
@@ -960,9 +960,15 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
             <div className="analysis-item">
               <Zap size={12} className="mr-1 text-gray-400" />
               <span className="analysis-label">Energy</span>
-              <span className="energy-badge" style={{ backgroundColor: getEnergyColor(song.energy_level) }}>
-                {song.energy_level || '--'}
-              </span>
+              {(() => {
+                const bg = getEnergyColor(song.energy_level);
+                const fg = getContrastingTextColor(bg);
+                return (
+                  <span className="energy-badge" style={{ backgroundColor: bg, color: fg, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)' }}>
+                    {song.energy_level || '--'}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -974,25 +980,31 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
 // Helper function to get key color
 const getKeyColor = (camelotKey?: string) => {
   if (!camelotKey) return '#666';
-  const keyMap: { [key: string]: string } = {
-    '1A': '#ff9999', '1B': '#ffb366', '2A': '#66ff66', '2B': '#66ffb3',
-    '3A': '#66b3ff', '3B': '#9966ff', '4A': '#ffff66', '4B': '#ffb366',
-    '5A': '#ff6666', '5B': '#ff9966', '6A': '#ff66ff', '6B': '#b366ff',
-    '7A': '#66ffff', '7B': '#66b3ff', '8A': '#99ff66', '8B': '#66ff99',
-    '9A': '#ffcc66', '9B': '#ff9966', '10A': '#ff6699', '10B': '#ff66cc',
-    '11A': '#9999ff', '11B': '#cc66ff', '12A': '#66ccff', '12B': '#66ffcc'
-  };
-  return keyMap[camelotKey] || '#666';
+  const letter = camelotKey.slice(-1).toLowerCase();
+  const number = camelotKey.slice(0, -1);
+  return `var(--camelot-${number}${letter})`;
 };
 
 // Helper function to get energy color with enhanced gradients
 const getEnergyColor = (level?: number) => {
-  if (!level) return '#666';
-  const colors = {
-    1: '#1a237e', 2: '#283593', 3: '#3949ab', 4: '#3f51b5', 5: '#2196f3',
-    6: '#03a9f4', 7: '#00bcd4', 8: '#009688', 9: '#4caf50', 10: '#8bc34a'
+  if (!level) return '#445';
+  const colors: { [k: number]: string } = {
+    1: '#0d3b2e', 2: '#11553f', 3: '#156a4c', 4: '#1b7d59', 5: '#208e64',
+    6: '#27a56f', 7: '#2fbd78', 8: '#48d482', 9: '#7ae08f', 10: '#a8e6a1'
   };
-  return colors[level as keyof typeof colors] || '#666';
+  return colors[level] || '#48d482';
+};
+
+const getContrastingTextColor = (hex: string) => {
+  if (!hex || typeof hex !== 'string') return '#fff';
+  const full = hex.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3');
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(full);
+  if (!m) return '#fff';
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.6 ? '#111' : '#fff';
 };
 
 // Helper function to format key names professionally

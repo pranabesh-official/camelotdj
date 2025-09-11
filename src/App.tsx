@@ -327,10 +327,31 @@ const App: React.FC = () => {
                         estimatedBitrate = 320; // Default to high quality
                     }
                     
+                    // Normalize metadata to avoid placeholder values like "Unknown Artist"
+                    const isMeaningless = (val: any) => {
+                        if (!val) return true;
+                        const s = String(val).trim().toLowerCase();
+                        return s === 'unknown' || s === 'unknown artist' || s === 'n/a' || s === 'null' || s === 'undefined';
+                    };
+                    const parseFromFilename = (filename?: string) => {
+                        if (!filename) return { artist: undefined as any, title: undefined as any };
+                        const base = filename.replace(/\.[^/.]+$/, '');
+                        if (base.includes(' - ')) {
+                            const [artistPart, ...rest] = base.split(' - ');
+                            return { artist: artistPart, title: rest.join(' - ') };
+                        }
+                        return { artist: undefined as any, title: base };
+                    };
+                    const parsed = parseFromFilename(song.filename);
+                    const normalizedTitle = !isMeaningless(song.title) ? song.title : ((song.id3 && !isMeaningless(song.id3.title) && song.id3.title) || parsed.title || song.filename);
+                    const normalizedArtist = !isMeaningless(song.artist) ? song.artist : ((song.id3 && !isMeaningless(song.id3.artist) && song.id3.artist) || parsed.artist || 'Unknown Artist');
+
                     return {
                         id: song.id ? song.id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: song.filename,
                         file_path: song.file_path,
+                        title: normalizedTitle,
+                        artist: normalizedArtist,
                         key: song.key,
                         scale: song.scale,
                         key_name: song.key_name,
@@ -588,6 +609,9 @@ const App: React.FC = () => {
                         id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: result.filename,
                         file_path: result.file_path,
+                        // Ensure UI components like PlaylistManager show correct metadata
+                        title: (result.id3 && result.id3.title) || (result.metadata && result.metadata.title) || (result.tags && result.tags.title) || result.filename,
+                        artist: (result.id3 && result.id3.artist) || (result.metadata && result.metadata.artist) || (result.tags && result.tags.artist) || 'Unknown Artist',
                         key: result.key,
                         scale: result.scale,
                         key_name: result.key_name,
@@ -1988,16 +2012,59 @@ const App: React.FC = () => {
                     setSongs(prevSongs => {
                         const updatedSongs = allSongs.map(dbSong => {
                             const localSong = prevSongs.find(prev => prev.id === dbSong.id);
+
+                            // Robust normalization to avoid Unknown Artist after restart
+                            const isMeaningless = (val: any) => {
+                                if (!val) return true;
+                                const s = String(val).trim().toLowerCase();
+                                return s === 'unknown' || s === 'unknown artist' || s === 'n/a' || s === 'null' || s === 'undefined';
+                            };
+                            const parseFromFilename = (filename?: string) => {
+                                if (!filename) return { artist: undefined as any, title: undefined as any };
+                                const base = filename.replace(/\.[^/.]+$/, '');
+                                if (base.includes(' - ')) {
+                                    const [artistPart, ...rest] = base.split(' - ');
+                                    return { artist: artistPart, title: rest.join(' - ') };
+                                }
+                                return { artist: undefined as any, title: base };
+                            };
+                            const parsed = parseFromFilename(dbSong.filename);
+                            const normalizedTitle = !isMeaningless(dbSong.title) ? dbSong.title : ((dbSong.id3 && !isMeaningless(dbSong.id3.title) && dbSong.id3.title) || (localSong && !isMeaningless(localSong.title) && localSong.title) || parsed.title || (dbSong.filename ? dbSong.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title'));
+                            const normalizedArtist = !isMeaningless(dbSong.artist) ? dbSong.artist : ((dbSong.id3 && !isMeaningless(dbSong.id3.artist) && dbSong.id3.artist) || (localSong && !isMeaningless(localSong.artist) && localSong.artist) || parsed.artist || 'Unknown Artist');
+
+                            let merged = { ...dbSong, title: normalizedTitle, artist: normalizedArtist } as any;
+
                             // If local song has cover art but database doesn't, keep the local version
                             if (localSong && localSong.cover_art && (!dbSong.cover_art || dbSong.cover_art.trim() === '')) {
                                 console.log('🖼️ Preserving local cover art for:', dbSong.filename);
-                                return {
-                                    ...dbSong,
+                                merged = {
+                                    ...merged,
                                     cover_art: localSong.cover_art,
                                     cover_art_extracted: localSong.cover_art_extracted
                                 };
                             }
-                            return dbSong;
+
+                            // Persist normalized metadata back to DB in background if changed
+                            if ((dbSong.title !== normalizedTitle) || (dbSong.artist !== normalizedArtist)) {
+                                (async () => {
+                                    try {
+                                        await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
+                                            body: JSON.stringify({ 
+                                                song_id: dbSong.id, 
+                                                filename: dbSong.filename, 
+                                                file_path: dbSong.file_path, 
+                                                metadata: { title: normalizedTitle, artist: normalizedArtist }
+                                            })
+                                        });
+                                    } catch (e) {
+                                        console.warn('Failed to persist normalized metadata:', e);
+                                    }
+                                })();
+                            }
+
+                            return merged;
                         });
                         return updatedSongs;
                     });

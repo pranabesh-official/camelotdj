@@ -84,6 +84,88 @@
   color: white;
 }
 
+/* Auto Mix Controls */
+.automix-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.control-btn.automix-btn {
+  background: linear-gradient(135deg, #2a2a2a 0%, #333333 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.control-btn.automix-btn:hover {
+  background: linear-gradient(135deg, #333333 0%, #3a3a3a 100%);
+  border-color: rgba(147, 51, 234, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    0 0 12px rgba(147, 51, 234, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.control-btn.automix-btn.active {
+  background: linear-gradient(135deg, #9333ea 0%, #a855f7 100%);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 
+    0 4px 12px rgba(147, 51, 234, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.control-btn.automix-btn.active:hover {
+  background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+  box-shadow: 
+    0 6px 16px rgba(147, 51, 234, 0.4),
+    0 0 20px rgba(147, 51, 234, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.control-btn.automix-btn svg {
+  color: #ccc;
+  transition: all 0.3s ease;
+}
+
+.control-btn.automix-btn:hover svg {
+  transform: scale(1.1);
+  color: #a855f7;
+  filter: drop-shadow(0 0 4px rgba(168, 85, 247, 0.4));
+}
+
+.control-btn.automix-btn.active svg {
+  color: white;
+}
+
+.automix-label {
+  font-size: 12px;
+  color: #ccc;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.3s ease;
+}
+
+.control-btn.automix-btn.active + .automix-label {
+  color: #a855f7;
+}
+
+.automix-error {
+  color: #ef4444;
+  font-size: 14px;
+  cursor: help;
+  transition: color 0.3s ease;
+}
+
+.automix-error:hover {
+  color: #dc2626;
+}
+
 .control-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

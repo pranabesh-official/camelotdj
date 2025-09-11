@@ -32,6 +32,7 @@ import io
 import platform
 import psutil
 from download_queue_manager import download_queue_manager, DownloadTask, DownloadPriority, DownloadStatus
+from automix_api import get_automix_api
 
 #
 # Notes on setting up a flask GraphQL server
@@ -5612,12 +5613,38 @@ def update_cover_art():
             "status": "error"
         }), 500
 
+# Auto Mix API Endpoints
+@app.route('/automix/next-track', methods=['POST'])
+def automix_next_track():
+    """Get the next track recommendation for automix."""
+    automix_api = get_automix_api()
+    return automix_api.get_next_track(request)
+
+@app.route('/automix/analyze-playlist', methods=['POST'])
+def automix_analyze_playlist():
+    """Analyze a playlist for automix compatibility."""
+    automix_api = get_automix_api()
+    return automix_api.analyze_playlist(request)
+
+@app.route('/automix/ai-status', methods=['GET'])
+def automix_ai_status():
+    """Get the current status of the AI system."""
+    automix_api = get_automix_api()
+    return automix_api.get_ai_status(request)
+
+@app.route('/automix/transition-types', methods=['GET'])
+def automix_transition_types():
+    """Get available transition types for automix."""
+    automix_api = get_automix_api()
+    return automix_api.get_transition_types(request)
+
 if __name__ == "__main__":
     print(f"🎆 Starting Enhanced Mixed In Key API Server with WebSocket support...")
     print(f"📞 Port: {args.apiport}")
     print(f"🔐 Signing Key: {args.signingkey}")
     print(f"🔌 WebSocket: Enabled for real-time download progress")
     print(f"🎧 Enhanced Features: 320kbps MP3, metadata extraction, auto-analysis")
+    print(f"🤖 Auto Mix: AI-powered track selection with smollm2-135M")
     
     # Run with SocketIO support
     socketio.run(

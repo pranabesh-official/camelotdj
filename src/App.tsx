@@ -95,6 +95,13 @@ const App: React.FC = () => {
     // Audio Player Settings
     const [volume, setVolume] = useState(1);
     
+    // Auto Mix Settings
+    const [isAutoMixEnabled, setIsAutoMixEnabled] = useState(false);
+    const [autoMixPlaylist, setAutoMixPlaylist] = useState<Song[]>([]);
+    const [isAutoMixLoading, setIsAutoMixLoading] = useState(false);
+    const [autoMixError, setAutoMixError] = useState<string | null>(null);
+    const [autoPlay, setAutoPlay] = useState(false);
+    
     // YouTube Music Settings
     const [downloadPath, setDownloadPath] = useState<string>('');
     const [isDownloadPathSet, setIsDownloadPathSet] = useState(false);
@@ -1481,6 +1488,194 @@ const App: React.FC = () => {
         setVolume(newVolume);
     }, []);
 
+    // Auto Mix API Functions
+    const getNextTrackRecommendation = useCallback(async (currentSong: Song, playlist: Song[], transitionType: string = 'random') => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/next-track`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({
+                    current_song: currentSong,
+                    playlist: playlist,
+                    transition_type: transitionType
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to get next track recommendation:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    const analyzePlaylistForAutoMix = useCallback(async (playlist: Song[]) => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/analyze-playlist`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({
+                    playlist: playlist
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to analyze playlist:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    const getAutoMixStatus = useCallback(async () => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/ai-status?signingkey=${encodeURIComponent(apiSigningKey)}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to get Auto Mix status:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    // Auto Mix Handlers
+    const handleAutoMixToggle = useCallback(async (enabled: boolean) => {
+        console.log('🎵 App: handleAutoMixToggle called with:', enabled);
+        console.log('🎵 App: Current state:', {
+            isAutoMixEnabled,
+            songsCount: songs.length,
+            selectedPlaylist: selectedPlaylist?.name || 'None',
+            selectedPlaylistSongs: selectedPlaylist?.songs?.length || 0
+        });
+        
+        setIsAutoMixEnabled(enabled);
+        setAutoMixError(null);
+        
+        if (enabled) {
+            // When enabling Auto Mix, set up the playlist
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            console.log('🎵 App: Setting Auto Mix playlist with', currentPlaylist.length, 'songs');
+            setAutoMixPlaylist(currentPlaylist);
+            
+            // Analyze the playlist for compatibility
+            try {
+                const analysis = await analyzePlaylistForAutoMix(currentPlaylist);
+                console.log('🎵 App: Auto Mix playlist analysis:', analysis);
+            } catch (error) {
+                console.warn('❌ App: Failed to analyze playlist for Auto Mix:', error);
+            }
+        } else {
+            // When disabling Auto Mix, clear the playlist
+            console.log('🎵 App: Disabling Auto Mix, clearing playlist');
+            setAutoMixPlaylist([]);
+        }
+    }, [selectedPlaylist, songs, analyzePlaylistForAutoMix, isAutoMixEnabled]);
+
+    const handleAutoMixNext = useCallback(async () => {
+        console.log('🎵 ===== APP AUTO MIX NEXT =====');
+        console.log('🎵 App: handleAutoMixNext called');
+        console.log('🎵 App: currentlyPlaying:', currentlyPlaying?.filename);
+        console.log('🎵 App: autoMixPlaylist length:', autoMixPlaylist.length);
+        console.log('🎵 App: songs length:', songs.length);
+        
+        if (!currentlyPlaying) {
+            console.warn('🎵 App: No current song for Auto Mix');
+            return;
+        }
+
+        // Ensure we have a playlist - use autoMixPlaylist if available, otherwise fall back to songs
+        const availablePlaylist = autoMixPlaylist.length > 0 ? autoMixPlaylist : songs;
+        
+        if (availablePlaylist.length === 0) {
+            console.warn('🎵 App: No songs available for Auto Mix');
+            return;
+        }
+
+        console.log('🎵 App: Getting next track from', availablePlaylist.length, 'songs');
+
+        setIsAutoMixLoading(true);
+        setAutoMixError(null);
+
+        try {
+            console.log('🎵 App: Calling getNextTrackRecommendation...');
+            // Get next track recommendation
+            const recommendation = await getNextTrackRecommendation(
+                currentlyPlaying,
+                availablePlaylist,
+                'random' // You can make this configurable
+            );
+            
+            console.log('🎵 App: Got recommendation:', recommendation);
+
+            if (recommendation.status === 'success' && recommendation.recommended_track) {
+                const recommendedSong = recommendation.recommended_track;
+                console.log('🎵 App: Recommendation successful, recommended song:', recommendedSong);
+                
+                // Find the recommended song in our songs array
+                const foundSong = songs.find(song => song.id === recommendedSong.id);
+                console.log('🎵 App: Found song in library:', !!foundSong, foundSong?.filename);
+                
+                if (foundSong) {
+                    // Play the recommended song
+                    console.log('🎵 App: Setting currentlyPlaying to:', foundSong.filename);
+                    setCurrentlyPlaying(foundSong);
+                    setSelectedSong(foundSong);
+                    // Trigger auto-play for seamless transition
+                    setAutoPlay(true);
+                    console.log('🎵 App: Auto Mix: Playing recommended track:', foundSong.filename);
+                } else {
+                    console.error('🎵 App: Recommended track not found in library:', recommendedSong);
+                    throw new Error('Recommended track not found in library');
+                }
+            } else {
+                console.error('🎵 App: Recommendation failed:', recommendation);
+                throw new Error(recommendation.message || 'No suitable track found');
+            }
+        } catch (error) {
+            console.error('🎵 App: Auto Mix next track failed:', error);
+            setAutoMixError(error instanceof Error ? error.message : 'Failed to get next track');
+        } finally {
+            setIsAutoMixLoading(false);
+            console.log('🎵 ===== END APP AUTO MIX NEXT =====');
+        }
+    }, [currentlyPlaying, autoMixPlaylist, songs, getNextTrackRecommendation]);
+
+    // Update Auto Mix playlist when selected playlist changes
+    useEffect(() => {
+        if (isAutoMixEnabled) {
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            console.log('🎵 App: Updating Auto Mix playlist with', currentPlaylist.length, 'songs');
+            setAutoMixPlaylist(currentPlaylist);
+        }
+    }, [selectedPlaylist, songs, isAutoMixEnabled]);
+
+    // Auto-update Auto Mix playlist when songs are loaded
+    useEffect(() => {
+        if (isAutoMixEnabled && songs.length > 0) {
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            setAutoMixPlaylist(currentPlaylist);
+        }
+    }, [songs, selectedPlaylist, isAutoMixEnabled]);
+
     const handleNextSong = useCallback(() => {
         const currentSongs = selectedPlaylist ? selectedPlaylist.songs : songs;
         const currentIndex = currentSongs.findIndex(song => song.id === (currentlyPlaying ? currentlyPlaying.id : null));
@@ -2050,6 +2245,12 @@ const App: React.FC = () => {
                                     onVolumeChange={handleVolumeChange}
                                     isLibraryLoaded={isLibraryLoaded}
                                     isCoverArtExtractionComplete={isCoverArtExtractionComplete}
+                                    isAutoMixEnabled={isAutoMixEnabled}
+                                    onAutoMixToggle={handleAutoMixToggle}
+                                    onAutoMixNext={handleAutoMixNext}
+                                    playlist={autoMixPlaylist}
+                                    autoPlay={autoPlay}
+                                    onAutoPlayComplete={() => setAutoPlay(false)}
                                 />
                             </div>
 

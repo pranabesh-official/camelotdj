@@ -11,7 +11,9 @@ import {
   Zap,
   Music,
   Volume2,
-  VolumeX
+  VolumeX,
+  Shuffle,
+  Sparkles
 } from 'lucide-react';
 import { Song } from '../App';
 import './AudioPlayer.css';
@@ -33,9 +35,33 @@ interface AudioPlayerProps {
   onVolumeChange?: (volume: number) => void;
   isLibraryLoaded?: boolean;
   isCoverArtExtractionComplete?: boolean;
+  // Auto Mix props
+  isAutoMixEnabled?: boolean;
+  onAutoMixToggle?: (enabled: boolean) => void;
+  onAutoMixNext?: () => void;
+  playlist?: Song[];
+  // Auto play prop
+  autoPlay?: boolean;
+  onAutoPlayComplete?: () => void;
 }
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, apiPort = 5002, apiSigningKey = 'devkey', volume = 1, onVolumeChange, isLibraryLoaded = true, isCoverArtExtractionComplete = true }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ 
+  song, 
+  onNext, 
+  onPrevious, 
+  apiPort = 5002, 
+  apiSigningKey = 'devkey', 
+  volume = 1, 
+  onVolumeChange, 
+  isLibraryLoaded = true, 
+  isCoverArtExtractionComplete = true,
+  isAutoMixEnabled = false,
+  onAutoMixToggle,
+  onAutoMixNext,
+  playlist = [],
+  autoPlay = false,
+  onAutoPlayComplete
+}) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -46,6 +72,8 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
   const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [localVolume, setLocalVolume] = useState(volume);
+  const [isAutoMixLoading, setIsAutoMixLoading] = useState(false);
+  const [autoMixError, setAutoMixError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformData = useRef<number[]>([]);
@@ -76,7 +104,32 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       setIsLoading(false);
       console.log('Audio loaded successfully, duration:', audio.duration);
     };
-    const handleEnded = () => setIsPlaying(false);
+    const handleEnded = () => {
+      console.log('🎵 ===== SONG ENDED EVENT =====');
+      console.log('🎵 Song ended! Auto Mix enabled:', isAutoMixEnabled, 'onAutoMixNext available:', !!onAutoMixNext);
+      console.log('🎵 Current song:', song?.filename);
+      console.log('🎵 Playlist length:', playlist.length);
+      console.log('🎵 Audio element state:', {
+        currentTime: audioRef.current?.currentTime,
+        duration: audioRef.current?.duration,
+        paused: audioRef.current?.paused,
+        ended: audioRef.current?.ended
+      });
+      
+      setIsPlaying(false);
+      
+      // Trigger Auto Mix next track if enabled
+      if (isAutoMixEnabled && onAutoMixNext) {
+        console.log('🎵 Song ended, triggering Auto Mix next track...');
+        // Add a small delay to ensure the audio state is properly updated
+        setTimeout(() => {
+          onAutoMixNext();
+        }, 100);
+      } else {
+        console.log('🎵 Song ended but Auto Mix not triggered - enabled:', isAutoMixEnabled, 'handler available:', !!onAutoMixNext);
+      }
+      console.log('🎵 ===== END SONG ENDED EVENT =====');
+    };
     const handleLoadStart = () => {
       setIsLoading(true);
       console.log('Audio loading started for:', song.filename);
@@ -119,6 +172,84 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
       audio.removeEventListener('loadeddata', handleLoadedData);
     };
   }, [song, apiPort, apiSigningKey]);
+
+  // Auto-play effect for Auto Mix
+  useEffect(() => {
+    console.log('🎵 Auto-play effect triggered:', {
+      autoPlay,
+      hasSong: !!song,
+      songFilename: song?.filename,
+      isLoading,
+      audioError,
+      isLibraryLoaded,
+      isCoverArtExtractionComplete
+    });
+    
+    if (autoPlay && song && !isLoading && !audioError && isLibraryLoaded && isCoverArtExtractionComplete) {
+      console.log('🎵 Auto-play triggered for:', song.filename);
+      const audio = audioRef.current;
+      if (audio) {
+        audio.play().then(() => {
+          console.log('🎵 Auto-play started successfully');
+          setIsPlaying(true);
+          if (onAutoPlayComplete) {
+            onAutoPlayComplete();
+          }
+        }).catch((error) => {
+          console.error('🎵 Auto-play failed:', error);
+          setAudioError('Auto-play failed');
+        });
+      } else {
+        console.error('🎵 Auto-play failed: No audio element found');
+      }
+    }
+  }, [autoPlay, song, isLoading, audioError, isLibraryLoaded, isCoverArtExtractionComplete, onAutoPlayComplete]);
+
+  // Robust song end detection for Auto Mix
+  useEffect(() => {
+    if (!isAutoMixEnabled || !onAutoMixNext || !song || !audioRef.current) {
+      return;
+    }
+
+    console.log('🎵 Setting up song end detection for Auto Mix');
+    
+    const checkSongEnd = () => {
+      const audio = audioRef.current;
+      if (!audio || !duration || duration <= 0) return;
+      
+      const currentTime = audio.currentTime;
+      const timeDiff = Math.abs(currentTime - duration);
+      const progressPercent = (currentTime / duration) * 100;
+      
+      // Check if we're very close to the end (within 0.5 seconds or 99.5% complete)
+      if ((timeDiff < 0.5 && currentTime >= duration * 0.995) || progressPercent >= 99.5) {
+        console.log('🎵 Song end detected via time tracking:', {
+          currentTime,
+          duration,
+          timeDiff,
+          progressPercent: progressPercent.toFixed(2) + '%',
+          isPlaying,
+          isAutoMixLoading
+        });
+        
+        // Only trigger if we're not already processing Auto Mix
+        if (!isAutoMixLoading) {
+          console.log('🎵 Triggering Auto Mix from song end detection');
+          // Trigger Auto Mix directly instead of calling handleEnded
+          setIsPlaying(false);
+          onAutoMixNext();
+        }
+      }
+    };
+
+    // Check every 100ms when Auto Mix is enabled
+    const interval = setInterval(checkSongEnd, 100);
+    
+    return () => {
+      console.log('🎵 Cleaning up song end detection');
+      clearInterval(interval);
+    };
+  }, [isAutoMixEnabled, onAutoMixNext, song, duration, isAutoMixLoading]);
 
   const fetchWaveformData = async () => {
     if (!song) return;
@@ -558,6 +689,69 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
     }
   };
 
+  const handleAutoMixToggle = async () => {
+    console.log('🎵 Auto Mix Toggle clicked');
+    console.log('🎵 Current state:', {
+      isAutoMixEnabled,
+      isLibraryLoaded,
+      isCoverArtExtractionComplete,
+      isAutoMixLoading,
+      playlistLength: playlist.length,
+      hasSong: !!song
+    });
+    
+    if (!onAutoMixToggle) {
+      console.log('❌ No onAutoMixToggle handler provided');
+      return;
+    }
+    
+    const newState = !isAutoMixEnabled;
+    setIsAutoMixLoading(true);
+    setAutoMixError(null);
+    
+    try {
+      // If enabling auto mix, get the next track immediately
+      if (newState && song && playlist.length > 0) {
+        console.log('🎵 Enabling Auto Mix and getting next track...');
+        await handleAutoMixNext();
+      }
+      
+      console.log('🎵 Calling onAutoMixToggle with:', newState);
+      onAutoMixToggle(newState);
+    } catch (error) {
+      console.error('❌ Auto Mix toggle error:', error);
+      setAutoMixError('Failed to toggle Auto Mix');
+    } finally {
+      setIsAutoMixLoading(false);
+    }
+  };
+
+  const handleAutoMixNext = async () => {
+    console.log('🎵 ===== AUDIO PLAYER AUTO MIX NEXT =====');
+    console.log('🎵 AudioPlayer: handleAutoMixNext called, song:', song?.filename);
+    console.log('🎵 onAutoMixNext available:', !!onAutoMixNext);
+    
+    if (!onAutoMixNext || !song) {
+      console.log('🎵 AudioPlayer: Missing requirements - onAutoMixNext:', !!onAutoMixNext, 'song:', !!song);
+      return;
+    }
+    
+    setIsAutoMixLoading(true);
+    setAutoMixError(null);
+    
+    try {
+      console.log('🎵 AudioPlayer: Calling onAutoMixNext...');
+      await onAutoMixNext();
+      console.log('🎵 AudioPlayer: onAutoMixNext completed successfully');
+    } catch (error) {
+      console.error('🎵 AudioPlayer: Auto Mix next track error:', error);
+      setAutoMixError('Failed to get next track');
+    } finally {
+      setIsAutoMixLoading(false);
+      console.log('🎵 ===== END AUDIO PLAYER AUTO MIX NEXT =====');
+    }
+  };
+
   if (!isLibraryLoaded) {
     return (
       <div className="audio-player library-loading">
@@ -654,6 +848,37 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ song, onNext, onPrevious, api
               <button className="control-btn" onClick={onNext} disabled={!onNext || !isLibraryLoaded || !isCoverArtExtractionComplete} title={!isLibraryLoaded ? "Library loading..." : !isCoverArtExtractionComplete ? "Extracting cover art..." : "Next track"}>
                 <SkipForward size={16} />
               </button>
+            </div>
+
+            {/* Auto Mix Controls */}
+            <div className="automix-controls">
+              <button 
+                className={`control-btn automix-btn ${isAutoMixEnabled ? 'active' : ''}`}
+                onClick={handleAutoMixToggle}
+                disabled={!isLibraryLoaded || !isCoverArtExtractionComplete || isAutoMixLoading}
+                title={
+                  !isLibraryLoaded ? "Library loading..." : 
+                  !isCoverArtExtractionComplete ? "Extracting cover art..." : 
+                  isAutoMixLoading ? "Processing..." :
+                  isAutoMixEnabled ? 'Disable Auto Mix' : 'Enable Auto Mix'
+                }
+              >
+                {isAutoMixLoading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : isAutoMixEnabled ? (
+                  <Sparkles size={14} />
+                ) : (
+                  <Shuffle size={14} />
+                )}
+              </button>
+              <span className="automix-label">
+                {isAutoMixEnabled ? 'Auto Mix ON' : 'Auto Mix OFF'}
+              </span>
+              {autoMixError && (
+                <span className="automix-error" title={autoMixError}>
+                  ⚠️
+                </span>
+              )}
             </div>
 
             {/* Volume Controls */}

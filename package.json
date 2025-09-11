@@ -12,7 +12,9 @@
         "start": "concurrently \"npm run react-start\" \"npm run main-start\"",
         "watch": "concurrently \"npm run main-watch\" \"npm run react-watch\"",
         "build": "npm run python-build && npm run react-build && npm run main-build",
-        "build:mac": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && cross-env npm_config_arch=arm64 ELECTRON_BUILDER_ARCH=arm64 electron-builder --mac",
+        "build:mac": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --arm64",
+        "build:mac:x64": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --x64",
+        "build:mac:universal": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --universal",
         "main-lint": "tslint -c tslint.json -p tsconfig.electronMain.json",
         "main-start": "tsc -p tsconfig.electronMain.json && wait-on http://localhost:3001/ && cross-env NODE_ENV=development electron .",
         "main-watch": "tsc -w -p tsconfig.electronMain.json",
@@ -93,15 +95,7 @@
         "asar": true,
         "asarUnpack": [
             "pythondist/**",
-            "python/**",
-            "build/**",
-            "build/static/**",
-            "build/static/css/**",
-            "build/static/js/**",
-            "build/static/media/**",
-            "build/logwhite.png",
-            "build/applogo.png",
-            "logwhite.png"
+            "python/**"
         ],
         "icon": "applogo.icns",
         "directories": {
@@ -118,18 +112,17 @@
             "python/**",
             "build/**"
         ],
-        "extraResources": [
-            {
-                "from": "build",
-                "to": "build",
-                "filter": [
-                    "**/*"
-                ]
-            }
-        ],
+        "extraResources": [],
         "extraFiles": [],
         "mac": {
             "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                },
                 {
                     "target": "zip",
                     "arch": [

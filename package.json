@@ -12,7 +12,9 @@
         "start": "concurrently \"npm run react-start\" \"npm run main-start\"",
         "watch": "concurrently \"npm run main-watch\" \"npm run react-watch\"",
         "build": "npm run python-build && npm run react-build && npm run main-build",
-        "build:mac": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && cross-env npm_config_arch=arm64 ELECTRON_BUILDER_ARCH=arm64 electron-builder --mac",
+        "build:mac": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --arm64",
+        "build:mac:x64": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --x64",
+        "build:mac:universal": "npm run python-build && npm run react-build && tsc -p tsconfig.electronMain.json && electron-builder --mac --universal",
         "main-lint": "tslint -c tslint.json -p tsconfig.electronMain.json",
         "main-start": "tsc -p tsconfig.electronMain.json && wait-on http://localhost:3001/ && cross-env NODE_ENV=development electron .",
         "main-watch": "tsc -w -p tsconfig.electronMain.json",
@@ -59,16 +61,22 @@
     "devDependencies": {
         "@types/babel__traverse": "^7.0.15",
         "@types/node": "^18.19.123",
+        "buffer": "^6.0.3",
         "concurrently": "^4.1.0",
         "cross-env": "^5.2.0",
+        "crypto-browserify": "^3.12.1",
         "electron": "^13.0.0",
         "electron-builder": "^24.13.3",
+        "path-browserify": "^1.0.1",
+        "process": "^0.11.10",
         "source-map-support": "^0.5.11",
+        "stream-browserify": "^3.0.0",
         "tslint": "^5.9.1",
         "tslint-config-standard": "^7.0.0",
         "tslint-loader": "^3.5.3",
         "tslint-react": "^3.4.0",
         "typescript": "^5.9.2",
+        "util": "^0.12.5",
         "wait-on": "^3.2.0"
     },
     "eslintConfig": {
@@ -87,15 +95,7 @@
         "asar": true,
         "asarUnpack": [
             "pythondist/**",
-            "python/**",
-            "build/**",
-            "build/static/**",
-            "build/static/css/**",
-            "build/static/js/**",
-            "build/static/media/**",
-            "build/logwhite.png",
-            "build/applogo.png",
-            "logwhite.png"
+            "python/**"
         ],
         "icon": "applogo.icns",
         "directories": {
@@ -112,16 +112,17 @@
             "python/**",
             "build/**"
         ],
-        "extraResources": [
-            {
-                "from": "build",
-                "to": "build",
-                "filter": ["**/*"]
-            }
-        ],
+        "extraResources": [],
         "extraFiles": [],
         "mac": {
             "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                },
                 {
                     "target": "zip",
                     "arch": [

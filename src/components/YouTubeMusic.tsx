@@ -1,5 +1,6 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
+import DownloadManager from './DownloadManager';
 
 interface YouTubeTrack {
     id: string;
@@ -11,12 +12,39 @@ interface YouTubeTrack {
     url: string;
 }
 
+interface AudioState {
+    isPlaying: boolean;
+    isLoading: boolean;
+    currentTime: number;
+    duration: number;
+    volume: number;
+    isMuted: boolean;
+    playbackRate: number;
+    error: string | null;
+    isBuffering: boolean;
+    bufferProgress: number;
+    isSeeking: boolean;
+    seekPreviewTime: number | null;
+}
+
+interface DownloadState {
+    isDownloading: boolean;
+    progress: number;
+    stage: string;
+    message: string;
+    canCancel: boolean;
+    isCancelled: boolean;
+    isCompleted: boolean;
+    error: string | null;
+}
+
 interface YouTubeMusicProps {
     apiPort: number;
     apiSigningKey: string;
     downloadPath: string;
     isDownloadPathSet: boolean;
     onDownloadComplete?: (song: any) => void;
+    downloadManagerRef?: React.RefObject<any>;
 }
 
 interface SearchSuggestion {
@@ -40,31 +68,120 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     apiSigningKey,
     downloadPath,
     isDownloadPathSet,
-    onDownloadComplete
+    onDownloadComplete,
+    downloadManagerRef
 }) => {
+    // Search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<YouTubeTrack[]>([]);
     const [isSearching, setIsSearching] = useState(false);
-    const [isDownloading, setIsDownloading] = useState<string | null>(null);
-    const [downloadProgress, setDownloadProgress] = useState<{[key: string]: number}>({});
-    const [realTimeProgress, setRealTimeProgress] = useState<{[key: string]: any}>({});
-    const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
-    const [cancellableDownloads, setCancellableDownloads] = useState<Set<string>>(new Set());
-    const [cancelledDownloads, setCancelledDownloads] = useState<Set<string>>(new Set());
-    const [previewingId, setPreviewingId] = useState<string | null>(null);
-    const [loadingPreviewId, setLoadingPreviewId] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const audioRef = useRef<HTMLAudioElement | null>(null);
-    const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const isStoppingRef = useRef<boolean>(false);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+    
+    // Table sorting and filtering state
+    const [sortField, setSortField] = useState<'title' | 'artist' | 'album' | 'duration'>('title');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [searchTerm, setSearchTerm] = useState<string>('');
+    
+    // Sorting function
+    const handleSort = (field: 'title' | 'artist' | 'album' | 'duration') => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
+    
+    // Filter and sort search results
+    const filteredAndSortedResults = useMemo(() => {
+        let filtered = searchResults;
+        
+        // Apply search filter
+        if (searchTerm) {
+            filtered = filtered.filter(track => 
+                track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                track.artist.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (track.album && track.album.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+        }
+        
+        // Apply sorting
+        return filtered.sort((a, b) => {
+            let aValue: any = a[sortField];
+            let bValue: any = b[sortField];
+            
+            if (aValue === undefined) aValue = '';
+            if (bValue === undefined) bValue = '';
+            
+            // Handle duration sorting (convert to seconds)
+            if (sortField === 'duration') {
+                const parseDuration = (duration: string) => {
+                    if (!duration) return 0;
+                    const parts = duration.split(':').map(Number);
+                    return parts.length === 2 ? parts[0] * 60 + parts[1] : parts[0];
+                };
+                aValue = parseDuration(aValue);
+                bValue = parseDuration(bValue);
+            }
+            
+            if (sortDirection === 'asc') {
+                return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+            } else {
+                return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+            }
+        });
+    }, [searchResults, searchTerm, sortField, sortDirection]);
+    
+    // Music Icon component for cover art placeholder
+    const MusicIcon = () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+        </svg>
+    );
+    
     const [autocompleteError, setAutocompleteError] = useState<string | null>(null);
+    
+    // Audio state - centralized and robust
+    const [audioState, setAudioState] = useState<AudioState>({
+        isPlaying: false,
+        isLoading: false,
+        currentTime: 0,
+        duration: 0,
+        volume: 0.7,
+        isMuted: false,
+        playbackRate: 1.0,
+        error: null,
+        isBuffering: false,
+        bufferProgress: 0,
+        isSeeking: false,
+        seekPreviewTime: null
+    });
+    
+    // Download state - simplified (handled by DownloadManager)
+    const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
+    
+    // UI state
+    const [error, setError] = useState<string | null>(null);
+    const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
+    const [isProgressBarExpanded, setIsProgressBarExpanded] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+    
+    // Refs
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const progressUpdateRef = useRef<NodeJS.Timeout | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const socketRef = useRef<Socket | null>(null);
+    const isStoppingRef = useRef<boolean>(false);
+    const progressBarRef = useRef<HTMLDivElement>(null);
+    const touchStartY = useRef<number>(0);
+    const touchStartTime = useRef<number>(0);
+    const isSwipeGesture = useRef<boolean>(false);
     
     // Load recent searches from localStorage and initialize WebSocket
     useEffect(() => {
@@ -140,101 +257,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     console.log('🧪 Test response received:', data);
                 });
                 
-                socket.on('download_progress', (data) => {
-                    console.log('📥 Download progress update:', data);
-                    
-                    if (data.download_id) {
-                        console.log('🔄 Updating progress for:', data.download_id, 'Stage:', data.stage, 'Progress:', data.progress);
-                        
-                        setRealTimeProgress(prev => {
-                            const newProgress = {
-                                ...prev,
-                                [data.download_id]: data
-                            };
-                            console.log('📊 New real-time progress state:', newProgress);
-                            return newProgress;
-                        });
-                        
-                        // Update legacy progress for compatibility
-                        if (data.progress !== undefined) {
-                            setDownloadProgress(prev => {
-                                const newProgress = {
-                                    ...prev,
-                                    [data.download_id]: data.progress
-                                };
-                                console.log('📈 New download progress state:', newProgress);
-                                return newProgress;
-                            });
-                        }
-                        
-                        // Mark as downloaded when complete
-                        if (data.stage === 'complete' && data.progress === 100) {
-                            console.log('✅ Download complete for:', data.download_id);
-                            setDownloadedTracks(prev => new Set([...prev, data.download_id]));
-                            setIsDownloading(null);
-                            
-                            // Clear cancellable downloads state
-                            setCancellableDownloads(prev => {
-                                const newSet = new Set(prev);
-                                // Find track ID from download ID
-                                const trackId = Object.keys(realTimeProgress).find(id => id === data.download_id)?.split('_')[0];
-                                if (trackId) {
-                                    newSet.delete(trackId);
-                                }
-                                return newSet;
-                            });
-                            
-                            // Trigger collection refresh if callback provided
-                            if (onDownloadComplete && data.filename) {
-                                onDownloadComplete({
-                                    filename: data.filename,
-                                    file_path: data.file_path,
-                                    download_id: data.download_id
-                                });
-                            }
-                            
-                            // Clear progress after delay
-                            setTimeout(() => {
-                                setRealTimeProgress(prev => {
-                                    const newProgress = { ...prev };
-                                    delete newProgress[data.download_id];
-                                    return newProgress;
-                                });
-                                setDownloadProgress(prev => {
-                                    const newProgress = { ...prev };
-                                    delete newProgress[data.download_id];
-                                    return newProgress;
-                                });
-                            }, 5000);
-                        }
-                        
-                        // Handle errors
-                        if (data.stage === 'error') {
-                            console.error('❌ Download error for:', data.download_id, data.message);
-                            setError(data.message || 'Download failed');
-                            setIsDownloading(null);
-                        }
-                        
-                        // Handle cancellation
-                        if (data.stage === 'cancelled') {
-                            console.log('🚫 Download cancelled for:', data.download_id);
-                            setIsDownloading(null);
-                            
-                            // Clear cancellable downloads state
-                            setCancellableDownloads(prev => {
-                                const newSet = new Set(prev);
-                                // Find track ID from download ID
-                                const trackId = Object.keys(realTimeProgress).find(id => id === data.download_id)?.split('_')[0];
-                                if (trackId) {
-                                    newSet.delete(trackId);
-                                }
-                                return newSet;
-                            });
-                        }
-                    } else {
-                        console.warn('⚠️ Download progress update without download_id:', data);
-                    }
-                });
+                // Download progress is now handled by DownloadManager
+                // Keep this for any other WebSocket events if needed
                 
                 socketRef.current = socket;
                 
@@ -445,378 +469,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, [searchQuery, apiPort, apiSigningKey, saveRecentSearch]);
 
-    // Enhanced download track with real-time progress and automatic collection integration
-    const handleDownload = useCallback(async (track: YouTubeTrack) => {
-        if (!isDownloadPathSet) {
-            alert('Please set a download path in Settings first.');
-            return;
-        }
 
-        const downloadId = `${track.id}_${Date.now()}`;
-        setIsDownloading(track.id);
-        setDownloadProgress(prev => ({ ...prev, [downloadId]: 0 }));
-        setRealTimeProgress(prev => ({ ...prev, [downloadId]: { stage: 'starting', progress: 0, message: 'Preparing download...' } }));
-        setCancellableDownloads(prev => new Set([...prev, track.id]));
-        setCancelledDownloads(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(track.id);
-            return newSet;
-        });
-        setError(null);
-        
-        // Join download room for WebSocket updates
-        if (socketRef.current) {
-            console.log('🔌 Joining download room for:', downloadId);
-            socketRef.current.emit('join_download', { download_id: downloadId });
-        } else {
-            console.warn('⚠️ WebSocket not available for download:', downloadId);
-        }
-        
-        // Convert YouTube Music URL to regular YouTube URL
-        const convertToYouTubeUrl = (url: string, videoId: string) => {
-            if (videoId && videoId.trim()) {
-                return `https://www.youtube.com/watch?v=${videoId.trim()}`;
-            }
-            if (url && url.includes('youtube.com/watch')) {
-                return url;
-            }
-            if (url && url.includes('music.youtube.com')) {
-                return url.replace('music.youtube.com', 'youtube.com');
-            }
-            return url;
-        };
-        
-        try {
-            const downloadUrl = convertToYouTubeUrl(track.url, track.id);
-            
-            // Validate the URL format
-            if (!downloadUrl || (!downloadUrl.includes('youtube.com/watch?v=') && !downloadUrl.includes('youtu.be/'))) {
-                throw new Error('Invalid YouTube URL format. Unable to generate proper download URL.');
-            }
-            
-            console.log('📥 Starting enhanced download:', {
-                title: track.title,
-                artist: track.artist,
-                videoId: track.id,
-                downloadUrl: downloadUrl,
-                downloadPath: downloadPath,
-                downloadId: downloadId
-            });
-            
-            const cleanTitle = (track.title?.trim() || 'Unknown Title').replace(/[<>:"/\\|?*]/g, '_');
-            const cleanArtist = (track.artist?.trim() || 'Unknown Artist').replace(/[<>:"/\\|?*]/g, '_');
-            
-            const requestBody = {
-                url: downloadUrl,
-                title: cleanTitle,
-                artist: cleanArtist,
-                download_path: downloadPath,
-                download_id: downloadId,
-                signingkey: apiSigningKey,
-                quality: '320kbps', // Ensure minimum 320kbps quality
-                format: 'mp3',
-                embed_metadata: true,
-                embed_artwork: true
-            };
-            
-            console.log('📡 Sending enhanced download request:', requestBody);
-            
-            // Use enhanced download endpoint
-            const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/download-enhanced`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Signing-Key': apiSigningKey
-                },
-                body: JSON.stringify(requestBody)
-            });
-            
-            if (!response.ok) {
-                const errorText = await response.text();
-                let errorMessage;
-                try {
-                    const errorJson = JSON.parse(errorText);
-                    errorMessage = errorJson.error || `Server Error: ${response.status} ${response.statusText}`;
-                } catch {
-                    errorMessage = `Network Error: ${response.status} ${response.statusText}`;
-                }
-                
-                // Add specific handling for common HTTP errors
-                if (response.status === 400) {
-                    errorMessage = `Bad Request: ${errorMessage}. Please check if the video URL is valid and accessible.`;
-                } else if (response.status === 401) {
-                    errorMessage = 'Authentication failed. Please restart the application.';
-                } else if (response.status === 404) {
-                    errorMessage = 'Video not found or unavailable for download.';
-                } else if (response.status >= 500) {
-                    errorMessage = 'Server error. Please try again later.';
-                }
-                
-                throw new Error(errorMessage);
-            }
-            
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                console.log('✅ Enhanced download completed successfully:', result);
-                
-                // Mark track as downloaded
-                setDownloadedTracks(prev => new Set([...prev, track.id]));
-                
-                // Clear cancellable downloads state
-                setCancellableDownloads(prev => {
-                    const newSet = new Set(prev);
-                    newSet.delete(track.id);
-                    return newSet;
-                });
-                
-                // Update progress to 100% if not already done by WebSocket
-                setDownloadProgress(prev => ({ ...prev, [downloadId]: 100 }));
-                setRealTimeProgress(prev => ({
-                    ...prev,
-                    [downloadId]: {
-                        stage: 'complete',
-                        progress: 100,
-                        message: 'Download complete! Added to collection.',
-                        enhanced_features: result.enhanced_features
-                    }
-                }));
-                
-                // Notify parent component
-                if (onDownloadComplete && result.song) {
-                    onDownloadComplete(result.song);
-                }
-                
-                // Show enhanced success message with quality info
-                const features = result.enhanced_features || {};
-                let successMsg = `🎵 Successfully Downloaded!\n\n`;
-                successMsg += `📀 ${track.title}\n`;
-                successMsg += `🎤 ${track.artist}\n\n`;
-                successMsg += `✨ Quality: 320kbps MP3\n`;
-                if (features.artwork_embedded) {
-                    successMsg += `🖼️ Album artwork embedded\n`;
-                }
-                if (features.metadata_embedded) {
-                    successMsg += `📝 Metadata embedded\n`;
-                }
-                successMsg += `\n📁 Added to your music collection\n`;
-                successMsg += `🔍 Ready for analysis and mixing!`;
-                
-                // Show success notification instead of alert
-                const notification = document.createElement('div');
-                notification.style.cssText = `
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    background: linear-gradient(135deg, #10b981, #059669);
-                    color: white;
-                    padding: 16px 20px;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-                    z-index: 10000;
-                    max-width: 300px;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    font-size: 14px;
-                    line-height: 1.4;
-                    animation: slideInRight 0.3s ease-out;
-                `;
-                notification.innerHTML = `
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                        </svg>
-                        <strong>Download Complete!</strong>
-                    </div>
-                    <div style="font-size: 12px; opacity: 0.9;">
-                        ${track.title} by ${track.artist}<br>
-                        Quality: 320kbps • Added to Collection
-                    </div>
-                `;
-                
-                // Add animation styles
-                const style = document.createElement('style');
-                style.textContent = `
-                    @keyframes slideInRight {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                `;
-                document.head.appendChild(style);
-                document.body.appendChild(notification);
-                
-                // Auto-remove notification after 5 seconds
-                setTimeout(() => {
-                    notification.style.animation = 'slideInRight 0.3s ease-out reverse';
-                    setTimeout(() => {
-                        if (notification.parentNode) {
-                            notification.parentNode.removeChild(notification);
-                        }
-                        if (style.parentNode) {
-                            style.parentNode.removeChild(style);
-                        }
-                    }, 300);
-                }, 5000);
-                
-                // Clear progress after delay
-                setTimeout(() => {
-                    setDownloadProgress(prev => {
-                        const newProgress = { ...prev };
-                        delete newProgress[downloadId];
-                        return newProgress;
-                    });
-                    setRealTimeProgress(prev => {
-                        const newProgress = { ...prev };
-                        delete newProgress[downloadId];
-                        return newProgress;
-                    });
-                }, 5000);
-                
-            } else {
-                throw new Error(result.error || 'Download failed - no success status');
-            }
-            
-        } catch (error: any) {
-            console.error('❌ Enhanced download error:', error);
-            
-            const finalError = `Download failed: ${error.message}`;
-            setError(finalError);
-            
-            // Update progress to show error
-            setRealTimeProgress(prev => ({
-                ...prev,
-                [downloadId]: {
-                    stage: 'error',
-                    progress: 0,
-                    message: error.message
-                }
-            }));
-            
-            // Clear download progress on failure
-            setTimeout(() => {
-                setDownloadProgress(prev => {
-                    const newProgress = { ...prev };
-                    delete newProgress[downloadId];
-                    return newProgress;
-                });
-                setRealTimeProgress(prev => {
-                    const newProgress = { ...prev };
-                    delete newProgress[downloadId];
-                    return newProgress;
-                });
-            }, 3000);
-        } finally {
-            setIsDownloading(null);
-        }
-    }, [apiPort, apiSigningKey, downloadPath, isDownloadPathSet, onDownloadComplete]);
-
-    // Cancel download function
-    const handleCancelDownload = useCallback(async (trackId: string) => {
-        console.log('🚫 Cancelling download for track:', trackId);
-        
-        // Find the download ID for this track
-        const downloadId = Object.keys(realTimeProgress).find(id => id.startsWith(trackId));
-        
-        if (downloadId) {
-            try {
-                // Send cancel request to backend
-                const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/cancel-download`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Signing-Key': apiSigningKey
-                    },
-                    body: JSON.stringify({
-                        download_id: downloadId,
-                        signingkey: apiSigningKey
-                    })
-                });
-                
-                if (response.ok) {
-                    console.log('✅ Download cancellation request sent');
-                } else {
-                    console.warn('⚠️ Failed to send cancellation request');
-                }
-            } catch (error) {
-                console.error('❌ Error sending cancellation request:', error);
-            }
-        }
-        
-        // Update local state
-        setCancelledDownloads(prev => new Set([...prev, trackId]));
-        setCancellableDownloads(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(trackId);
-            return newSet;
-        });
-        setIsDownloading(null);
-        
-        // Clear progress
-        setDownloadProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[downloadId || trackId];
-            return newProgress;
-        });
-        setRealTimeProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[downloadId || trackId];
-            return newProgress;
-        });
-        
-        // Show cancellation notification
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            color: white;
-            padding: 16px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-            z-index: 10000;
-            max-width: 300px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 14px;
-            line-height: 1.4;
-            animation: slideInRight 0.3s ease-out;
-        `;
-        notification.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                </svg>
-                <strong>Download Cancelled</strong>
-            </div>
-            <div style="font-size: 12px; opacity: 0.9;">
-                Download has been cancelled successfully
-            </div>
-        `;
-        
-        // Add animation styles
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes slideInRight {
-                from { transform: translateX(100%); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
-            }
-        `;
-        document.head.appendChild(style);
-        document.body.appendChild(notification);
-        
-        // Auto-remove notification after 3 seconds
-        setTimeout(() => {
-            notification.style.animation = 'slideInRight 0.3s ease-out reverse';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-                if (style.parentNode) {
-                    style.parentNode.removeChild(style);
-                }
-            }, 300);
-        }, 3000);
-        
-    }, [apiPort, apiSigningKey, realTimeProgress]);
 
     
     // Handle suggestion selection
@@ -845,9 +498,140 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         }
     }, [handleSearch]);
 
-    // Stop current audio preview
-    const stopPreview = useCallback(() => {
-        isStoppingRef.current = true; // Set flag to prevent error messages
+    // Enhanced audio management functions
+    const createAudioElement = useCallback(() => {
+        const audio = new Audio();
+        audio.volume = audioState.volume;
+        audio.preload = 'auto';
+        audio.crossOrigin = 'anonymous';
+        
+        // Enhanced event handlers
+        audio.onloadstart = () => {
+            console.log('🎵 Audio loading started...');
+            setAudioState(prev => ({ ...prev, isLoading: true, error: null }));
+        };
+        
+        audio.oncanplay = () => {
+            console.log('🎵 Audio can play');
+            setAudioState(prev => ({ 
+                ...prev, 
+                isLoading: false, 
+                duration: audio.duration || 0,
+                error: null 
+            }));
+        };
+        
+        audio.onplay = () => {
+            console.log('🎵 Audio started playing');
+            setAudioState(prev => ({ ...prev, isPlaying: true, isLoading: false }));
+        };
+        
+        audio.onpause = () => {
+            console.log('🎵 Audio paused');
+            setAudioState(prev => ({ ...prev, isPlaying: false }));
+        };
+        
+        audio.onended = () => {
+            console.log('🎵 Audio ended');
+            setAudioState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
+            setCurrentlyPlayingId(null);
+        };
+        
+        audio.onerror = (error) => {
+            console.error('❌ Audio error:', error);
+            if (!isStoppingRef.current) {
+                setAudioState(prev => ({ 
+                    ...prev, 
+                    error: 'Stream failed. Retrying...',
+                    isLoading: true,
+                    isPlaying: false,
+                    isBuffering: false
+                }));
+                
+                // Auto-retry mechanism
+                setTimeout(() => {
+                    if (audioRef.current && currentlyPlayingId) {
+                        console.log('🔄 Auto-retrying stream...');
+                        audio.load(); // Reload the audio
+                        audio.play().catch((retryError) => {
+                            console.error('❌ Retry failed:', retryError);
+                            setAudioState(prev => ({ 
+                                ...prev, 
+                                error: 'Failed to load audio. Please try again.',
+                                isLoading: false,
+                                isPlaying: false
+                            }));
+                        });
+                    }
+                }, 2000); // Retry after 2 seconds
+            }
+        };
+        
+        audio.ontimeupdate = () => {
+            // Only update if not dragging to prevent conflicts
+            if (!isDragging) {
+                setAudioState(prev => ({ 
+                    ...prev, 
+                    currentTime: audio.currentTime 
+                }));
+            }
+        };
+        
+        audio.onvolumechange = () => {
+            setAudioState(prev => ({ 
+                ...prev, 
+                volume: audio.volume,
+                isMuted: audio.muted
+            }));
+        };
+        
+        audio.onstalled = () => {
+            console.log('⚠️ Audio stream stalled');
+        };
+        
+        audio.onwaiting = () => {
+            console.log('⏳ Audio buffering...');
+            setAudioState(prev => ({ ...prev, isLoading: true, isBuffering: true }));
+        };
+        
+        audio.oncanplaythrough = () => {
+            setAudioState(prev => ({ ...prev, isLoading: false, isBuffering: false }));
+        };
+
+        audio.onprogress = () => {
+            // Calculate buffer progress
+            if (audio.buffered.length > 0 && audio.duration > 0) {
+                const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+                const bufferProgress = (bufferedEnd / audio.duration) * 100;
+                setAudioState(prev => ({ ...prev, bufferProgress }));
+            }
+        };
+
+        audio.onseeked = () => {
+            console.log(`🎯 Audio seek completed at ${audio.currentTime.toFixed(2)}s`);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: false, 
+                seekPreviewTime: null,
+                isBuffering: false,
+                currentTime: audio.currentTime // Update with actual seek position
+            }));
+        };
+
+        audio.onseeking = () => {
+            console.log(`🔍 Audio seeking to ${audio.currentTime.toFixed(2)}s...`);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: true,
+                currentTime: audio.currentTime // Update current time during seeking
+            }));
+        };
+        
+        return audio;
+    }, [audioState.volume, isDragging]);
+
+    const stopAudio = useCallback(() => {
+        isStoppingRef.current = true;
         
         if (audioRef.current) {
             audioRef.current.pause();
@@ -861,121 +645,1440 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             autoStopTimerRef.current = null;
         }
         
-        setPreviewingId(null);
-        setLoadingPreviewId(null);
-        console.log('⏹️ Preview stopped');
+        if (progressUpdateRef.current) {
+            clearInterval(progressUpdateRef.current);
+            progressUpdateRef.current = null;
+        }
         
-        // Reset the stopping flag after a short delay
+        setAudioState(prev => ({
+            ...prev,
+            isPlaying: false,
+            isLoading: false,
+            currentTime: 0,
+            error: null
+        }));
+        setCurrentlyPlayingId(null);
+        
+        console.log('⏹️ Audio stopped');
+        
         setTimeout(() => {
             isStoppingRef.current = false;
         }, 100);
     }, []);
 
-    // Handle preview functionality
-    const handlePreview = useCallback((track: YouTubeTrack) => {
-        // If already playing this track, stop it
-        if (previewingId === track.id) {
-            stopPreview();
+    const togglePlayPause = useCallback(async (track: YouTubeTrack) => {
+        // If already playing this track, pause it
+        if (currentlyPlayingId === track.id && audioState.isPlaying) {
+            if (audioRef.current) {
+                audioRef.current.pause();
+            }
             return;
         }
 
         // If playing a different track, stop it first
-        if (previewingId && previewingId !== track.id) {
-            stopPreview();
+        if (currentlyPlayingId && currentlyPlayingId !== track.id) {
+            stopAudio();
         }
 
-        console.log(`🎵 Starting preview for: ${track.title} by ${track.artist}`);
-        setLoadingPreviewId(track.id);
-        setError(null); // Clear any previous errors
-        isStoppingRef.current = false; // Reset stopping flag
+        // If paused, resume
+        if (currentlyPlayingId === track.id && !audioState.isPlaying) {
+            if (audioRef.current) {
+                try {
+                    await audioRef.current.play();
+                } catch (error) {
+                    console.error('❌ Failed to resume audio:', error);
+                    setAudioState(prev => ({ 
+                        ...prev, 
+                        error: 'Failed to resume playback. Please try again.' 
+                    }));
+                }
+            }
+            return;
+        }
+
+        // Start new track
+        console.log(`🎵 Starting playback for: ${track.title} by ${track.artist}`);
+        setAudioState(prev => ({ ...prev, isLoading: true, error: null }));
+        setCurrentlyPlayingId(track.id);
         
-        // Create audio element for preview
-        const audio = new Audio();
-        audio.volume = 0.7; // Set volume to 70%
-        audio.preload = 'auto';
+        const audio = createAudioElement();
         audioRef.current = audio;
         
-        // Set up audio event handlers
-        audio.onloadstart = () => {
-            console.log('🎵 Audio loading started...');
-        };
-        
-        audio.oncanplay = () => {
-            console.log('🎵 Audio can play, starting...');
-            setLoadingPreviewId(null);
-            setPreviewingId(track.id);
-            audio.play().catch(error => {
-                console.error('❌ Failed to play audio:', error);
-                setPreviewingId(null);
-                setLoadingPreviewId(null);
-                setError('Failed to play preview. Please try again.');
-            });
-        };
-        
-        audio.onerror = (error) => {
-            console.error('❌ Audio error:', error);
+        try {
+            const streamUrl = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
+            console.log('🔗 Stream URL:', streamUrl);
+            audio.src = streamUrl;
             
-            // Don't show error if we're intentionally stopping the preview
-            if (isStoppingRef.current) {
-                console.log('🔇 Ignoring error during intentional stop');
-                return;
+            await audio.play();
+            
+            // Auto-stop after 30 seconds (configurable)
+            autoStopTimerRef.current = setTimeout(() => {
+                if (currentlyPlayingId === track.id) {
+                    stopAudio();
+                    console.log(`⏰ Auto-stopped: ${track.title}`);
+                }
+            }, 30000);
+            
+        } catch (error) {
+            console.error('❌ Failed to start audio:', error);
+            setAudioState(prev => ({ 
+                ...prev, 
+                error: 'Failed to start playback. Please try again.',
+                isLoading: false
+            }));
+            setCurrentlyPlayingId(null);
+        }
+    }, [currentlyPlayingId, audioState.isPlaying, apiPort, apiSigningKey, createAudioElement, stopAudio]);
+
+    const setVolume = useCallback((volume: number) => {
+        const clampedVolume = Math.max(0, Math.min(1, volume));
+        setAudioState(prev => ({ ...prev, volume: clampedVolume }));
+        
+        if (audioRef.current) {
+            audioRef.current.volume = clampedVolume;
+        }
+    }, []);
+
+    const toggleMute = useCallback(() => {
+        setAudioState(prev => ({ ...prev, isMuted: !prev.isMuted }));
+        
+        if (audioRef.current) {
+            audioRef.current.muted = !audioRef.current.muted;
+        }
+    }, []);
+
+    const seekTo = useCallback((time: number, showPreview = false) => {
+        if (!audioRef.current || audioState.duration <= 0) return;
+        
+        const clampedTime = Math.max(0, Math.min(audioState.duration, time));
+        
+        if (showPreview) {
+            // Show seek preview without actually seeking
+            setAudioState(prev => ({ 
+                ...prev, 
+                seekPreviewTime: clampedTime,
+                isSeeking: true 
+            }));
+            return;
+        }
+        
+        console.log(`🎯 Seeking to ${clampedTime.toFixed(2)}s (was ${audioState.currentTime.toFixed(2)}s)`);
+        
+        try {
+            // Set seeking state immediately for UI feedback
+            setAudioState(prev => ({ 
+                ...prev, 
+                seekPreviewTime: null,
+                isSeeking: true
+            }));
+            
+            // For streaming audio, we should NOT pause/resume as it can cause restart
+            // Simply set the currentTime - the audio element will handle seeking internally
+            audioRef.current.currentTime = clampedTime;
+            
+            // The 'onseeked' event handler will clear the seeking state
+            // and update currentTime when seek is complete
+            
+        } catch (error) {
+            console.error('❌ Seek failed:', error);
+            setAudioState(prev => ({ 
+                ...prev, 
+                isSeeking: false,
+                seekPreviewTime: null,
+                error: 'Seek failed. Please try again.'
+            }));
+        }
+    }, [audioState.duration, audioState.currentTime]);
+
+    // Enhanced seeking functions
+    const skipForward = useCallback((seconds: number = 10) => {
+        if (audioRef.current && audioState.duration > 0) {
+            const newTime = Math.min(audioState.duration, audioState.currentTime + seconds);
+            seekTo(newTime);
+            
+            console.log(`⏭️ Skipped forward ${seconds}s to ${Math.floor(newTime)}s`);
+        }
+    }, [audioState.duration, audioState.currentTime, seekTo]);
+
+    const skipBackward = useCallback((seconds: number = 10) => {
+        if (audioRef.current && audioState.duration > 0) {
+            const newTime = Math.max(0, audioState.currentTime - seconds);
+            seekTo(newTime);
+            
+            console.log(`⏮️ Skipped backward ${seconds}s to ${Math.floor(newTime)}s`);
+        }
+    }, [audioState.currentTime, seekTo]);
+
+    const clearSeekPreview = useCallback(() => {
+        setAudioState(prev => ({ 
+            ...prev, 
+            seekPreviewTime: null,
+            isSeeking: false 
+        }));
+    }, []);
+
+    // Touch handling for swipe gestures
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+        touchStartY.current = e.touches[0].clientY;
+        touchStartTime.current = Date.now();
+        isSwipeGesture.current = false;
+    }, []);
+
+    const handleTouchMove = useCallback((e: React.TouchEvent) => {
+        if (!currentlyPlayingId) return;
+        
+        const currentY = e.touches[0].clientY;
+        const deltaY = touchStartY.current - currentY;
+        const deltaTime = Date.now() - touchStartTime.current;
+        
+        // Detect upward swipe gesture
+        if (deltaY > 30 && deltaTime < 300) {
+            isSwipeGesture.current = true;
+            if (!isProgressBarExpanded) {
+                setIsProgressBarExpanded(true);
+            }
+        }
+    }, [currentlyPlayingId, isProgressBarExpanded]);
+
+    const handleTouchEnd = useCallback(() => {
+        // Reset swipe detection after a short delay
+        setTimeout(() => {
+            isSwipeGesture.current = false;
+        }, 100);
+    }, []);
+
+    // Progress bar dragging functionality
+    const handleProgressMouseDown = useCallback((e: React.MouseEvent) => {
+        if (!progressBarRef.current || !audioState.duration) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(true);
+        
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = clickProgress * audioState.duration;
+        
+        // Use the proper seekTo function
+        seekTo(newTime);
+    }, [audioState.duration, seekTo]);
+
+    const handleProgressMouseMove = useCallback((e: MouseEvent) => {
+        if (!isDragging || !progressBarRef.current || !audioState.duration) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = clickProgress * audioState.duration;
+        
+        // While dragging, show preview instead of continuous seeking
+        // This prevents performance issues with streaming audio
+        seekTo(newTime, true); // Show preview only during drag
+    }, [isDragging, audioState.duration, seekTo]);
+
+    const handleProgressMouseUp = useCallback((e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // If we have a seek preview time, seek to it when drag ends
+        if (audioState.seekPreviewTime !== null) {
+            seekTo(audioState.seekPreviewTime); // Actually seek to the final position
+        }
+        
+        setIsDragging(false);
+    }, [audioState.seekPreviewTime, seekTo]);
+
+    // Touch handling for progress bar
+    const handleProgressTouchStart = useCallback((e: React.TouchEvent) => {
+        if (!progressBarRef.current || !audioState.duration) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(true);
+        
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = clickProgress * audioState.duration;
+        
+        // Use the proper seekTo function
+        seekTo(newTime);
+    }, [audioState.duration, seekTo]);
+
+    const handleProgressTouchMove = useCallback((e: TouchEvent) => {
+        if (!isDragging || !progressBarRef.current || !audioState.duration) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = clickProgress * audioState.duration;
+        
+        // While dragging, show preview instead of continuous seeking
+        seekTo(newTime, true); // Show preview only during drag
+    }, [isDragging, audioState.duration, seekTo]);
+
+    const handleProgressTouchEnd = useCallback((e: TouchEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // If we have a seek preview time, seek to it when touch ends
+        if (audioState.seekPreviewTime !== null) {
+            seekTo(audioState.seekPreviewTime); // Actually seek to the final position
+        }
+        
+        setIsDragging(false);
+    }, [audioState.seekPreviewTime, seekTo]);
+
+    // Add global mouse event listeners for dragging
+    useEffect(() => {
+        if (isDragging) {
+            document.addEventListener('mousemove', handleProgressMouseMove);
+            document.addEventListener('mouseup', handleProgressMouseUp);
+            document.addEventListener('touchmove', handleProgressTouchMove, { passive: false });
+            document.addEventListener('touchend', handleProgressTouchEnd);
+        }
+
+        return () => {
+            document.removeEventListener('mousemove', handleProgressMouseMove);
+            document.removeEventListener('mouseup', handleProgressMouseUp);
+            document.removeEventListener('touchmove', handleProgressTouchMove);
+            document.removeEventListener('touchend', handleProgressTouchEnd);
+        };
+    }, [isDragging, handleProgressMouseMove, handleProgressMouseUp, handleProgressTouchMove, handleProgressTouchEnd]);
+
+    // Download management - delegate to DownloadManager
+    const startDownload = useCallback((track: YouTubeTrack) => {
+        if (downloadManagerRef?.current?.addDownload) {
+            downloadManagerRef.current.addDownload(track);
+        }
+    }, [downloadManagerRef]);
+
+    const showNotification = useCallback((title: string, message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+        const colors = {
+            success: { bg: '#10b981', border: '#059669' },
+            error: { bg: '#ef4444', border: '#dc2626' },
+            warning: { bg: '#f59e0b', border: '#d97706' }
+        };
+        
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, ${colors[type].bg}, ${colors[type].border});
+            color: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 10000;
+            max-width: 300px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+            animation: slideInRight 0.3s ease-out;
+        `;
+        
+        notification.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    ${type === 'success' ? '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>' : 
+                      type === 'error' ? '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' :
+                      '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>'}
+                </svg>
+                <strong>${title}</strong>
+            </div>
+            <div style="font-size: 12px; opacity: 0.9;">
+                ${message}
+            </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.style.animation = 'slideInRight 0.3s ease-out reverse';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
+        }, 5000);
+    }, []);
+    
+    // Enhanced keyboard shortcuts
+    useEffect(() => {
+        const handleKeyPress = (e: KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+                return; // Don't interfere with input fields
             }
             
-            setPreviewingId(null);
-            setLoadingPreviewId(null);
-            setError('Failed to load preview. Please try again.');
-        };
-        
-        audio.onended = () => {
-            console.log('⏹️ Preview ended');
-            if (!isStoppingRef.current) {
-                setPreviewingId(null);
-                setLoadingPreviewId(null);
-                audioRef.current = null;
+            switch (e.key) {
+                case ' ':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
+                        if (currentTrack) {
+                            togglePlayPause(currentTrack);
+                        }
+                    }
+                    break;
+                case 'Escape':
+                    if (currentlyPlayingId) {
+                        stopAudio();
+                    }
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    setVolume(Math.min(1, audioState.volume + 0.1));
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    setVolume(Math.max(0, audioState.volume - 0.1));
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const seconds = e.shiftKey ? 5 : 10; // Fine control with Shift
+                        skipBackward(seconds);
+                    }
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const seconds = e.shiftKey ? 5 : 10; // Fine control with Shift
+                        skipForward(seconds);
+                    }
+                    break;
+                case 'j':
+                case 'J':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        skipBackward(10);
+                    }
+                    break;
+                case 'l':
+                case 'L':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        skipForward(10);
+                    }
+                    break;
+                case 'k':
+                case 'K':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
+                        if (currentTrack) {
+                            togglePlayPause(currentTrack);
+                        }
+                    }
+                    break;
+                case 'm':
+                case 'M':
+                    e.preventDefault();
+                    toggleMute();
+                    break;
+                case '0':
+                case 'Home':
+                    e.preventDefault();
+                    if (currentlyPlayingId) {
+                        seekTo(0);
+                    }
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    if (currentlyPlayingId && audioState.duration > 0) {
+                        seekTo(audioState.duration - 1);
+                    }
+                    break;
             }
         };
         
-        audio.onabort = () => {
-            console.log('⏹️ Preview aborted');
-            if (!isStoppingRef.current) {
-                setPreviewingId(null);
-                setLoadingPreviewId(null);
-                audioRef.current = null;
-            }
-        };
-        
-        audio.onstalled = () => {
-            console.log('⚠️ Audio stream stalled');
-        };
-        
-        audio.onwaiting = () => {
-            console.log('⏳ Audio buffering...');
-        };
-        
-        // Set audio source to backend streaming endpoint
-        const streamUrl = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
-        console.log('🔗 Stream URL:', streamUrl);
-        audio.src = streamUrl;
-        
-        // Auto-stop preview after 30 seconds
-        autoStopTimerRef.current = setTimeout(() => {
-            if (previewingId === track.id) {
-                stopPreview();
-                console.log(`⏰ Preview auto-stopped for: ${track.title}`);
-            }
-        }, 30000);
-        
-    }, [previewingId, apiPort, apiSigningKey, stopPreview]);
+        document.addEventListener('keydown', handleKeyPress);
+        return () => document.removeEventListener('keydown', handleKeyPress);
+    }, [currentlyPlayingId, searchResults, togglePlayPause, stopAudio, audioState.volume, audioState.duration, setVolume, toggleMute, skipForward, skipBackward, seekTo]);
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
-            stopPreview();
+            stopAudio();
         };
-    }, [stopPreview]);
+    }, [stopAudio]);
+
+    // Format time helper
+    const formatTime = useCallback((time: number) => {
+        const minutes = Math.floor(time / 60);
+        const seconds = Math.floor(time % 60);
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }, []);
+
+    // Memoized track actions component (download only)
+    const TrackActions = useMemo(() => ({ track }: { track: YouTubeTrack }) => {
+        const isDownloaded = downloadedTracks.has(track.id);
+        
+        return (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'center' }}>
+                {isDownloaded ? (
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        color: '#10b981',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        padding: '4px 8px',
+                        background: 'rgba(16, 185, 129, 0.1)',
+                        borderRadius: '4px',
+                        border: '1px solid rgba(16, 185, 129, 0.3)'
+                    }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                        </svg>
+                        Downloaded
+                    </div>
+                ) : (
+                    <button
+                        onClick={() => startDownload(track)}
+                        disabled={!isDownloadPathSet}
+                        style={{
+                            padding: '6px 12px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            background: isDownloadPathSet 
+                                ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' 
+                                : 'var(--surface-bg)',
+                            color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                        }}
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                        </svg>
+                        Download
+                    </button>
+                )}
+            </div>
+        );
+    }, [downloadedTracks, startDownload, isDownloadPathSet]);
 
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
+            {/* Ultra-Elegant Global Audio Player */}
+            {currentlyPlayingId && (
+                <div 
+                    className="elegant-player"
+                    style={{
+                        position: 'fixed',
+                        bottom: '32px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: 'linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(30, 39, 50, 0.95))',
+                        borderRadius: '24px',
+                        padding: '24px 32px 28px 32px',
+                        boxShadow: `
+                            0 32px 80px rgba(0, 0, 0, 0.4),
+                            0 8px 32px rgba(0, 0, 0, 0.2),
+                            0 0 0 1px rgba(255, 255, 255, 0.05),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.1)
+                        `,
+                        backdropFilter: 'blur(24px) saturate(180%)',
+                        zIndex: 1000,
+                        minWidth: '480px',
+                        maxWidth: '720px',
+                        width: '92vw',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '20px',
+                        transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
+                        cursor: 'grab',
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+                    }}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                >
+                    {/* Elegant Swipe Indicator */}
+                    <div style={{
+                        width: '56px',
+                        height: '6px',
+                        background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.8), rgba(139, 92, 246, 0.8))',
+                        borderRadius: '6px',
+                        margin: '0 auto -6px auto',
+                        transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                        opacity: isProgressBarExpanded ? 0 : 0.9,
+                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+                        position: 'relative'
+                    }}>
+                        <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            width: '20px',
+                            height: '2px',
+                            background: 'rgba(255, 255, 255, 0.6)',
+                            borderRadius: '1px',
+                            opacity: 0.7
+                        }} />
+                    </div>
+
+                    {/* Main Controls Row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        {/* Elegant Track Info Section */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            {/* Album Art Placeholder */}
+                            <div style={{
+                                width: '56px',
+                                height: '56px',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2))',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.2)',
+                                position: 'relative',
+                                overflow: 'hidden'
+                            }}>
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="rgba(255, 255, 255, 0.7)">
+                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                                </svg>
+                                {/* Subtle animation overlay */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    background: 'linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%)',
+                                    animation: 'shimmer 3s infinite'
+                                }} />
+                            </div>
+                            
+                            {/* Track Details */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                    color: '#ffffff',
+                                    fontSize: '16px',
+                                    fontWeight: '600',
+                                    lineHeight: '1.4',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    marginBottom: '4px',
+                                    letterSpacing: '-0.01em'
+                                }}>
+                                    {searchResults.find(track => track.id === currentlyPlayingId)?.title || 'Unknown Track'}
+                                </div>
+                                <div style={{
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    fontSize: '13px',
+                                    fontWeight: '500',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    marginBottom: '6px'
+                                }}>
+                                    {searchResults.find(track => track.id === currentlyPlayingId)?.artist || 'Unknown Artist'}
+                                </div>
+                                {/* Elegant Status Indicator */}
+                                <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    fontSize: '10px',
+                                    color: audioState.error ? '#ff6b6b' 
+                                         : audioState.isBuffering ? '#fbbf24' 
+                                         : audioState.isSeeking ? '#fbbf24'
+                                         : audioState.isLoading ? '#60a5fa'
+                                         : audioState.isPlaying ? '#34d399' 
+                                         : 'rgba(255, 255, 255, 0.6)',
+                                    fontWeight: '600',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    background: audioState.error ? 'rgba(255, 107, 107, 0.15)' 
+                                              : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
+                                              : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                              : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
+                                              : 'rgba(255, 255, 255, 0.08)',
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    border: `1px solid ${
+                                        audioState.error ? 'rgba(255, 107, 107, 0.2)' 
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.2)' 
+                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.2)'
+                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.2)' 
+                                        : 'rgba(255, 255, 255, 0.1)'
+                                    }`,
+                                    backdropFilter: 'blur(8px)',
+                                    boxShadow: `0 2px 8px ${
+                                        audioState.error ? 'rgba(255, 107, 107, 0.15)' 
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
+                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
+                                        : 'rgba(0, 0, 0, 0.1)'
+                                    }`
+                                }}>
+                                    {audioState.error ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                            </svg>
+                                            Error
+                                        </>
+                                    ) : audioState.isBuffering ? (
+                                        <>
+                                            <div style={{
+                                                width: '10px',
+                                                height: '10px',
+                                                border: '1.5px solid currentColor',
+                                                borderTop: '1.5px solid transparent',
+                                                borderRadius: '50%',
+                                                animation: 'spin 1s linear infinite'
+                                            }} />
+                                            Buffering
+                                        </>
+                                    ) : audioState.isSeeking ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="3" fill="currentColor"/>
+                                                <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3"/>
+                                            </svg>
+                                            Seeking
+                                        </>
+                                    ) : audioState.isLoading ? (
+                                        <>
+                                            <div style={{
+                                                width: '10px',
+                                                height: '10px',
+                                                border: '1.5px solid currentColor',
+                                                borderTop: '1.5px solid transparent',
+                                                borderRadius: '50%',
+                                                animation: 'spin 1s linear infinite'
+                                            }} />
+                                            Loading
+                                        </>
+                                    ) : audioState.isPlaying ? (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
+                                                <polygon points="9,7 15,12 9,17" fill="white"/>
+                                            </svg>
+                                            Playing
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
+                                                <rect x="8" y="8" width="2" height="8" fill="white"/>
+                                                <rect x="14" y="8" width="2" height="8" fill="white"/>
+                                            </svg>
+                                            Paused
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Elegant Compact Progress Bar (when not expanded) */}
+                        {!isProgressBarExpanded && (
+                            <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                <span style={{ 
+                                    color: audioState.seekPreviewTime ? '#fbbf24' : 'rgba(255, 255, 255, 0.8)', 
+                                    fontSize: '12px', 
+                                    fontWeight: '500',
+                                    minWidth: '40px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                                    letterSpacing: '0.025em'
+                                }}>
+                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
+                                </span>
+                                <div style={{
+                                    flex: 1,
+                                    height: '8px',
+                                    background: 'rgba(255, 255, 255, 0.1)',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    position: 'relative',
+                                    boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
+                                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                                    overflow: 'hidden'
+                                }} 
+                                onClick={(e) => {
+                                    if (isDragging) return; // Prevent click during drag
+                                    
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const x = e.clientX - rect.left;
+                                    const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+                                    const newTime = clickProgress * audioState.duration;
+                                    
+                                    // Use the robust seekTo function for clicks
+                                    seekTo(newTime);
+                                }}
+                                onMouseMove={(e) => {
+                                    if (!isDragging) {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const x = e.clientX - rect.left;
+                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
+                                        const hoverTime = hoverProgress * audioState.duration;
+                                        seekTo(hoverTime, true); // Show preview
+                                    }
+                                }}
+                                onMouseLeave={() => {
+                                    if (!isDragging) {
+                                        clearSeekPreview();
+                                    }
+                                }}
+                                >
+                                    {/* Elegant Buffer Progress */}
+                                    <div style={{
+                                        width: `${audioState.bufferProgress}%`,
+                                        height: '100%',
+                                        background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.3))',
+                                        borderRadius: '8px',
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        transition: 'width 0.3s ease'
+                                    }} />
+                                    
+                                    {/* Elegant Playback Progress */}
+                                    <div style={{
+                                        width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
+                                        height: '100%',
+                                        background: audioState.isSeeking || audioState.seekPreviewTime
+                                            ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' 
+                                            : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                                        borderRadius: '8px',
+                                        transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
+                                        position: 'relative',
+                                        boxShadow: audioState.isPlaying ? '0 0 16px rgba(99, 102, 241, 0.3)' : 'none'
+                                    }}>
+                                        {/* Elegant Progress Handle */}
+                                        <div style={{
+                                            position: 'absolute',
+                                            right: '-6px',
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            width: '16px',
+                                            height: '16px',
+                                            background: audioState.isSeeking || audioState.seekPreviewTime ? '#fbbf24' : '#ffffff',
+                                            borderRadius: '50%',
+                                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(255, 255, 255, 0.1)',
+                                            border: '2px solid rgba(255, 255, 255, 0.9)',
+                                            opacity: audioState.duration > 0 ? 1 : 0,
+                                            transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                            cursor: 'grab'
+                                        }}>
+                                            {/* Seeking pulse indicator */}
+                                            {(audioState.isSeeking || audioState.seekPreviewTime) && (
+                                                <div style={{
+                                                    position: 'absolute',
+                                                    top: '-4px',
+                                                    left: '-4px',
+                                                    right: '-4px',
+                                                    bottom: '-4px',
+                                                    borderRadius: '50%',
+                                                    border: '2px solid #fbbf24',
+                                                    animation: 'pulse 1.5s infinite'
+                                                }} />
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                                <span style={{ 
+                                    color: 'rgba(255, 255, 255, 0.8)', 
+                                    fontSize: '12px', 
+                                    fontWeight: '500',
+                                    minWidth: '40px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                                    letterSpacing: '0.025em'
+                                }}>
+                                    {formatTime(audioState.duration)}
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Elegant Control Buttons */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {/* Elegant Skip Backward Button */}
+                            <button
+                                onClick={() => skipBackward(10)}
+                                disabled={!currentlyPlayingId || audioState.isLoading}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: 'rgba(255, 255, 255, 0.8)',
+                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
+                                    padding: '12px',
+                                    borderRadius: '16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '48px',
+                                    minHeight: '48px',
+                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
+                                    backdropFilter: 'blur(12px)',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                    }
+                                }}
+                                title="Skip backward 10s (←)"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                                </svg>
+                            </button>
+                            
+                            {/* Ultra-Elegant Play/Pause Button */}
+                            <button
+                                onClick={() => {
+                                    const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
+                                    if (currentTrack) {
+                                        togglePlayPause(currentTrack);
+                                    }
+                                }}
+                                disabled={audioState.isLoading}
+                                style={{
+                                    background: audioState.isPlaying 
+                                        ? 'linear-gradient(135deg, #34d399, #10b981)' 
+                                        : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                    border: 'none',
+                                    color: 'white',
+                                    cursor: audioState.isLoading ? 'not-allowed' : 'pointer',
+                                    padding: '16px',
+                                    borderRadius: '20px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '64px',
+                                    minHeight: '64px',
+                                    boxShadow: audioState.isPlaying 
+                                        ? '0 12px 32px rgba(52, 211, 153, 0.4), 0 0 0 1px rgba(52, 211, 153, 0.2)' 
+                                        : '0 12px 32px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.2)',
+                                    opacity: audioState.isLoading ? 0.7 : 1,
+                                    position: 'relative',
+                                    overflow: 'hidden',
+                                    backdropFilter: 'blur(16px)'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!audioState.isLoading) {
+                                        e.currentTarget.style.transform = 'scale(1.08)';
+                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.6)' : 'rgba(99, 102, 241, 0.6)';
+                                        e.currentTarget.style.boxShadow = `0 16px 40px ${color}, 0 0 0 1px ${color}`;
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!audioState.isLoading) {
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.4)' : 'rgba(99, 102, 241, 0.4)';
+                                        e.currentTarget.style.boxShadow = `0 12px 32px ${color}, 0 0 0 1px ${color}`;
+                                    }
+                                }}
+                            >
+                                {/* Elegant Ripple Effect */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '50%',
+                                    left: '50%',
+                                    transform: 'translate(-50%, -50%)',
+                                    width: '100%',
+                                    height: '100%',
+                                    borderRadius: '20px',
+                                    background: 'radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%)',
+                                    opacity: audioState.isPlaying ? 1 : 0,
+                                    animation: audioState.isPlaying ? 'ripple 3s infinite' : 'none'
+                                }} />
+                                
+                                {audioState.isLoading ? (
+                                    <div style={{
+                                        width: '24px',
+                                        height: '24px',
+                                        border: '3px solid rgba(255,255,255,0.3)',
+                                        borderTop: '3px solid white',
+                                        borderRadius: '50%',
+                                        animation: 'spin 1s linear infinite',
+                                        position: 'relative',
+                                        zIndex: 1
+                                    }} />
+                                ) : audioState.isPlaying ? (
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1 }}>
+                                        <rect x="6" y="4" width="4" height="16" rx="2"/>
+                                        <rect x="14" y="4" width="4" height="16" rx="2"/>
+                                    </svg>
+                                ) : (
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1, marginLeft: '3px' }}>
+                                        <polygon points="5,3 19,12 5,21"/>
+                                    </svg>
+                                )}
+                            </button>
+
+                            {/* Elegant Skip Forward Button */}
+                            <button
+                                onClick={() => skipForward(10)}
+                                disabled={!currentlyPlayingId || audioState.isLoading}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: 'rgba(255, 255, 255, 0.8)',
+                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
+                                    padding: '12px',
+                                    borderRadius: '16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '48px',
+                                    minHeight: '48px',
+                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
+                                    backdropFilter: 'blur(12px)',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (currentlyPlayingId && !audioState.isLoading) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.boxShadow = 'none';
+                                    }
+                                }}
+                                title="Skip forward 10s (→)"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                                </svg>
+                            </button>
+
+                            {/* Elegant Volume Control */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <button
+                                    onClick={toggleMute}
+                                    style={{
+                                        background: 'rgba(255, 255, 255, 0.08)',
+                                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                                        color: 'rgba(255, 255, 255, 0.8)',
+                                        cursor: 'pointer',
+                                        padding: '8px',
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                        minWidth: '36px',
+                                        minHeight: '36px'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                    }}
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                        {audioState.isMuted ? (
+                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+                                        ) : (
+                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                                        )}
+                                    </svg>
+                                </button>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.1"
+                                    value={audioState.volume}
+                                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                    style={{
+                                        width: '80px',
+                                        height: '6px',
+                                        background: 'rgba(255, 255, 255, 0.1)',
+                                        outline: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        appearance: 'none',
+                                        WebkitAppearance: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Elegant Stop Button */}
+                            <button
+                                onClick={stopAudio}
+                                style={{
+                                    background: 'rgba(239, 68, 68, 0.15)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    color: 'rgba(239, 68, 68, 0.9)',
+                                    cursor: 'pointer',
+                                    padding: '8px',
+                                    borderRadius: '12px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '36px',
+                                    minHeight: '36px',
+                                    backdropFilter: 'blur(8px)'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)';
+                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 1)';
+                                    e.currentTarget.style.transform = 'scale(1.05)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 0.9)';
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                }}
+                                title="Stop playback (Esc)"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                </svg>
+                            </button>
+
+                            {/* Elegant Keyboard Help Button */}
+                            <button
+                                onClick={() => setShowKeyboardHelp(!showKeyboardHelp)}
+                                style={{
+                                    background: showKeyboardHelp ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    color: showKeyboardHelp ? 'rgba(99, 102, 241, 1)' : 'rgba(255, 255, 255, 0.8)',
+                                    cursor: 'pointer',
+                                    padding: '8px',
+                                    borderRadius: '12px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                    minWidth: '36px',
+                                    minHeight: '36px',
+                                    backdropFilter: 'blur(8px)'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!showKeyboardHelp) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!showKeyboardHelp) {
+                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                    }
+                                }}
+                                title="Keyboard shortcuts"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2"/>
+                                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2"/>
+                                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2"/>
+                                    <rect x="6" y="7" width="2" height="2" rx="0.5"/>
+                                    <rect x="10" y="7" width="2" height="2" rx="0.5"/>
+                                    <rect x="14" y="7" width="2" height="2" rx="0.5"/>
+                                </svg>
+                            </button>
+                        </div>
+                        
+                        {/* Elegant Keyboard Help Tooltip */}
+                        {showKeyboardHelp && (
+                            <div style={{
+                                position: 'absolute',
+                                bottom: '100%',
+                                right: '0',
+                                marginBottom: '12px',
+                                background: 'rgba(15, 20, 25, 0.95)',
+                                borderRadius: '16px',
+                                padding: '20px',
+                                boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+                                border: '1px solid rgba(99, 102, 241, 0.2)',
+                                minWidth: '320px',
+                                zIndex: 1001,
+                                fontSize: '13px',
+                                lineHeight: '1.5',
+                                animation: 'fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                                backdropFilter: 'blur(20px)'
+                            }}>
+                                <div style={{
+                                    color: 'white',
+                                    fontWeight: '600',
+                                    marginBottom: '16px',
+                                    fontSize: '14px',
+                                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                                    paddingBottom: '12px',
+                                    letterSpacing: '0.025em'
+                                }}>
+                                    Keyboard Shortcuts
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Play/Pause</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Space</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip forward 10s</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>→ or L</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip backward 10s</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>← or J</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip 5s (fine control)</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Shift + ←/→</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Volume up/down</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>↑/↓</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Mute/unmute</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>M</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Stop</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Esc</kbd>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Go to start</span>
+                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>0 or Home</kbd>
+                                    </div>
+                                </div>
+                                {/* Elegant Arrow pointing down */}
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '-10px',
+                                    right: '24px',
+                                    width: 0,
+                                    height: 0,
+                                    borderLeft: '10px solid transparent',
+                                    borderRight: '10px solid transparent',
+                                    borderTop: '10px solid rgba(15, 20, 25, 0.95)'
+                                }} />
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Expanded Progress Bar (revealed on swipe up) */}
+                    {isProgressBarExpanded && (
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            animation: 'slideUp 0.3s ease-out'
+                        }}>
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                color: 'rgba(255, 255, 255, 0.8)',
+                                fontSize: '12px'
+                            }}>
+                                <span style={{ 
+                                    color: audioState.seekPreviewTime ? '#f59e0b' : 'rgba(255, 255, 255, 0.8)',
+                                    fontWeight: audioState.seekPreviewTime ? '600' : '400',
+                                    transition: 'all 0.2s ease'
+                                }}>
+                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
+                                </span>
+                                {audioState.seekPreviewTime && (
+                                    <span style={{
+                                        color: '#f59e0b',
+                                        fontSize: '10px',
+                                        fontWeight: '500'
+                                    }}>
+                                        PREVIEW
+                                    </span>
+                                )}
+                                <span>{formatTime(audioState.duration)}</span>
+                            </div>
+                            
+                            {/* Enhanced Draggable Progress Bar with Buffer Visualization */}
+                            <div
+                                ref={progressBarRef}
+                                style={{
+                                    width: '100%',
+                                    height: '8px',
+                                    background: 'rgba(255, 255, 255, 0.2)',
+                                    borderRadius: '4px',
+                                    cursor: isDragging ? 'grabbing' : 'grab',
+                                    position: 'relative',
+                                    overflow: 'hidden'
+                                }}
+                                onMouseDown={handleProgressMouseDown}
+                                onTouchStart={handleProgressTouchStart}
+                                onMouseMove={(e) => {
+                                    if (!isDragging) {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const x = e.clientX - rect.left;
+                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
+                                        const hoverTime = hoverProgress * audioState.duration;
+                                        seekTo(hoverTime, true); // Show preview
+                                    }
+                                }}
+                                onMouseLeave={() => {
+                                    if (!isDragging) {
+                                        clearSeekPreview();
+                                    }
+                                }}
+                            >
+                                {/* Buffer Progress */}
+                                <div style={{
+                                    width: `${audioState.bufferProgress}%`,
+                                    height: '100%',
+                                    background: 'rgba(255, 255, 255, 0.4)',
+                                    borderRadius: '4px',
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    transition: 'width 0.3s ease'
+                                }} />
+                                
+                                {/* Progress Fill */}
+                                <div style={{
+                                    width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
+                                    height: '100%',
+                                    background: audioState.isSeeking || audioState.seekPreviewTime
+                                        ? 'linear-gradient(90deg, #f59e0b, #d97706)'
+                                        : 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
+                                    borderRadius: '4px',
+                                    transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
+                                    position: 'relative'
+                                }}>
+                                    {/* Draggable Handle */}
+                                    <div style={{
+                                        position: 'absolute',
+                                        right: '-6px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        width: '12px',
+                                        height: '12px',
+                                        background: audioState.isSeeking || audioState.seekPreviewTime ? '#f59e0b' : 'white',
+                                        borderRadius: '50%',
+                                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+                                        cursor: isDragging ? 'grabbing' : 'grab',
+                                        transition: isDragging ? 'none' : 'all 0.2s ease',
+                                        opacity: isDragging || audioState.isSeeking ? 1 : 0.8,
+                                        border: '2px solid rgba(255, 255, 255, 0.3)'
+                                    }}>
+                                        {/* Seeking indicator */}
+                                        {(audioState.isSeeking || audioState.seekPreviewTime) && (
+                                            <div style={{
+                                                position: 'absolute',
+                                                top: '-2px',
+                                                left: '-2px',
+                                                right: '-2px',
+                                                bottom: '-2px',
+                                                borderRadius: '50%',
+                                                border: '2px solid #f59e0b',
+                                                animation: 'pulse 1s infinite'
+                                            }} />
+                                        )}
+                                    </div>
+                                </div>
+                                
+                                {/* Buffering Progress Indicator */}
+                                {audioState.isBuffering && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '50%',
+                                        left: `${audioState.bufferProgress}%`,
+                                        transform: 'translateY(-50%)',
+                                        width: '4px',
+                                        height: '12px',
+                                        background: '#3b82f6',
+                                        borderRadius: '2px',
+                                        animation: 'pulse 1s infinite'
+                                    }} />
+                                )}
+                                
+                                {/* Hover Effect Overlay */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    background: 'rgba(255, 255, 255, 0.1)',
+                                    opacity: 0,
+                                    transition: 'opacity 0.2s ease',
+                                    pointerEvents: 'none'
+                                }} 
+                                className="progress-hover-overlay"
+                                />
+                            </div>
+                            
+                            {/* Close Button */}
+                            <button
+                                onClick={() => setIsProgressBarExpanded(false)}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.1)',
+                                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    padding: '6px 12px',
+                                    borderRadius: '6px',
+                                    fontSize: '11px',
+                                    alignSelf: 'center',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                                }}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Search Section */}
             <div className="search-section" style={{ marginBottom: 'var(--space-xl)' }}>
                 <div style={{ position: 'relative', marginBottom: 'var(--space-md)' }}>
@@ -990,6 +2093,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 onFocus={handleInputFocus}
                                 onBlur={handleInputBlur}
                                 placeholder="Search for songs, artists, or albums..."
+                                aria-label="Search YouTube Music"
+                                aria-describedby="search-help"
                                 style={{
                                     width: '100%',
                                     padding: '12px 16px',
@@ -1003,6 +2108,14 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }}
                                 disabled={isSearching}
                             />
+                            <div id="search-help" style={{ 
+                                fontSize: '12px', 
+                                color: 'var(--text-tertiary)', 
+                                marginTop: '4px',
+                                display: 'none' 
+                            }}>
+                                Press Enter to search, Escape to close suggestions
+                            </div>
                             
                             {/* Suggestions Dropdown */}
                             {showSuggestions && suggestions.length > 0 && (
@@ -1089,8 +2202,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         fontSize: '14px',
                                                         fontWeight: '500',
                                                         overflow: 'hidden',
-                                                        textOverflow: 'ellipsis',
-                                                        whiteSpace: 'nowrap'
+                                                        display: '-webkit-box',
+                                                        WebkitLineClamp: 2,
+                                                        WebkitBoxOrient: 'vertical',
+                                                        lineHeight: '1.4',
+                                                        wordBreak: 'break-word'
                                                     }}>
                                                         {suggestion.text}
                                                     </div>
@@ -1100,8 +2216,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                             fontSize: '12px',
                                                             marginTop: '2px',
                                                             overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
+                                                            display: '-webkit-box',
+                                                            WebkitLineClamp: 1,
+                                                            WebkitBoxOrient: 'vertical',
+                                                            lineHeight: '1.4',
+                                                            wordBreak: 'break-word'
                                                         }}>
                                                             {suggestion.title} • {suggestion.artist}
                                                         </div>
@@ -1130,6 +2249,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             onClick={() => handleSearch()}
                             disabled={isSearching || !searchQuery.trim()}
                             style={{
+                                display: 'none', // Hide search button since real-time search handles everything
                                 padding: '12px 16px',
                                 fontSize: '14px',
                                 fontWeight: '500',
@@ -1148,7 +2268,6 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 cursor: isSearching ? 'not-allowed' : !searchQuery.trim() ? 'default' : 'pointer',
                                 minWidth: '100px',
                                 height: '48px',
-                                display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 gap: '6px',
@@ -1229,7 +2348,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             )}
                         </button>
                         
-                        {/* Add CSS animations and table styles */}
+                        {/* Enhanced CSS animations and table styles */}
                         <style>{`
                             @keyframes shimmer {
                                 0% { transform: translateX(-100%); }
@@ -1246,6 +2365,39 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 100% { transform: rotate(360deg); }
                             }
                             
+                            @keyframes slideInRight {
+                                from { transform: translateX(100%); opacity: 0; }
+                                to { transform: translateX(0); opacity: 1; }
+                            }
+                            
+                            @keyframes fadeIn {
+                                from { opacity: 0; transform: translateY(10px); }
+                                to { opacity: 1; transform: translateY(0); }
+                            }
+                            
+                            @keyframes bounce {
+                                0%, 20%, 53%, 80%, 100% { transform: translate3d(0,0,0); }
+                                40%, 43% { transform: translate3d(0, -8px, 0); }
+                                70% { transform: translate3d(0, -4px, 0); }
+                                90% { transform: translate3d(0, -2px, 0); }
+                            }
+                            
+                            @keyframes glow {
+                                0%, 100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.5); }
+                                50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.8); }
+                            }
+                            
+                            @keyframes slideUp {
+                                from { 
+                                    opacity: 0; 
+                                    transform: translateY(20px); 
+                                }
+                                to { 
+                                    opacity: 1; 
+                                    transform: translateY(0); 
+                                }
+                            }
+                            
                             /* Table wrapper styles */
                             .table-wrapper {
                                 width: 100%;
@@ -1255,27 +2407,39 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 background: var(--surface-bg);
                             }
                             
-                            /* YouTube tracks table styles */
+                            /* YouTube tracks table styles - matching TrackTable */
                             .youtube-tracks-table {
                                 width: 100%;
                                 border-collapse: collapse;
-                                background: var(--surface-bg);
+                                background: var(--card-bg);
+                                border-radius: var(--radius-lg);
+                                overflow: hidden;
                             }
                             
                             .youtube-tracks-table thead {
-                                background: var(--card-bg);
-                                border-bottom: 2px solid var(--border-color);
+                                background: var(--elevated-bg);
+                                border-bottom: 2px solid var(--divider-color);
                             }
                             
                             .youtube-tracks-table th {
-                                padding: 12px 8px;
+                                padding: var(--space-md);
                                 text-align: left;
                                 font-weight: 600;
                                 font-size: 12px;
                                 color: var(--text-secondary);
                                 text-transform: uppercase;
                                 letter-spacing: 0.5px;
-                                border-right: 1px solid var(--border-color);
+                                border-right: 1px solid var(--divider-color);
+                            }
+                            
+                            .youtube-tracks-table th.sortable {
+                                cursor: pointer;
+                                user-select: none;
+                                transition: color 0.2s ease;
+                            }
+                            
+                            .youtube-tracks-table th.sortable:hover {
+                                color: var(--text-primary);
                             }
                             
                             .youtube-tracks-table th:last-child {
@@ -1283,10 +2447,13 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }
                             
                             .youtube-tracks-table td {
-                                padding: 12px 8px;
-                                border-bottom: 1px solid var(--border-color);
-                                border-right: 1px solid var(--border-color);
-                                vertical-align: middle;
+                                padding: var(--space-md);
+                                border-bottom: 1px solid var(--divider-color);
+                                border-right: 1px solid var(--divider-color);
+                                vertical-align: top;
+                                color: var(--text-primary);
+                                font-size: 13px;
+                                min-height: 60px;
                             }
                             
                             .youtube-tracks-table td:last-child {
@@ -1298,7 +2465,33 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }
                             
                             .youtube-track-row:hover {
-                                background: var(--card-bg) !important;
+                                background: var(--hover-bg) !important;
+                            }
+                            
+                            .youtube-track-row.playing {
+                                background: rgba(74, 144, 226, 0.1) !important;
+                            }
+                            
+                            .sort-indicator {
+                                margin-left: 4px;
+                                font-size: 10px;
+                                opacity: 0.7;
+                            }
+                            
+                            .cover-art-cell {
+                                width: 50px;
+                            }
+                            
+                            .cover-art-placeholder {
+                                width: 40px;
+                                height: 40px;
+                                background: var(--elevated-bg);
+                                border-radius: var(--radius-sm);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                color: var(--text-muted);
+                                font-size: 16px;
                             }
                             
                             .youtube-track-row:last-child td {
@@ -1340,6 +2533,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             @media (max-width: 768px) {
                                 .table-wrapper {
                                     font-size: 12px;
+                                    border-radius: 6px;
                                 }
                                 
                                 .youtube-tracks-table th,
@@ -1362,10 +2556,57 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 
                                 .title-cell div {
                                     max-width: 150px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .artist-cell div {
                                     max-width: 120px !important;
+                                    -webkit-line-clamp: 2 !important;
+                                }
+                                
+                                .actions-cell {
+                                    min-width: 100px !important;
+                                }
+                                
+                                /* Enhanced Global audio controls mobile */
+                                .youtube-music-container .enhanced-player {
+                                    bottom: 16px !important;
+                                    left: 8px !important;
+                                    right: 8px !important;
+                                    transform: none !important;
+                                    min-width: auto !important;
+                                    max-width: none !important;
+                                    width: calc(100vw - 16px) !important;
+                                    padding: 16px 20px 20px 20px !important;
+                                    border-radius: 12px !important;
+                                    gap: 14px !important;
+                                }
+                                
+                                .youtube-music-container > div[style*="position: fixed"] > div:first-child {
+                                    text-align: center !important;
+                                }
+                                
+                                .youtube-music-container > div[style*="position: fixed"] > div:nth-child(2) {
+                                    order: 3 !important;
+                                }
+                                
+                                .youtube-music-container > div[style*="position: fixed"] > div:last-child {
+                                    order: 2 !important;
+                                    justify-content: center !important;
+                                }
+                                
+                                /* Expanded progress bar mobile */
+                                .youtube-music-container > div[style*="position: fixed"] > div[style*="animation: slideUp"] {
+                                    margin-top: 8px !important;
+                                }
+                                
+                                .youtube-music-container > div[style*="position: fixed"] > div[style*="animation: slideUp"] > div[style*="height: 8px"] {
+                                    height: 12px !important;
+                                }
+                                
+                                .youtube-music-container > div[style*="position: fixed"] > div[style*="animation: slideUp"] > div[style*="width: 12px"] {
+                                    width: 16px !important;
+                                    height: 16px !important;
                                 }
                             }
                             
@@ -1409,10 +2650,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 
                                 .title-cell div {
                                     max-width: 100px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .artist-cell div {
                                     max-width: 80px !important;
+                                    -webkit-line-clamp: 2 !important;
                                 }
                                 
                                 .actions-cell button {
@@ -1438,6 +2681,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 opacity: 1 !important;
                             }
                             
+                            /* Progress bar hover effects */
+                            .progress-hover-overlay:hover {
+                                opacity: 1 !important;
+                            }
+                            
                             /* Enhanced progress animations */
                             @keyframes progressPulse {
                                 0%, 100% { opacity: 1; }
@@ -1457,6 +2705,51 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             
                             .download-complete {
                                 animation: downloadComplete 0.6s ease-in-out;
+                            }
+                            
+                            /* Enhanced Audio Player Animations */
+                            @keyframes ripple {
+                                0% { 
+                                    transform: translate(-50%, -50%) scale(0.8);
+                                    opacity: 0.8;
+                                }
+                                50% { 
+                                    transform: translate(-50%, -50%) scale(1.2);
+                                    opacity: 0.4;
+                                }
+                                100% { 
+                                    transform: translate(-50%, -50%) scale(1.6);
+                                    opacity: 0;
+                                }
+                            }
+                            
+                            @keyframes breathe {
+                                0%, 100% { 
+                                    box-shadow: 0 0 20px rgba(77, 171, 247, 0.3);
+                                }
+                                50% { 
+                                    box-shadow: 0 0 30px rgba(77, 171, 247, 0.6);
+                                }
+                            }
+                            
+                            @keyframes slideInUp {
+                                from {
+                                    opacity: 0;
+                                    transform: translate(-50%, 100%);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: translate(-50%, 0);
+                                }
+                            }
+                            
+                            /* Enhanced Media Player Styles */
+                            .youtube-music-container .enhanced-player {
+                                animation: slideInUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                            }
+                            
+                            .youtube-music-container .playing-indicator {
+                                animation: breathe 3s infinite ease-in-out;
                             }
                         `}</style>
                     </div>
@@ -1510,47 +2803,91 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             {/* Search Results */}
             <div className="search-results">
                 {searchResults.length > 0 && (
-                    <h3 style={{ color: 'var(--text-primary)', marginBottom: 'var(--space-lg)' }}>
-                        Search Results ({searchResults.length})
-                    </h3>
+                    <div className="table-controls">
+                        <h3 style={{ color: 'var(--text-primary)', margin: 0 }}>
+                            Search Results ({filteredAndSortedResults.length}{searchTerm ? ` of ${searchResults.length}` : ''})
+                        </h3>
+                        <div className="search-and-filters">
+                            <div className="search-box">
+                                <input
+                                    type="text"
+                                    placeholder="Filter results..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
                 )}
 
                 <div className="table-wrapper">
-                    <table className="youtube-tracks-table">
+                    <table 
+                        className="songs-table youtube-tracks-table"
+                        role="table"
+                        aria-label="YouTube Music search results"
+                    >
                         <thead>
-                            <tr>
-                                <th className="thumbnail-header">Thumbnail</th>
-                                <th className="title-header">Title</th>
-                                <th className="artist-header">Artist</th>
-                                <th className="album-header">Album</th>
-                                <th className="duration-header">Duration</th>
+                            <tr role="row">
+                                <th className="cover-art-header">Cover Art</th>
+                                <th className="sortable" onClick={() => handleSort('title')}>
+                                    Title
+                                    {sortField === 'title' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('artist')}>
+                                    Artist
+                                    {sortField === 'artist' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('album')}>
+                                    Album
+                                    {sortField === 'album' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
+                                <th className="sortable" onClick={() => handleSort('duration')}>
+                                    Duration
+                                    {sortField === 'duration' && (
+                                        <span className={`sort-indicator ${sortDirection}`}>
+                                            {sortDirection === 'asc' ? '↑' : '↓'}
+                                        </span>
+                                    )}
+                                </th>
                                 <th className="actions-header">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {searchResults.map((track) => {
-                                const isCurrentlyDownloading = isDownloading === track.id;
-                                const progress = downloadProgress[track.id] || 0;
+                            {filteredAndSortedResults.map((track) => {
+                                const isCurrentlyPlaying = currentlyPlayingId === track.id;
+                                const isDownloaded = downloadedTracks.has(track.id);
 
                                 return (
                                     <tr
                                         key={track.id}
-                                        className="youtube-track-row"
+                                        className={`youtube-track-row ${isCurrentlyPlaying ? 'playing' : ''}`}
+                                        role="row"
+                                        tabIndex={0}
+                                        aria-label={`Track: ${track.title} by ${track.artist}`}
                                         style={{
-                                            transition: 'all 0.2s ease',
                                             cursor: 'pointer'
                                         }}
-                                                                                 onMouseEnter={(e) => {
-                                             e.currentTarget.style.backgroundColor = 'var(--card-bg)';
-                                             e.currentTarget.style.borderColor = 'var(--brand-blue)';
-                                         }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = 'transparent';
-                                            e.currentTarget.style.borderColor = 'transparent';
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                togglePlayPause(track);
+                                            }
                                         }}
                                     >
-                                        {/* Thumbnail with Hover Preview */}
-                                        <td className="thumbnail-cell">
+                                        {/* Cover Art with Enhanced Play/Pause */}
+                                        <td className="cover-art-cell" role="gridcell" aria-label="Track cover art">
                                             <div
                                                 style={{
                                                     position: 'relative',
@@ -1569,24 +2906,48 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                     e.currentTarget.style.transform = 'scale(1)';
                                                     e.currentTarget.style.boxShadow = 'none';
                                                 }}
-                                                onClick={() => handlePreview(track)}
+                                                onClick={() => togglePlayPause(track)}
                                             >
-                                                <img
-                                                    src={track.thumbnail}
-                                                    alt={`${track.title} by ${track.artist}`}
+                                                {track.thumbnail ? (
+                                                    <img
+                                                        src={track.thumbnail}
+                                                        alt={`${track.title} by ${track.artist}`}
+                                                        style={{
+                                                            width: '100%',
+                                                            height: '100%',
+                                                            objectFit: 'cover',
+                                                            transition: 'filter 0.2s ease'
+                                                        }}
+                                                        onError={(e) => {
+                                                            // Fallback to placeholder when image fails to load
+                                                            e.currentTarget.style.display = 'none';
+                                                            const placeholder = e.currentTarget.nextElementSibling as HTMLElement;
+                                                            if (placeholder) {
+                                                                placeholder.style.display = 'flex';
+                                                            }
+                                                        }}
+                                                    />
+                                                ) : null}
+                                                
+                                                {/* Cover Art Placeholder */}
+                                                <div
+                                                    className="cover-art-placeholder"
                                                     style={{
+                                                        display: track.thumbnail ? 'none' : 'flex',
                                                         width: '100%',
                                                         height: '100%',
-                                                        objectFit: 'cover',
-                                                        transition: 'filter 0.2s ease'
+                                                        background: 'var(--elevated-bg)',
+                                                        borderRadius: '4px',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        color: 'var(--text-muted)',
+                                                        fontSize: '16px'
                                                     }}
-                                                    onError={(e) => {
-                                                        // Fallback for broken images
-                                                        e.currentTarget.style.display = 'none';
-                                                    }}
-                                                />
+                                                >
+                                                    <MusicIcon />
+                                                </div>
                                                 
-                                                {/* Play/Pause/Loading Button Overlay */}
+                                                {/* Enhanced Play/Pause/Loading Button Overlay */}
                                                 <div
                                                     style={{
                                                         position: 'absolute',
@@ -1595,18 +2956,23 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         transform: 'translate(-50%, -50%)',
                                                         width: '24px',
                                                         height: '24px',
-                                                        background: 'rgba(0, 0, 0, 0.8)',
+                                                        background: isCurrentlyPlaying 
+                                                            ? 'rgba(59, 130, 246, 0.9)' 
+                                                            : 'rgba(0, 0, 0, 0.8)',
                                                         borderRadius: '50%',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         justifyContent: 'center',
-                                                        opacity: (previewingId === track.id || loadingPreviewId === track.id) ? 1 : 0,
-                                                        transition: 'opacity 0.2s ease',
+                                                        opacity: (isCurrentlyPlaying || audioState.isLoading) ? 1 : 0,
+                                                        transition: 'all 0.2s ease',
                                                         pointerEvents: 'none',
-                                                        border: '2px solid rgba(255, 255, 255, 0.3)'
+                                                        border: '2px solid rgba(255, 255, 255, 0.3)',
+                                                        boxShadow: isCurrentlyPlaying 
+                                                            ? '0 0 12px rgba(59, 130, 246, 0.6)' 
+                                                            : 'none'
                                                     }}
                                                 >
-                                                    {loadingPreviewId === track.id ? (
+                                                    {audioState.isLoading && isCurrentlyPlaying ? (
                                                         // Loading spinner
                                                         <div style={{
                                                             width: '12px',
@@ -1616,7 +2982,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                             borderRadius: '50%',
                                                             animation: 'spin 1s linear infinite'
                                                         }} />
-                                                    ) : previewingId === track.id ? (
+                                                    ) : isCurrentlyPlaying ? (
                                                         // Pause icon when playing
                                                         <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
                                                             <rect x="6" y="4" width="4" height="16" rx="1"/>
@@ -1648,51 +3014,87 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             </div>
                                         </td>
 
-                                        {/* Title */}
-                                        <td className="title-cell">
-                                            <div style={{
-                                                color: 'var(--text-primary)',
-                                                fontSize: '14px',
-                                                fontWeight: '500',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '200px'
-                                            }}>
-                                                {track.title}
+                                        {/* Title with Progress Bar for Currently Playing */}
+                                        <td className="title-cell" role="gridcell" aria-label="Track title">
+                                            <div className="title-content">
+                                                <div className="title-text" style={{
+                                                    color: 'var(--text-primary)',
+                                                    fontSize: '14px',
+                                                    fontWeight: '500',
+                                                    overflow: 'hidden',
+                                                    display: '-webkit-box',
+                                                    WebkitLineClamp: 2,
+                                                    WebkitBoxOrient: 'vertical',
+                                                    lineHeight: '1.4',
+                                                    maxWidth: '200px',
+                                                    marginBottom: isCurrentlyPlaying ? '4px' : '0',
+                                                    wordBreak: 'break-word'
+                                                }}>
+                                                    {track.title}
+                                                </div>
+                                                {isCurrentlyPlaying && (
+                                                    <span className="playing-indicator" style={{
+                                                        marginLeft: '8px',
+                                                        color: 'var(--brand-blue)',
+                                                        fontSize: '12px'
+                                                    }}>♪</span>
+                                                )}
                                             </div>
+                                            {isCurrentlyPlaying && audioState.duration > 0 && (
+                                                <div style={{
+                                                    width: '100%',
+                                                    height: '3px',
+                                                    background: 'rgba(59, 130, 246, 0.2)',
+                                                    borderRadius: '2px',
+                                                    overflow: 'hidden',
+                                                    marginTop: '4px'
+                                                }}>
+                                                    <div style={{
+                                                        width: `${(audioState.currentTime / audioState.duration) * 100}%`,
+                                                        height: '100%',
+                                                        background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
+                                                        transition: 'width 0.1s ease'
+                                                    }} />
+                                                </div>
+                                            )}
                                         </td>
 
                                         {/* Artist */}
-                                        <td className="artist-cell">
+                                        <td className="artist-cell" role="gridcell" aria-label="Artist name">
                                             <div style={{
                                                 color: 'var(--text-secondary)',
                                                 fontSize: '14px',
                                                 overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '150px'
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 2,
+                                                WebkitBoxOrient: 'vertical',
+                                                lineHeight: '1.4',
+                                                maxWidth: '150px',
+                                                wordBreak: 'break-word'
                                             }}>
                                                 {track.artist}
                                             </div>
                                         </td>
 
                                         {/* Album */}
-                                        <td className="album-cell">
+                                        <td className="album-cell" role="gridcell" aria-label="Album name">
                                             <div style={{
                                                 color: 'var(--text-tertiary)',
                                                 fontSize: '12px',
                                                 overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '150px'
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 2,
+                                                WebkitBoxOrient: 'vertical',
+                                                lineHeight: '1.4',
+                                                maxWidth: '150px',
+                                                wordBreak: 'break-word'
                                             }}>
                                                 {track.album || '—'}
                                             </div>
                                         </td>
 
                                         {/* Duration */}
-                                        <td className="duration-cell">
+                                        <td className="duration-cell" role="gridcell" aria-label="Track duration">
                                             <div style={{
                                                 color: 'var(--text-secondary)',
                                                 fontSize: '12px',
@@ -1702,202 +3104,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             </div>
                                         </td>
 
-                                        {/* Actions */}
-                                        <td className="actions-cell">
-                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                {(() => {
-                                                    const isCurrentlyDownloading = isDownloading === track.id;
-                                                    const isDownloaded = downloadedTracks.has(track.id);
-                                                    
-                                                    // Find any active progress for this track
-                                                    const activeProgress = Object.entries(realTimeProgress).find(
-                                                        ([id, _]) => id.startsWith(track.id)
-                                                    );
-                                                    const progressData = activeProgress ? activeProgress[1] : null;
-                                                    const progressPercent = progressData?.progress || downloadProgress[track.id] || 0;
-                                                    
-                                                    if (isCurrentlyDownloading || (progressData && progressData.stage !== 'complete')) {
-                                                        const canCancel = cancellableDownloads.has(track.id) && !cancelledDownloads.has(track.id);
-                                                        const isCancelled = cancelledDownloads.has(track.id);
-                                                        
-                                                        if (isCancelled) {
-                                                            return (
-                                                                <div style={{ 
-                                                                    display: 'flex', 
-                                                                    flexDirection: 'column', 
-                                                                    alignItems: 'center', 
-                                                                    gap: '4px',
-                                                                    color: '#f59e0b',
-                                                                    fontSize: '11px',
-                                                                    fontWeight: '500',
-                                                                    padding: '4px 8px',
-                                                                    background: 'rgba(245, 158, 11, 0.1)',
-                                                                    borderRadius: '4px',
-                                                                    border: '1px solid rgba(245, 158, 11, 0.3)'
-                                                                }}>
-                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                                                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                                                                        </svg>
-                                                                        Cancelled
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        }
-                                                        
-                                                        return (
-                                                            <div style={{ minWidth: '140px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                                                                {/* Compact loading with spinner */}
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                    <div style={{
-                                                                        width: '14px',
-                                                                        height: '14px',
-                                                                        border: '2px solid rgba(255,255,255,0.3)',
-                                                                        borderTop: '2px solid var(--brand-blue)',
-                                                                        borderRadius: '50%',
-                                                                        animation: 'spin 1s linear infinite'
-                                                                    }} />
-                                                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                                                                        {progressData?.message || 'Preparing download...'}
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                                {/* Cancel Button */}
-                                                                {canCancel && (
-                                                                    <button
-                                                                        onClick={() => handleCancelDownload(track.id)}
-                                                                        style={{
-                                                                            padding: '2px 8px',
-                                                                            fontSize: '10px',
-                                                                            fontWeight: '600',
-                                                                            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                                                                            color: 'white',
-                                                                            border: 'none',
-                                                                            borderRadius: '4px',
-                                                                            cursor: 'pointer',
-                                                                            transition: 'all 0.2s ease',
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px',
-                                                                        }}
-                                                                        onMouseEnter={(e) => {
-                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #dc2626, #b91c1c)';
-                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                        }}
-                                                                        onMouseLeave={(e) => {
-                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
-                                                                            e.currentTarget.style.transform = 'translateY(0)';
-                                                                        }}
-                                                                    >
-                                                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                                                                        </svg>
-                                                                        Cancel
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    } else if (isDownloaded || progressPercent === 100) {
-                                                        return (
-                                                            <div 
-                                                                className="download-complete"
-                                                                style={{
-                                                                    display: 'flex',
-                                                                    flexDirection: 'column',
-                                                                    alignItems: 'center',
-                                                                    gap: '4px',
-                                                                    color: '#10b981',
-                                                                    fontSize: '11px',
-                                                                    fontWeight: '500',
-                                                                    padding: '4px 8px',
-                                                                    background: 'rgba(16, 185, 129, 0.1)',
-                                                                    borderRadius: '4px',
-                                                                    border: '1px solid rgba(16, 185, 129, 0.3)'
-                                                                }}
-                                                            >
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                                                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                                                                    </svg>
-                                                                    Downloaded
-                                                                </div>
-                                                                <div style={{
-                                                                    fontSize: '9px',
-                                                                    opacity: 0.8,
-                                                                    textAlign: 'center'
-                                                                }}>
-                                                                    Added to Collection
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    } else {
-                                                        return (
-                                                            <div style={{ display: 'flex', justifyContent: 'center' }}>
-                                                                {/* Download Button */}
-                                                                <button
-                                                                    onClick={() => handleDownload(track)}
-                                                                    disabled={!isDownloadPathSet}
-                                                                    style={{
-                                                                        padding: '6px 12px',
-                                                                        fontSize: '11px',
-                                                                        fontWeight: '600',
-                                                                        background: isDownloadPathSet 
-                                                                            ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' 
-                                                                            : 'var(--surface-bg)',
-                                                                        color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
-                                                                        border: 'none',
-                                                                        borderRadius: '6px',
-                                                                        cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
-                                                                        transition: 'all 0.2s ease',
-                                                                        boxShadow: isDownloadPathSet 
-                                                                            ? '0 2px 4px rgba(16, 185, 129, 0.3)' 
-                                                                            : 'none',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '4px',
-                                                                        minWidth: '120px',
-                                                                        justifyContent: 'center',
-                                                                        position: 'relative',
-                                                                        overflow: 'hidden'
-                                                                    }}
-                                                                    onMouseEnter={(e) => {
-                                                                        if (isDownloadPathSet) {
-                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
-                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
-                                                                        }
-                                                                    }}
-                                                                    onMouseLeave={(e) => {
-                                                                        if (isDownloadPathSet) {
-                                                                            e.currentTarget.style.transform = 'translateY(0)';
-                                                                            e.currentTarget.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
-                                                                            e.currentTarget.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-                                                                        }
-                                                                    }}
-                                                                    onMouseDown={(e) => {
-                                                                        if (isDownloadPathSet) {
-                                                                            e.currentTarget.style.transform = 'translateY(0)';
-                                                                            e.currentTarget.style.boxShadow = '0 1px 2px rgba(16, 185, 129, 0.3)';
-                                                                        }
-                                                                    }}
-                                                                    onMouseUp={(e) => {
-                                                                        if (isDownloadPathSet) {
-                                                                            e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
-                                                                        }
-                                                                    }}
-                                                                >
-                                                                    {/* Download icon */}
-                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
-                                                                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                                                                    </svg>
-                                                                    <span>Download in 320kbps</span>
-                                                                </button>
-                                                            </div>
-                                                        );
-                                                    }
-                                                })()}
-                                            </div>
+                                        {/* Download Actions */}
+                                        <td className="actions-cell" role="gridcell" aria-label="Download actions">
+                                            <TrackActions track={track} />
                                         </td>
                                     </tr>
                                 );
@@ -1906,7 +3115,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     </table>
                 </div>
 
-                {searchResults.length === 0 && !isSearching && searchQuery && (
+                {filteredAndSortedResults.length === 0 && !isSearching && searchQuery && (
                     <div style={{
                         textAlign: 'center',
                         padding: 'var(--space-xl)',
@@ -1918,7 +3127,16 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 )}
             </div>
 
-
+            {/* Download Manager */}
+            <DownloadManager
+                ref={downloadManagerRef}
+                apiPort={apiPort}
+                apiSigningKey={apiSigningKey}
+                downloadPath={downloadPath}
+                isDownloadPathSet={isDownloadPathSet}
+                onDownloadComplete={onDownloadComplete}
+                maxConcurrentDownloads={3}
+            />
         </div>
     );
 };

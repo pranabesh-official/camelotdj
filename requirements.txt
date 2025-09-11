@@ -16,3 +16,5 @@ pytube
 yt-dlp
 requests
 psutil
+# AI Model for Auto Mix
+llm

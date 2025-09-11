@@ -1,0 +1,249 @@
+/* DatabaseMonitor Component Styles */
+
+.database-monitor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.database-monitor-modal {
+  background: var(--surface-bg);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 1000px;
+  max-height: 90vh;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.database-monitor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--header-bg);
+}
+
+.database-monitor-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.database-monitor-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.auto-refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.refresh-btn, .close-btn {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  background: var(--button-bg);
+  color: var(--text-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.refresh-btn:hover, .close-btn:hover {
+  background: var(--button-hover-bg);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.database-monitor-content {
+  padding: 20px;
+  max-height: calc(90vh - 80px);
+  overflow-y: auto;
+}
+
+.monitor-section {
+  margin-bottom: 30px;
+}
+
+.monitor-section h3 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.health-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.health-label {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.health-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.operation-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 15px;
+}
+
+.operation-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.operation-item.pending {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.operation-item.success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.operation-item.failed {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.operation-item.retrying {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.operation-count {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.operation-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 5px;
+}
+
+.operation-queue {
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.queue-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-header {
+  display: grid;
+  grid-template-columns: 80px 80px 1fr 100px 60px 80px;
+  gap: 10px;
+  padding: 12px 15px;
+  background: var(--header-bg);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: 80px 80px 1fr 100px 60px 80px;
+  gap: 10px;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+}
+
+.queue-row:last-child {
+  border-bottom: none;
+}
+
+.queue-id {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.queue-type {
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.queue-endpoint {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-status {
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.queue-retries {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.queue-time {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.queue-more {
+  padding: 15px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.empty-queue {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}

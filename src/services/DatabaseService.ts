@@ -19,8 +19,8 @@ export interface ScanLocation {
 }
 
 export class DatabaseService {
-    private apiPort: number;
-    private apiSigningKey: string;
+    protected apiPort: number;
+    protected apiSigningKey: string;
 
     constructor(apiPort: number, apiSigningKey: string) {
         this.apiPort = apiPort;
@@ -286,6 +286,202 @@ export class DatabaseService {
         } catch (error) {
             console.error('Error clearing download path:', error);
             // Don't throw error as this is not critical for app functionality
+        }
+    }
+
+    /**
+     * Save Gemini API key to database settings
+     */
+    async saveGeminiApiKey(apiKey: string): Promise<void> {
+        try {
+            const result = await this.makeRequest('/settings/gemini-api-key', {
+                method: 'POST',
+                body: JSON.stringify({
+                    api_key: apiKey,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to save Gemini API key');
+            }
+        } catch (error) {
+            console.error('Error saving Gemini API key:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get Gemini API key from database settings
+     */
+    async getGeminiApiKey(): Promise<string | null> {
+        try {
+            const params = new URLSearchParams({ signingkey: this.apiSigningKey });
+            const result = await this.makeRequest(`/settings/gemini-api-key?${params}`);
+            
+            if (result.status === 'success') {
+                return result.api_key || null;
+            } else {
+                return null;
+            }
+        } catch (error) {
+            console.error('Error getting Gemini API key:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Clear Gemini API key from database settings
+     */
+    async clearGeminiApiKey(): Promise<void> {
+        try {
+            const result = await this.makeRequest('/settings/gemini-api-key', {
+                method: 'DELETE',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to clear Gemini API key');
+            }
+        } catch (error) {
+            console.error('Error clearing Gemini API key:', error);
+            // Don't throw error as this is not critical for app functionality
+        }
+    }
+
+    /**
+     * Create an AI-generated playlist
+     */
+    async createAIPlaylist(requestData: {
+        user_request: string;
+        genre: string;
+        bpm_min: number;
+        bpm_max: number;
+        target_count: number;
+        download_path: string;
+    }): Promise<any> {
+        try {
+            const result = await this.makeRequest('/ai-agent/create-playlist', {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...requestData,
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status === 'success') {
+                return result;
+            } else {
+                throw new Error(result.error || 'Failed to create AI playlist');
+            }
+        } catch (error) {
+            console.error('Error creating AI playlist:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get AI agent task status
+     */
+    async getAITaskStatus(taskId: string): Promise<any> {
+        try {
+            const result = await this.makeRequest(`/ai-agent/task/${taskId}?signingkey=${this.apiSigningKey}`, {
+                method: 'GET'
+            });
+            
+            if (result.status === 'success') {
+                return result.task_progress;
+            } else {
+                throw new Error(result.error || 'Failed to get AI task status');
+            }
+        } catch (error) {
+            console.error('Error getting AI task status:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Pause AI agent task
+     */
+    async pauseAITask(taskId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/ai-agent/task/${taskId}/pause`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to pause AI task');
+            }
+        } catch (error) {
+            console.error('Error pausing AI task:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Resume AI agent task
+     */
+    async resumeAITask(taskId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/ai-agent/task/${taskId}/resume`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to resume AI task');
+            }
+        } catch (error) {
+            console.error('Error resuming AI task:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Cancel AI agent task
+     */
+    async cancelAITask(taskId: string): Promise<void> {
+        try {
+            const result = await this.makeRequest(`/ai-agent/task/${taskId}/cancel`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    signingkey: this.apiSigningKey
+                })
+            });
+            
+            if (result.status !== 'success') {
+                throw new Error(result.error || 'Failed to cancel AI task');
+            }
+        } catch (error) {
+            console.error('Error cancelling AI task:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get active AI agent sessions
+     */
+    async getActiveAISessions(): Promise<any[]> {
+        try {
+            const result = await this.makeRequest(`/ai-agent/active-sessions?signingkey=${this.apiSigningKey}`, {
+                method: 'GET'
+            });
+            
+            if (result.status === 'success') {
+                return result.active_sessions;
+            } else {
+                throw new Error(result.error || 'Failed to get active AI sessions');
+            }
+        } catch (error) {
+            console.error('Error getting active AI sessions:', error);
+            throw error;
         }
     }
 

@@ -649,6 +649,17 @@
   transform: translateY(-1px);
 }
 
+.create-playlist-btn.cleanup-btn {
+  background: #f59e0b;
+  color: white;
+  margin-top: var(--space-sm);
+}
+
+.create-playlist-btn.cleanup-btn:hover {
+  background: #d97706;
+  transform: translateY(-1px);
+}
+
 /* Query Playlist Indicators */
 .query-playlist {
   border-left: 3px solid var(--accent-color);

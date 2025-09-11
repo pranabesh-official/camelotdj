@@ -7,20 +7,23 @@ import { getAnalytics, isSupported } from 'firebase/analytics';
 
 // Debug: Log all environment variables to see what's available
 console.log('🔍 Environment Variables Debug:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('process.env keys:', Object.keys(process.env).filter(key => key.startsWith('REACT_APP_')));
-console.log('REACT_APP_FIREBASE_API_KEY:', process.env.REACT_APP_FIREBASE_API_KEY ? '✅ Set' : '❌ Missing');
-console.log('REACT_APP_FIREBASE_AUTH_DOMAIN:', process.env.REACT_APP_FIREBASE_AUTH_DOMAIN ? '✅ Set' : '❌ Missing');
-console.log('REACT_APP_FIREBASE_PROJECT_ID:', process.env.REACT_APP_FIREBASE_PROJECT_ID ? '✅ Set' : '❌ Missing');
-console.log('REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET ? '✅ Set' : '❌ Missing');
-console.log('REACT_APP_FIREBASE_MESSAGING_SENDER_ID:', process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID ? '✅ Set' : '❌ Missing');
-console.log('REACT_APP_FIREBASE_APP_ID:', process.env.REACT_APP_FIREBASE_APP_ID ? '✅ Set' : '❌ Missing');
+// Safe access to process.env with fallback
+const safeProcessEnv = (typeof process !== 'undefined' && process.env) ? process.env : {} as Record<string, string | undefined>;
+
+console.log('NODE_ENV:', safeProcessEnv.NODE_ENV);
+console.log('process.env keys:', Object.keys(safeProcessEnv).filter(key => key.startsWith('REACT_APP_')));
+console.log('REACT_APP_FIREBASE_API_KEY:', safeProcessEnv.REACT_APP_FIREBASE_API_KEY ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_AUTH_DOMAIN:', safeProcessEnv.REACT_APP_FIREBASE_AUTH_DOMAIN ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_PROJECT_ID:', safeProcessEnv.REACT_APP_FIREBASE_PROJECT_ID ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_STORAGE_BUCKET:', safeProcessEnv.REACT_APP_FIREBASE_STORAGE_BUCKET ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_MESSAGING_SENDER_ID:', safeProcessEnv.REACT_APP_FIREBASE_MESSAGING_SENDER_ID ? '✅ Set' : '❌ Missing');
+console.log('REACT_APP_FIREBASE_APP_ID:', safeProcessEnv.REACT_APP_FIREBASE_APP_ID ? '✅ Set' : '❌ Missing');
 
 // Alternative: Try to access environment variables from window object (for web builds)
 const getEnvVar = (key: string): string | undefined => {
   // Try process.env first (for Node.js/Electron)
-  if (process.env[key]) {
-    return process.env[key];
+  if (safeProcessEnv[key]) {
+    return safeProcessEnv[key];
   }
   
   // Try window.__ENV__ if available (for web builds)
@@ -56,7 +59,7 @@ if (missingVars.length > 0) {
   console.error('❌', errorMessage);
   console.error('🔍 Make sure you have a .env.local file with the Firebase configuration');
   console.error('🔍 You can copy from env.example: cp env.example .env.local');
-  console.error('🔍 Current working directory:', process.cwd());
+  console.error('🔍 Current working directory:', typeof process !== 'undefined' ? process.cwd() : 'N/A (browser)');
   console.error('🔍 .env.local exists:', require('fs').existsSync('.env.local'));
   throw new Error(errorMessage);
 }
@@ -117,7 +120,7 @@ export const isDesktopEnvironment = (): boolean => {
 
 // Check if running in development mode
 export const isDevelopment = (): boolean => {
-  return process.env.NODE_ENV === 'development';
+  return safeProcessEnv.NODE_ENV === 'development';
 };
 
 // Log Firebase initialization status

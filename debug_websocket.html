@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Debug Tool</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 5px 0; border-radius: 4px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+        .connect { background: #4caf50; color: white; }
+        .disconnect { background: #f44336; color: white; }
+        .test { background: #2196f3; color: white; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Debug Tool</h1>
+    <div>
+        <label>Port: <input type="number" id="port" value="5002" /></label>
+        <button class="connect" onclick="connect()">Connect</button>
+        <button class="disconnect" onclick="disconnect()">Disconnect</button>
+        <button class="test" onclick="testMessage()">Send Test Message</button>
+    </div>
+    
+    <div id="logs"></div>
+
+    <script>
+        let socket = null;
+        
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+        }
+        
+        function connect() {
+            const port = document.getElementById('port').value;
+            const url = `http://127.0.0.1:${port}`;
+            
+            log(`Connecting to ${url}...`, 'info');
+            
+            socket = io(url, {
+                transports: ['polling', 'websocket'],
+                timeout: 20000,
+                autoConnect: true,
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 2000,
+                forceNew: true,
+                upgrade: true,
+                rememberUpgrade: true,
+                pingTimeout: 30000,
+                pingInterval: 15000,
+                withCredentials: false,
+                extraHeaders: {
+                    'User-Agent': 'CAMELOTDJ-Debug/1.0.0'
+                }
+            });
+            
+            socket.on('connect', () => {
+                log(`✅ Connected successfully! ID: ${socket.id}, Transport: ${socket.io.engine?.transport?.name}`, 'success');
+            });
+            
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message || error}`, 'error');
+                log(`Error details: ${JSON.stringify(error, null, 2)}`, 'error');
+            });
+            
+            socket.on('disconnect', (reason) => {
+                log(`❌ Disconnected: ${reason}`, 'error');
+            });
+            
+            socket.on('connected', (data) => {
+                log(`📡 Received connected event: ${JSON.stringify(data)}`, 'success');
+            });
+            
+            socket.on('download_progress', (data) => {
+                log(`📥 Download progress: ${JSON.stringify(data)}`, 'info');
+            });
+            
+            socket.on('download_error', (data) => {
+                log(`❌ Download error: ${JSON.stringify(data)}`, 'error');
+            });
+            
+            socket.on('pong', (data) => {
+                log(`🏓 Pong received: ${JSON.stringify(data)}`, 'info');
+            });
+            
+            socket.io.engine?.on('upgrade', () => {
+                log(`🔄 Transport upgraded to: ${socket.io.engine?.transport?.name}`, 'info');
+            });
+            
+            socket.io.engine?.on('upgradeError', (error) => {
+                log(`⚠️ Upgrade failed: ${error}`, 'error');
+            });
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                log('Disconnected manually', 'info');
+            }
+        }
+        
+        function testMessage() {
+            if (socket && socket.connected) {
+                socket.emit('test_message', { message: 'Hello from debug tool' });
+                log('Test message sent', 'info');
+            } else {
+                log('Not connected!', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

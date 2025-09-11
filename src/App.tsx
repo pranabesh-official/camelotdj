@@ -7,18 +7,24 @@ import AudioPlayer from './components/AudioPlayer';
 import PlaylistManager, { Playlist } from './components/PlaylistManager';
 import TrackTable from './components/TrackTable';
 import YouTubeMusic from './components/YouTubeMusic';
+import USBExport from './components/USBExport';
+// import AIAgent from './components/AIAgent';
 // import LibraryStatus from './components/LibraryStatus';
 import DatabaseService from './services/DatabaseService';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Volume2 } from 'lucide-react';
 import AuthGate from './components/AuthGate';
 import { useAuth } from './services/AuthContext';
 import { upsertUserTrack, upsertManyUserTracks, saveToAnalysisSongs } from './services/TrackSyncService';
+import { getMatchingQueryPlaylists, isSongInPlaylist, getUniqueSongs, validatePlaylistSongs } from './utils/queryPlaylistUtils';
 import logoWhite from './assets/logwhite.png';
 
 export interface Song {
     id: string;
     filename: string;
     file_path?: string;
+    title?: string; // Song title
+    artist?: string; // Artist name
     key?: string;
     scale?: string;
     key_name?: string;
@@ -33,6 +39,8 @@ export interface Song {
     cue_points?: number[];
     track_id?: string; // Unique track identifier
     id3?: any; // Raw ID3/metadata blob for cloud sync
+    cover_art?: string; // Base64 encoded cover art image
+    cover_art_extracted?: boolean; // Flag to track if cover art has been extracted
     // Enhanced analysis tracking
     analysis_status?: 'pending' | 'analyzing' | 'completed' | 'failed';
     id3_tags_written?: boolean;
@@ -82,6 +90,17 @@ const App: React.FC = () => {
     const [showCompatibleOnly, setShowCompatibleOnly] = useState(false);
     const [databaseService, setDatabaseService] = useState<DatabaseService | null>(null);
     const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
+    const [isCoverArtExtractionComplete, setIsCoverArtExtractionComplete] = useState(true);
+    
+    // Audio Player Settings
+    const [volume, setVolume] = useState(1);
+    
+    // Auto Mix Settings
+    const [isAutoMixEnabled, setIsAutoMixEnabled] = useState(false);
+    const [autoMixPlaylist, setAutoMixPlaylist] = useState<Song[]>([]);
+    const [isAutoMixLoading, setIsAutoMixLoading] = useState(false);
+    const [autoMixError, setAutoMixError] = useState<string | null>(null);
+    const [autoPlay, setAutoPlay] = useState(false);
     
     // YouTube Music Settings
     const [downloadPath, setDownloadPath] = useState<string>('');
@@ -89,11 +108,29 @@ const App: React.FC = () => {
     const [isLoadingSettings, setIsLoadingSettings] = useState(false);
     const [showSaveSuccess, setShowSaveSuccess] = useState(false);
     
+    // Gemini API Settings
+    // AI Agent related state - commented out for this version
+    // const [geminiApiKey, setGeminiApiKey] = useState<string>('');
+    // const [isGeminiApiKeySet, setIsGeminiApiKeySet] = useState(false);
+    const [isLoadingGeminiSettings, setIsLoadingGeminiSettings] = useState(false);
+    const [showGeminiSaveSuccess, setShowGeminiSaveSuccess] = useState(false);
+    
     // Analysis Queue State
     const [analysisQueue, setAnalysisQueue] = useState<QueuedFile[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
     const [isQueuePaused, setIsQueuePaused] = useState(false);
+    
+    // USB Export State
+    const [showUSBExport, setShowUSBExport] = useState(false);
+    const [playlistToExport, setPlaylistToExport] = useState<Playlist | null>(null);
     const queueProcessingRef = useRef<boolean>(false);
+    const downloadManagerRef = useRef<any>(null);
+    const [listRefreshKey, setListRefreshKey] = useState<number>(0);
+
+    const goToLibraryAndRefresh = useCallback(() => {
+        setListRefreshKey(prev => prev + 1);
+        setCurrentView('library');
+    }, []);
 
     // Check if running in Electron and get API details
     useEffect(() => {
@@ -126,8 +163,10 @@ const App: React.FC = () => {
                         const dbService = new DatabaseService(apiInfo.port, apiInfo.signingKey);
                         setDatabaseService(dbService);
                         
-                        // Load library from database with longer delay for Electron
-                        loadLibraryFromDatabase(dbService, 2000);
+                        // Validate/clean first, then load library (longer delay for Electron)
+                        validateAndCleanLibrary(dbService).finally(() => {
+                            loadLibraryFromDatabase(dbService, 2000);
+                        });
                     } catch (error) {
                         console.error('❌ Error parsing API details:', error);
                         // Fallback to default values
@@ -183,12 +222,55 @@ const App: React.FC = () => {
         }
     }, [apiSigningKey]);
 
+    // Validate and clean library before loading
+    const validateAndCleanLibrary = React.useCallback(async (dbService: DatabaseService) => {
+        try {
+            console.log('🧹 Validating library and cleaning missing files...');
+            // Ask backend to verify current files (best-effort)
+            try {
+                const stats = await dbService.verifyLibrary();
+                console.log(`📊 Verification complete: total=${stats.total}, found=${stats.found}, missing=${stats.missing}`);
+            } catch (verifyErr) {
+                console.warn('⚠️ Library verification failed (continuing with cleanup):', verifyErr);
+            }
+
+            // Fetch songs marked as missing and delete them from DB
+            try {
+                const missingSongs = await dbService.getLibrary('missing');
+                if (missingSongs && missingSongs.length > 0) {
+                    console.log(`🗑️ Removing ${missingSongs.length} missing song(s) from database...`);
+                    for (const ms of missingSongs) {
+                        try {
+                            if (ms.id) {
+                                await dbService.deleteSong(ms.id.toString());
+                            } else if (ms.file_path) {
+                                await dbService.deleteSongByPath(ms.file_path);
+                            }
+                        } catch (delErr) {
+                            console.warn('Failed to delete missing song record:', { id: ms.id, file_path: ms.file_path, error: delErr });
+                        }
+                    }
+                    console.log('✅ Cleanup of missing songs completed.');
+                } else {
+                    console.log('✅ No missing songs to clean.');
+                }
+            } catch (missErr) {
+                console.warn('⚠️ Could not query missing songs for cleanup:', missErr);
+            }
+        } catch (error) {
+            console.warn('⚠️ Validation and cleanup encountered an issue (continuing):', error);
+        }
+    }, []);
+
     // Helper function to initialize database service with defaults
     const initializeDatabaseService = () => {
         console.log('🔧 Initializing database service with defaults...');
         const dbService = new DatabaseService(5002, 'devkey');
         setDatabaseService(dbService);
-        loadLibraryFromDatabase(dbService, 1500);
+        // Validate/clean first, then load
+        validateAndCleanLibrary(dbService).finally(() => {
+            loadLibraryFromDatabase(dbService, 1500);
+        });
     };
 
     // Load library from database
@@ -245,10 +327,31 @@ const App: React.FC = () => {
                         estimatedBitrate = 320; // Default to high quality
                     }
                     
+                    // Normalize metadata to avoid placeholder values like "Unknown Artist"
+                    const isMeaningless = (val: any) => {
+                        if (!val) return true;
+                        const s = String(val).trim().toLowerCase();
+                        return s === 'unknown' || s === 'unknown artist' || s === 'n/a' || s === 'null' || s === 'undefined';
+                    };
+                    const parseFromFilename = (filename?: string) => {
+                        if (!filename) return { artist: undefined as any, title: undefined as any };
+                        const base = filename.replace(/\.[^/.]+$/, '');
+                        if (base.includes(' - ')) {
+                            const [artistPart, ...rest] = base.split(' - ');
+                            return { artist: artistPart, title: rest.join(' - ') };
+                        }
+                        return { artist: undefined as any, title: base };
+                    };
+                    const parsed = parseFromFilename(song.filename);
+                    const normalizedTitle = !isMeaningless(song.title) ? song.title : ((song.id3 && !isMeaningless(song.id3.title) && song.id3.title) || parsed.title || song.filename);
+                    const normalizedArtist = !isMeaningless(song.artist) ? song.artist : ((song.id3 && !isMeaningless(song.id3.artist) && song.id3.artist) || parsed.artist || 'Unknown Artist');
+
                     return {
                         id: song.id ? song.id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: song.filename,
                         file_path: song.file_path,
+                        title: normalizedTitle,
+                        artist: normalizedArtist,
                         key: song.key,
                         scale: song.scale,
                         key_name: song.key_name,
@@ -265,7 +368,38 @@ const App: React.FC = () => {
                     };
                 });
                 
-                setSongs(transformedSongs);
+                // If running in Electron, do a local filesystem existence check to hide missing files immediately
+                let finalSongs = transformedSongs;
+                try {
+                    const isElectron = !!(window as any).require;
+                    if (isElectron) {
+                        const fs = (window as any).require('fs') as typeof import('fs');
+                        const pathExists = (p?: string) => (p ? fs.existsSync(p) : false);
+                        const missingNow = transformedSongs.filter(s => !pathExists(s.file_path));
+                        if (missingNow.length > 0) {
+                            console.log(`🧼 Filtering ${missingNow.length} locally-missing song(s) from UI and deleting in DB...`);
+                            // Delete missing ones in the background to keep DB clean
+                            (async () => {
+                                for (const ms of missingNow) {
+                                    try {
+                                        if (ms.id) {
+                                            await dbService.deleteSong(ms.id.toString());
+                                        } else if (ms.file_path) {
+                                            await dbService.deleteSongByPath(ms.file_path);
+                                        }
+                                    } catch (e) {
+                                        console.warn('Background delete failed for:', { id: ms.id, file_path: ms.file_path, error: e });
+                                    }
+                                }
+                            })();
+                        }
+                        finalSongs = transformedSongs.filter(s => pathExists(s.file_path));
+                    }
+                } catch (e) {
+                    console.warn('Electron FS check failed or not available (continuing):', e);
+                }
+
+                setSongs(finalSongs);
                 console.log(`🎵 Successfully loaded ${transformedSongs.length} songs from database:`);
                 transformedSongs.forEach((song, i) => {
                     console.log(`   ${i+1}. ${song.filename} (${song.camelot_key})`);
@@ -320,8 +454,8 @@ const App: React.FC = () => {
             }
         };
 
-        // Check backend health every 30 seconds
-        const healthCheckInterval = setInterval(checkBackendHealth, 30000);
+        // Check backend health every 60 seconds
+        const healthCheckInterval = setInterval(checkBackendHealth, 60000);
         
         // Initial health check
         checkBackendHealth();
@@ -475,6 +609,9 @@ const App: React.FC = () => {
                         id: result.db_id ? result.db_id.toString() : Date.now().toString() + Math.random().toString(36).substr(2, 9),
                         filename: result.filename,
                         file_path: result.file_path,
+                        // Ensure UI components like PlaylistManager show correct metadata
+                        title: (result.id3 && result.id3.title) || (result.metadata && result.metadata.title) || (result.tags && result.tags.title) || result.filename,
+                        artist: (result.id3 && result.id3.artist) || (result.metadata && result.metadata.artist) || (result.tags && result.tags.artist) || 'Unknown Artist',
                         key: result.key,
                         scale: result.scale,
                         key_name: result.key_name,
@@ -506,12 +643,12 @@ const App: React.FC = () => {
                         return [...prevSongs, newSong];
                     });
                     setSelectedSong(newSong);
-                    setCurrentView('library');
+                    goToLibraryAndRefresh();
                     console.log('Song added successfully:', newSong.filename);
 
                     // Firestore sync (offline-first; will upload when online)
                     try {
-                        if (user?.uid) {
+                        if (user?.uid && newSong.track_id) {
                             console.log('Syncing to Firestore:', { uid: user.uid, track_id: newSong.track_id });
                             // Save to user's tracks collection
                             await upsertUserTrack(user.uid, {
@@ -526,6 +663,8 @@ const App: React.FC = () => {
                             } as any);
                             
                             console.log('Firestore sync successful');
+                        } else if (user?.uid && !newSong.track_id) {
+                            console.warn('Skipping Firestore sync - track_id is undefined for song:', newSong.filename);
                         } else {
                             console.warn('User not authenticated, skipping Firestore sync');
                         }
@@ -828,6 +967,11 @@ const App: React.FC = () => {
                     return [...prevSongs, newSong];
                 });
 
+                // Auto-add to matching query playlists
+                setTimeout(() => {
+                    addSongToMatchingQueryPlaylists(newSong);
+                }, 100);
+
                 // Update queue item as completed
                 setAnalysisQueue(prev => prev.map(item => 
                     item.id === currentItem.id 
@@ -999,6 +1143,8 @@ const App: React.FC = () => {
             const dbPlaylists = await databaseService.getPlaylists();
             
             // Transform database playlists to match our interface
+            // Filter out any playlist songs that do not exist in the current songs list
+            const currentSongIds = new Set(songs.map(s => s.id));
             const transformedPlaylists: Playlist[] = dbPlaylists.map((dbPlaylist: any) => ({
                 id: dbPlaylist.id.toString(),
                 name: dbPlaylist.name,
@@ -1007,7 +1153,9 @@ const App: React.FC = () => {
                 isQueryBased: dbPlaylist.is_query_based || false,
                 queryCriteria: dbPlaylist.query_criteria,
                 createdAt: new Date(dbPlaylist.created_at),
-                songs: dbPlaylist.songs ? dbPlaylist.songs.map((song: any) => ({
+                songs: dbPlaylist.songs ? dbPlaylist.songs
+                    .filter((song: any) => currentSongIds.has(song.id.toString()))
+                    .map((song: any) => ({
                     id: song.id.toString(),
                     filename: song.filename,
                     file_path: song.file_path,
@@ -1151,40 +1299,130 @@ const App: React.FC = () => {
 
     const handleAddToPlaylist = useCallback(async (playlistId: string, songsToAdd: Song[]) => {
         try {
+            // Validate and deduplicate songs to add
+            const uniqueSongsToAdd = getUniqueSongs(songsToAdd);
+            
+            if (uniqueSongsToAdd.length !== songsToAdd.length) {
+                console.warn(`🔍 Removed ${songsToAdd.length - uniqueSongsToAdd.length} duplicate songs before adding to playlist`);
+            }
+            
             if (databaseService) {
                 // Add songs to database
-                for (const song of songsToAdd) {
+                for (const song of uniqueSongsToAdd) {
                     await databaseService.addSongToPlaylist(playlistId, song.id);
                 }
             }
             
             setPlaylists(prev => prev.map(playlist => {
                 if (playlist.id === playlistId) {
-                    const existingSongIds = playlist.songs.map(s => s.id);
-                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
-                    return {
+                    const existingSongIds = new Set(playlist.songs.map(s => s.id));
+                    const newSongs = uniqueSongsToAdd.filter(s => !existingSongIds.has(s.id));
+                    
+                    if (newSongs.length === 0) {
+                        console.log(`🎵 All songs already exist in playlist "${playlist.name}"`);
+                        return playlist;
+                    }
+                    
+                    console.log(`🎵 Adding ${newSongs.length} new songs to playlist "${playlist.name}"`);
+                    
+                    // Validate the final playlist to ensure no duplicates
+                    const updatedPlaylist = {
                         ...playlist,
                         songs: [...playlist.songs, ...newSongs]
                     };
+                    
+                    return validatePlaylistSongs(updatedPlaylist);
                 }
                 return playlist;
             }));
         } catch (error) {
             console.error('❌ Failed to add songs to playlist:', error);
-            // Still update local state
+            // Still update local state with validation
             setPlaylists(prev => prev.map(playlist => {
                 if (playlist.id === playlistId) {
-                    const existingSongIds = playlist.songs.map(s => s.id);
-                    const newSongs = songsToAdd.filter(s => !existingSongIds.includes(s.id));
-                    return {
+                    const uniqueSongsToAdd = getUniqueSongs(songsToAdd);
+                    const existingSongIds = new Set(playlist.songs.map(s => s.id));
+                    const newSongs = uniqueSongsToAdd.filter(s => !existingSongIds.has(s.id));
+                    
+                    const updatedPlaylist = {
                         ...playlist,
                         songs: [...playlist.songs, ...newSongs]
                     };
+                    
+                    return validatePlaylistSongs(updatedPlaylist);
                 }
                 return playlist;
             }));
         }
     }, [databaseService]);
+
+    // Check all songs against all query playlists (for app startup)
+    const checkAllSongsAgainstQueryPlaylists = useCallback(async () => {
+        try {
+            console.log('🔍 Checking all songs against query playlists...');
+            const queryPlaylists = playlists.filter(p => p.isQueryBased && p.queryCriteria);
+            
+            if (queryPlaylists.length === 0) {
+                console.log('No query playlists found');
+                return;
+            }
+
+            // Validate all existing playlists first
+            const validatedPlaylists = queryPlaylists.map(validatePlaylistSongs);
+            const duplicateCounts = queryPlaylists.map((playlist, index) => {
+                const originalCount = playlist.songs.length;
+                const validatedCount = validatedPlaylists[index].songs.length;
+                return originalCount - validatedCount;
+            });
+
+            const totalDuplicatesRemoved = duplicateCounts.reduce((sum, count) => sum + count, 0);
+            if (totalDuplicatesRemoved > 0) {
+                console.warn(`🔍 Removed ${totalDuplicatesRemoved} duplicate songs from existing query playlists`);
+                // Update playlists with validated versions
+                setPlaylists(prev => prev.map(playlist => {
+                    const validated = validatedPlaylists.find(vp => vp.id === playlist.id);
+                    return validated || playlist;
+                }));
+            }
+
+            let totalAdded = 0;
+            const uniqueSongs = getUniqueSongs(songs);
+            
+            console.log(`📊 Processing ${uniqueSongs.length} unique songs against ${queryPlaylists.length} query playlists`);
+            
+            for (const song of uniqueSongs) {
+                const matchingPlaylists = getMatchingQueryPlaylists(song, queryPlaylists);
+                
+                for (const playlist of matchingPlaylists) {
+                    if (!isSongInPlaylist(song, playlist)) {
+                        console.log(`🎵 Adding "${song.filename}" to query playlist "${playlist.name}"`);
+                        await handleAddToPlaylist(playlist.id, [song]);
+                        totalAdded++;
+                    }
+                }
+            }
+            
+            if (totalAdded > 0) {
+                console.log(`✅ Auto-added ${totalAdded} songs to query playlists`);
+            } else {
+                console.log('No new songs to add to query playlists');
+            }
+        } catch (error) {
+            console.error('❌ Failed to check songs against query playlists:', error);
+        }
+    }, [songs, playlists, handleAddToPlaylist]);
+
+    // Check all songs against query playlists after both songs and playlists are loaded
+    useEffect(() => {
+        if (songs.length > 0 && playlists.length > 0 && isLibraryLoaded) {
+            // Add a small delay to ensure all playlists are fully loaded
+            const timer = setTimeout(() => {
+                checkAllSongsAgainstQueryPlaylists();
+            }, 1000);
+            
+            return () => clearTimeout(timer);
+        }
+    }, [songs.length, playlists.length, isLibraryLoaded, checkAllSongsAgainstQueryPlaylists]);
 
     const handleRemoveFromPlaylist = useCallback(async (playlistId: string, songIds: string[]) => {
         try {
@@ -1219,11 +1457,248 @@ const App: React.FC = () => {
         }
     }, [databaseService]);
 
+    // Auto-add songs to matching query playlists
+    const addSongToMatchingQueryPlaylists = useCallback(async (song: Song) => {
+        try {
+            const matchingPlaylists = getMatchingQueryPlaylists(song, playlists);
+            
+            for (const playlist of matchingPlaylists) {
+                // Check if song is already in the playlist
+                if (!isSongInPlaylist(song, playlist)) {
+                    console.log(`🎵 Auto-adding "${song.filename}" to query playlist "${playlist.name}"`);
+                    await handleAddToPlaylist(playlist.id, [song]);
+                }
+            }
+        } catch (error) {
+            console.error('❌ Failed to auto-add song to query playlists:', error);
+        }
+    }, [playlists, handleAddToPlaylist]);
+
+    // Clean up all playlists to remove duplicates
+    const cleanupAllPlaylists = useCallback(() => {
+        console.log('🧹 Cleaning up all playlists to remove duplicates...');
+        
+        setPlaylists(prev => {
+            const cleanedPlaylists = prev.map(playlist => {
+                const cleaned = validatePlaylistSongs(playlist);
+                if (cleaned.songs.length !== playlist.songs.length) {
+                    console.log(`🧹 Cleaned playlist "${playlist.name}": ${playlist.songs.length} → ${cleaned.songs.length} songs`);
+                }
+                return cleaned;
+            });
+            
+            const totalDuplicatesRemoved = prev.reduce((sum, playlist) => {
+                const cleaned = validatePlaylistSongs(playlist);
+                return sum + (playlist.songs.length - cleaned.songs.length);
+            }, 0);
+            
+            if (totalDuplicatesRemoved > 0) {
+                console.log(`✅ Cleanup complete: Removed ${totalDuplicatesRemoved} duplicate songs from all playlists`);
+            } else {
+                console.log('✅ No duplicates found in any playlists');
+            }
+            
+            return cleanedPlaylists;
+        });
+    }, []);
+
     // Audio player functions
     const handleSongPlay = useCallback((song: Song) => {
         setCurrentlyPlaying(song);
         setSelectedSong(song);
     }, []);
+
+    const handleVolumeChange = useCallback((newVolume: number) => {
+        setVolume(newVolume);
+    }, []);
+
+    // Auto Mix API Functions
+    const getNextTrackRecommendation = useCallback(async (currentSong: Song, playlist: Song[], transitionType: string = 'random') => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/next-track`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({
+                    current_song: currentSong,
+                    playlist: playlist,
+                    transition_type: transitionType
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to get next track recommendation:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    const analyzePlaylistForAutoMix = useCallback(async (playlist: Song[]) => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/analyze-playlist`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({
+                    playlist: playlist
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to analyze playlist:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    const getAutoMixStatus = useCallback(async () => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${apiPort}/automix/ai-status?signingkey=${encodeURIComponent(apiSigningKey)}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Failed to get Auto Mix status:', error);
+            throw error;
+        }
+    }, [apiPort, apiSigningKey]);
+
+    // Auto Mix Handlers
+    const handleAutoMixToggle = useCallback(async (enabled: boolean) => {
+        console.log('🎵 App: handleAutoMixToggle called with:', enabled);
+        console.log('🎵 App: Current state:', {
+            isAutoMixEnabled,
+            songsCount: songs.length,
+            selectedPlaylist: selectedPlaylist?.name || 'None',
+            selectedPlaylistSongs: selectedPlaylist?.songs?.length || 0
+        });
+        
+        setIsAutoMixEnabled(enabled);
+        setAutoMixError(null);
+        
+        if (enabled) {
+            // When enabling Auto Mix, set up the playlist
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            console.log('🎵 App: Setting Auto Mix playlist with', currentPlaylist.length, 'songs');
+            setAutoMixPlaylist(currentPlaylist);
+            
+            // Analyze the playlist for compatibility
+            try {
+                const analysis = await analyzePlaylistForAutoMix(currentPlaylist);
+                console.log('🎵 App: Auto Mix playlist analysis:', analysis);
+            } catch (error) {
+                console.warn('❌ App: Failed to analyze playlist for Auto Mix:', error);
+            }
+        } else {
+            // When disabling Auto Mix, clear the playlist
+            console.log('🎵 App: Disabling Auto Mix, clearing playlist');
+            setAutoMixPlaylist([]);
+        }
+    }, [selectedPlaylist, songs, analyzePlaylistForAutoMix, isAutoMixEnabled]);
+
+    const handleAutoMixNext = useCallback(async () => {
+        console.log('🎵 ===== APP AUTO MIX NEXT =====');
+        console.log('🎵 App: handleAutoMixNext called');
+        console.log('🎵 App: currentlyPlaying:', currentlyPlaying?.filename);
+        console.log('🎵 App: autoMixPlaylist length:', autoMixPlaylist.length);
+        console.log('🎵 App: songs length:', songs.length);
+        
+        if (!currentlyPlaying) {
+            console.warn('🎵 App: No current song for Auto Mix');
+            return;
+        }
+
+        // Ensure we have a playlist - use autoMixPlaylist if available, otherwise fall back to songs
+        const availablePlaylist = autoMixPlaylist.length > 0 ? autoMixPlaylist : songs;
+        
+        if (availablePlaylist.length === 0) {
+            console.warn('🎵 App: No songs available for Auto Mix');
+            return;
+        }
+
+        console.log('🎵 App: Getting next track from', availablePlaylist.length, 'songs');
+
+        setIsAutoMixLoading(true);
+        setAutoMixError(null);
+
+        try {
+            console.log('🎵 App: Calling getNextTrackRecommendation...');
+            // Get next track recommendation
+            const recommendation = await getNextTrackRecommendation(
+                currentlyPlaying,
+                availablePlaylist,
+                'random' // You can make this configurable
+            );
+            
+            console.log('🎵 App: Got recommendation:', recommendation);
+
+            if (recommendation.status === 'success' && recommendation.recommended_track) {
+                const recommendedSong = recommendation.recommended_track;
+                console.log('🎵 App: Recommendation successful, recommended song:', recommendedSong);
+                
+                // Find the recommended song in our songs array
+                const foundSong = songs.find(song => song.id === recommendedSong.id);
+                console.log('🎵 App: Found song in library:', !!foundSong, foundSong?.filename);
+                
+                if (foundSong) {
+                    // Play the recommended song
+                    console.log('🎵 App: Setting currentlyPlaying to:', foundSong.filename);
+                    setCurrentlyPlaying(foundSong);
+                    setSelectedSong(foundSong);
+                    // Trigger auto-play for seamless transition
+                    setAutoPlay(true);
+                    console.log('🎵 App: Auto Mix: Playing recommended track:', foundSong.filename);
+                } else {
+                    console.error('🎵 App: Recommended track not found in library:', recommendedSong);
+                    throw new Error('Recommended track not found in library');
+                }
+            } else {
+                console.error('🎵 App: Recommendation failed:', recommendation);
+                throw new Error(recommendation.message || 'No suitable track found');
+            }
+        } catch (error) {
+            console.error('🎵 App: Auto Mix next track failed:', error);
+            setAutoMixError(error instanceof Error ? error.message : 'Failed to get next track');
+        } finally {
+            setIsAutoMixLoading(false);
+            console.log('🎵 ===== END APP AUTO MIX NEXT =====');
+        }
+    }, [currentlyPlaying, autoMixPlaylist, songs, getNextTrackRecommendation]);
+
+    // Update Auto Mix playlist when selected playlist changes
+    useEffect(() => {
+        if (isAutoMixEnabled) {
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            console.log('🎵 App: Updating Auto Mix playlist with', currentPlaylist.length, 'songs');
+            setAutoMixPlaylist(currentPlaylist);
+        }
+    }, [selectedPlaylist, songs, isAutoMixEnabled]);
+
+    // Auto-update Auto Mix playlist when songs are loaded
+    useEffect(() => {
+        if (isAutoMixEnabled && songs.length > 0) {
+            const currentPlaylist = selectedPlaylist ? selectedPlaylist.songs : songs;
+            setAutoMixPlaylist(currentPlaylist);
+        }
+    }, [songs, selectedPlaylist, isAutoMixEnabled]);
 
     const handleNextSong = useCallback(() => {
         const currentSongs = selectedPlaylist ? selectedPlaylist.songs : songs;
@@ -1240,6 +1715,11 @@ const App: React.FC = () => {
             handleSongPlay(currentSongs[currentIndex - 1]);
         }
     }, [currentlyPlaying, selectedPlaylist, songs, handleSongPlay]);
+
+    // Handle cover art extraction status change
+    const handleCoverArtExtractionStatusChange = useCallback((isComplete: boolean) => {
+        setIsCoverArtExtractionComplete(isComplete);
+    }, []);
 
     // Get current song list based on selected playlist
     const currentSongs = useMemo(() => {
@@ -1281,6 +1761,43 @@ const App: React.FC = () => {
         
         loadDownloadPath();
     }, [databaseService]);
+
+    // AI Agent related function - commented out for this version
+    // Load Gemini API key on component mount
+    // useEffect(() => {
+    //     const loadGeminiApiKey = async () => {
+    //         setIsLoadingGeminiSettings(true);
+    //         
+    //         try {
+    //             // First try to load from localStorage for immediate display
+    //             const savedApiKey = localStorage.getItem('gemini_api_key');
+    //             if (savedApiKey) {
+    //                 setGeminiApiKey(savedApiKey);
+    //                 setIsGeminiApiKeySet(true);
+    //             }
+    //             
+    //             // Then try to load from database (this will override localStorage if different)
+    //             if (databaseService) {
+    //                 try {
+    //                     const dbApiKey = await databaseService.getGeminiApiKey();
+    //                     if (dbApiKey) {
+    //                         setGeminiApiKey(dbApiKey);
+    //                         setIsGeminiApiKeySet(true);
+    //                         // Update localStorage to match database
+    //                         localStorage.setItem('gemini_api_key', dbApiKey);
+    //                     }
+    //                 } catch (error) {
+    //                     console.warn('Failed to load Gemini API key from database:', error);
+    //                     // Keep localStorage value if database fails
+    //                 }
+    //             }
+    //         } finally {
+    //             setIsLoadingGeminiSettings(false);
+    //         }
+    //     };
+    //     
+    //     loadGeminiApiKey();
+    // }, [databaseService]);
 
     // Handle download path selection
     const handleDownloadPathSelect = useCallback(async () => {
@@ -1371,57 +1888,217 @@ const App: React.FC = () => {
         }
     }, [databaseService]);
 
-    // Handle YouTube download completion
-    const handleYouTubeDownloadComplete = useCallback((downloadedSong: any) => {
-        console.log('YouTube download completed:', downloadedSong);
-        
-        // Transform the downloaded song to match our Song interface
-        const newSong: Song = {
-            id: downloadedSong.db_id ? downloadedSong.db_id.toString() : (downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9)),
-            filename: downloadedSong.filename,
-            file_path: downloadedSong.file_path,
-            key: downloadedSong.key,
-            scale: downloadedSong.scale,
-            key_name: downloadedSong.key_name,
-            camelot_key: downloadedSong.camelot_key,
-            bpm: downloadedSong.bpm,
-            energy_level: downloadedSong.energy_level,
-            duration: downloadedSong.duration,
-            file_size: downloadedSong.file_size,
-            bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
-            status: 'analyzed',
-            analysis_date: new Date().toISOString(),
-            cue_points: downloadedSong.cue_points || [],
-            track_id: downloadedSong.track_id, // Ensure track_id is included
-            id3: sanitizeId3(downloadedSong.id3 || downloadedSong.metadata || downloadedSong.tags)
-        };
-        
-        // Add to songs list
-        setSongs(prevSongs => [...prevSongs, newSong]);
-        setSelectedSong(newSong);
-        
-        // Switch to library view to show the new song
-        setCurrentView('library');
+    // Handle Gemini API key save
+    // AI Agent related function - commented out for this version
+    // const handleSaveGeminiApiKey = useCallback(async () => {
+    //     if (!geminiApiKey.trim()) {
+    //         alert('Please enter a valid Gemini API key');
+    //         return;
+    //     }
 
-        // Firestore sync for YouTube downloads
-        (async () => {
-            try {
-                if (user?.uid) {
-                    // Save to user's tracks collection
-                    await upsertUserTrack(user.uid, {
-                        ...newSong,
-                    } as any);
-                    
-                    // Also save to global analysis_songs collection
-                    await saveToAnalysisSongs(user.uid, {
-                        ...newSong,
-                    } as any);
+    //     setIsLoadingGeminiSettings(true);
+    //     try {
+    //         // Save to localStorage for immediate access
+    //         localStorage.setItem('gemini_api_key', geminiApiKey.trim());
+    //         setIsGeminiApiKeySet(true);
+    //         
+    //         // Also save to backend settings
+    //         if (databaseService) {
+    //             try {
+    //                 await databaseService.saveGeminiApiKey(geminiApiKey.trim());
+    //                 setShowGeminiSaveSuccess(true);
+    //                 setTimeout(() => setShowGeminiSaveSuccess(false), 3000);
+    //             } catch (error) {
+    //                 console.warn('Failed to save Gemini API key to backend:', error);
+    //             }
+    //         }
+    //     } catch (error) {
+    //         console.error('Error saving Gemini API key:', error);
+    //         alert('Failed to save Gemini API key. Please try again.');
+    //     } finally {
+    //         setIsLoadingGeminiSettings(false);
+    //     }
+    // }, [geminiApiKey, databaseService]);
+
+    // Clear Gemini API key
+    // AI Agent related function - commented out for this version
+    // const handleClearGeminiApiKey = useCallback(async () => {
+    //     setGeminiApiKey('');
+    //     setIsGeminiApiKeySet(false);
+    //     localStorage.removeItem('gemini_api_key');
+    //     
+    //     if (databaseService) {
+    //         try {
+    //             await databaseService.clearGeminiApiKey();
+    //             setShowGeminiSaveSuccess(true);
+    //             setTimeout(() => setShowGeminiSaveSuccess(false), 3000);
+    //         } catch (error) {
+    //             console.warn('Failed to clear Gemini API key from database:', error);
+    //         }
+    //     }
+    // }, [databaseService]);
+
+    // Handle YouTube download completion
+    const handleYouTubeDownloadComplete = useCallback(async (downloadedSong: any) => {
+        console.log('🎵 YouTube download completed:', downloadedSong);
+        console.log('🎵 Current songs count before adding:', songs.length);
+        
+        try {
+            // Transform the downloaded song to match our Song interface
+            const newSong: Song = {
+                id: downloadedSong.db_id ? downloadedSong.db_id.toString() : (downloadedSong.id || Date.now().toString() + Math.random().toString(36).substr(2, 9)),
+                filename: downloadedSong.filename,
+                file_path: downloadedSong.file_path,
+                title: downloadedSong.title || downloadedSong.filename?.replace(/\.[^/.]+$/, '') || 'Unknown Title',
+                artist: downloadedSong.artist || 'Unknown Artist',
+                key: downloadedSong.key,
+                scale: downloadedSong.scale,
+                key_name: downloadedSong.key_name,
+                camelot_key: downloadedSong.camelot_key,
+                bpm: downloadedSong.bpm,
+                energy_level: downloadedSong.energy_level,
+                duration: downloadedSong.duration,
+                file_size: downloadedSong.file_size,
+                bitrate: downloadedSong.bitrate || 320, // YouTube downloads are 320kbps
+                status: 'analyzed',
+                analysis_date: new Date().toISOString(),
+                cue_points: downloadedSong.cue_points || [],
+                track_id: downloadedSong.track_id, // Ensure track_id is included
+                id3: sanitizeId3(downloadedSong.id3 || downloadedSong.metadata || downloadedSong.tags)
+            };
+            
+            console.log('🎵 Adding song to library:', {
+                title: newSong.title,
+                artist: newSong.artist,
+                bpm: newSong.bpm,
+                camelot_key: newSong.camelot_key,
+                energy_level: newSong.energy_level,
+                status: newSong.status
+            });
+            
+            // Add to songs list
+            setSongs(prevSongs => {
+                console.log('🎵 setSongs called with prevSongs.length:', prevSongs.length);
+                // Check if song already exists to avoid duplicates
+                const existingSong = prevSongs.find(s => s.track_id === newSong.track_id || s.filename === newSong.filename);
+                if (existingSong) {
+                    console.log('🎵 Song already exists in library, updating...');
+                    const updatedSongs = prevSongs.map(s => s.id === existingSong.id ? newSong : s);
+                    console.log('🎵 Updated songs count:', updatedSongs.length);
+                    return updatedSongs;
                 }
-            } catch (syncErr) {
-                console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
+                const newSongs = [...prevSongs, newSong];
+                console.log('🎵 Added new song, total count now:', newSongs.length);
+                return newSongs;
+            });
+
+            // Auto-add to matching query playlists
+            setTimeout(() => {
+                addSongToMatchingQueryPlaylists(newSong);
+            }, 100);
+            
+            // Background processing - no UI interruptions
+            // Just refresh the playlist list without switching views
+            setListRefreshKey(prev => prev + 1);
+            console.log('✅ Song added to library successfully in background!');
+            
+            // Refresh the library to ensure the new song appears
+            if (databaseService) {
+                try {
+                    // Refresh songs from database
+                    const allSongs = await databaseService.getLibrary();
+                    
+                    // Preserve local cover art updates that might not be in database yet
+                    setSongs(prevSongs => {
+                        const updatedSongs = allSongs.map(dbSong => {
+                            const localSong = prevSongs.find(prev => prev.id === dbSong.id);
+
+                            // Robust normalization to avoid Unknown Artist after restart
+                            const isMeaningless = (val: any) => {
+                                if (!val) return true;
+                                const s = String(val).trim().toLowerCase();
+                                return s === 'unknown' || s === 'unknown artist' || s === 'n/a' || s === 'null' || s === 'undefined';
+                            };
+                            const parseFromFilename = (filename?: string) => {
+                                if (!filename) return { artist: undefined as any, title: undefined as any };
+                                const base = filename.replace(/\.[^/.]+$/, '');
+                                if (base.includes(' - ')) {
+                                    const [artistPart, ...rest] = base.split(' - ');
+                                    return { artist: artistPart, title: rest.join(' - ') };
+                                }
+                                return { artist: undefined as any, title: base };
+                            };
+                            const parsed = parseFromFilename(dbSong.filename);
+                            const normalizedTitle = !isMeaningless(dbSong.title) ? dbSong.title : ((dbSong.id3 && !isMeaningless(dbSong.id3.title) && dbSong.id3.title) || (localSong && !isMeaningless(localSong.title) && localSong.title) || parsed.title || (dbSong.filename ? dbSong.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title'));
+                            const normalizedArtist = !isMeaningless(dbSong.artist) ? dbSong.artist : ((dbSong.id3 && !isMeaningless(dbSong.id3.artist) && dbSong.id3.artist) || (localSong && !isMeaningless(localSong.artist) && localSong.artist) || parsed.artist || 'Unknown Artist');
+
+                            let merged = { ...dbSong, title: normalizedTitle, artist: normalizedArtist } as any;
+
+                            // If local song has cover art but database doesn't, keep the local version
+                            if (localSong && localSong.cover_art && (!dbSong.cover_art || dbSong.cover_art.trim() === '')) {
+                                console.log('🖼️ Preserving local cover art for:', dbSong.filename);
+                                merged = {
+                                    ...merged,
+                                    cover_art: localSong.cover_art,
+                                    cover_art_extracted: localSong.cover_art_extracted
+                                };
+                            }
+
+                            // Persist normalized metadata back to DB in background if changed
+                            if ((dbSong.title !== normalizedTitle) || (dbSong.artist !== normalizedArtist)) {
+                                (async () => {
+                                    try {
+                                        await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
+                                            body: JSON.stringify({ 
+                                                song_id: dbSong.id, 
+                                                filename: dbSong.filename, 
+                                                file_path: dbSong.file_path, 
+                                                metadata: { title: normalizedTitle, artist: normalizedArtist }
+                                            })
+                                        });
+                                    } catch (e) {
+                                        console.warn('Failed to persist normalized metadata:', e);
+                                    }
+                                })();
+                            }
+
+                            return merged;
+                        });
+                        return updatedSongs;
+                    });
+                    console.log('🔄 Library refreshed after download completion');
+                } catch (error) {
+                    console.warn('⚠️ Failed to refresh library after download:', error);
+                }
             }
-        })();
-    }, []);
+            
+            // Firestore sync for YouTube downloads
+            (async () => {
+                try {
+                    if (user?.uid && newSong.track_id) {
+                        // Save to user's tracks collection
+                        await upsertUserTrack(user.uid, {
+                            ...newSong,
+                        } as any);
+                        
+                        // Also save to global analysis_songs collection
+                        await saveToAnalysisSongs(user.uid, {
+                            ...newSong,
+                        } as any);
+                    } else if (user?.uid && !newSong.track_id) {
+                        console.warn('Skipping Firestore sync for YouTube download - track_id is undefined for song:', newSong.filename);
+                    }
+                } catch (syncErr) {
+                    console.warn('Firestore track sync failed (YouTube) - will retry when online:', syncErr);
+                }
+            })();
+            
+        } catch (error) {
+            console.error('❌ Error handling download completion:', error);
+        }
+    }, [setSongs, addSongToMatchingQueryPlaylists, goToLibraryAndRefresh, setSelectedSong, databaseService, user?.uid, upsertUserTrack, saveToAnalysisSongs]);
 
     // Handle song updates from metadata editor
     const handleSongUpdate = async (updatedSong: Song) => {
@@ -1444,7 +2121,7 @@ const App: React.FC = () => {
             }
             
             // Sync updated metadata to Firestore
-            if (user?.uid) {
+            if (user?.uid && updatedSong.track_id) {
                 try {
                     // Update in user's tracks collection
                     await upsertUserTrack(user.uid, {
@@ -1462,9 +2139,14 @@ const App: React.FC = () => {
                 } catch (syncErr) {
                     console.warn('Firestore metadata sync failed - will retry when online:', syncErr);
                 }
+            } else if (user?.uid && !updatedSong.track_id) {
+                console.warn('Skipping Firestore sync for song update - track_id is undefined for song:', updatedSong.filename);
             }
             
             console.log('Song updated successfully:', updatedSong.filename);
+            
+            // Auto-add to matching query playlists
+            await addSongToMatchingQueryPlaylists(updatedSong);
         } catch (error) {
             console.error('Failed to update song:', error);
         }
@@ -1483,24 +2165,89 @@ const App: React.FC = () => {
                         </div>
                     </div>
                     {currentView !== 'youtube' && (
-                        <div className="search-box-header search-box-centered">
-                            <input 
-                                type="text" 
-                                placeholder="Search Music online and download to your library..." 
-                                onClick={() => setCurrentView('youtube')}
-                                readOnly
-                                style={{ cursor: 'pointer' }}
-                            />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                            {/* Volume Display - Show when track is loaded */}
+                            {currentlyPlaying && (
+                                <div className="volume-display" style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '6px 12px',
+                                    background: 'var(--surface-bg)',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    fontSize: '14px',
+                                    color: 'var(--text-secondary)'
+                                }}>
+                                    <Volume2 size={16} />
+                                    <span>{Math.round(volume * 100)}%</span>
+                                </div>
+                            )}
+                            
+                            <div className="search-box-header search-box-centered">
+                                <input 
+                                    type="text" 
+                                    placeholder="Search Music online and download to your library..." 
+                                    onClick={() => setCurrentView('youtube')}
+                                    readOnly
+                                    style={{ cursor: 'pointer' }}
+                                />
+                            </div>
+                            {/* AI Agent button - commented out for this version */}
+                            {/* <button
+                                onClick={() => setCurrentView('ai-agent')}
+                                style={{
+                                    padding: '6px',
+                                    background: 'var(--surface-bg)',
+                                    color: 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.2s ease',
+                                    width: '32px',
+                                    height: '32px'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'var(--card-bg)';
+                                    e.currentTarget.style.borderColor = 'var(--brand-blue)';
+                                    e.currentTarget.style.color = 'var(--brand-blue)';
+                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'var(--surface-bg)';
+                                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                                    e.currentTarget.style.color = 'var(--text-secondary)';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                }}
+                                title="AI Agent - Create Smart Playlists"
+                            >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
+                                    <path d="M2 17L12 22L22 17"/>
+                                    <path d="M2 12L12 17L22 12"/>
+                                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                                </svg>
+                            </button> */}
                         </div>
                     )}
                     
                     {currentView === 'youtube' && (
                         <nav className="nav-tabs">
                             <button 
-                                onClick={() => setCurrentView('library')}
+                                onClick={() => goToLibraryAndRefresh()}
                             >
                                 My collection
                             </button>
+
+                            {/* AI Agent button - commented out for this version */}
+                            {/* <button 
+                                onClick={() => setCurrentView('ai-agent')}
+                            >
+                                AI Agent
+                            </button> */}
 
                             <button 
                                 onClick={() => setCurrentView('settings')}
@@ -1529,6 +2276,7 @@ const App: React.FC = () => {
                     {/* Bottom Left - Playlist Section */}
                     <div className="playlist-section">
                         <PlaylistManager
+                            key={`pm-${listRefreshKey}`}
                             playlists={playlists}
                             songs={songs}
                             selectedPlaylist={selectedPlaylist}
@@ -1542,6 +2290,8 @@ const App: React.FC = () => {
                             onMultiFileUpload={addFilesToQueue}
                             onFolderUpload={handleFolderUpload}
                             isAnalyzing={isAnalyzing || isProcessingQueue}
+                            downloadPath={downloadPath}
+                            onCleanupPlaylists={cleanupAllPlaylists}
                         />
                     </div>
                 </aside>
@@ -1558,12 +2308,23 @@ const App: React.FC = () => {
                                     onPrevious={handlePreviousSong}
                                     apiPort={apiPort}
                                     apiSigningKey={apiSigningKey}
+                                    volume={volume}
+                                    onVolumeChange={handleVolumeChange}
+                                    isLibraryLoaded={isLibraryLoaded}
+                                    isCoverArtExtractionComplete={isCoverArtExtractionComplete}
+                                    isAutoMixEnabled={isAutoMixEnabled}
+                                    onAutoMixToggle={handleAutoMixToggle}
+                                    onAutoMixNext={handleAutoMixNext}
+                                    playlist={autoMixPlaylist}
+                                    autoPlay={autoPlay}
+                                    onAutoPlayComplete={() => setAutoPlay(false)}
                                 />
                             </div>
 
                             {/* Scrollable Track Table */}
                             <div className="table-section">
                                 <TrackTable
+                                    key={`tt-${listRefreshKey}`}
                                     songs={currentSongs}
                                     selectedSong={selectedSong}
                                     onSongSelect={setSelectedSong}
@@ -1575,6 +2336,32 @@ const App: React.FC = () => {
                                     onSongUpdate={handleSongUpdate}
                                     apiPort={apiPort}
                                     apiSigningKey={apiSigningKey}
+                                    selectedPlaylist={selectedPlaylist}
+                                    onPlaylistDelete={handlePlaylistDelete}
+                                    onUSBExport={(playlist) => {
+                                        setPlaylistToExport(playlist);
+                                        setShowUSBExport(true);
+                                    }}
+                                    onExportPlaylist={(playlist) => {
+                                        // Export playlist as M3U file
+                                        const m3uContent = [
+                                            '#EXTM3U',
+                                            ...playlist.songs.map((song: Song) => 
+                                                `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.file_path || song.filename}`
+                                            )
+                                        ].join('\n');
+
+                                        const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `${playlist.name}.m3u`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        URL.revokeObjectURL(url);
+                                    }}
+                                    onCoverArtExtractionStatusChange={handleCoverArtExtractionStatusChange}
                                 />
                             </div>
                         </>
@@ -1618,9 +2405,86 @@ const App: React.FC = () => {
                                 downloadPath={downloadPath}
                                 isDownloadPathSet={isDownloadPathSet}
                                 onDownloadComplete={handleYouTubeDownloadComplete}
+                                downloadManagerRef={downloadManagerRef}
                             />
                         </div>
                     )}
+
+                    {/* AI Agent view - commented out for this version */}
+                    {/* {currentView === 'ai-agent' && (
+                        <div className="ai-agent-view" style={{ height: '100%', overflow: 'auto' }}>
+                            {!isDownloadPathSet && (
+                                <div style={{
+                                    padding: 'var(--space-lg)',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '8px',
+                                    margin: 'var(--space-lg)'
+                                }}>
+                                    <h3 style={{ color: 'rgb(239, 68, 68)', margin: '0 0 8px 0' }}>⚠️ Setup Required</h3>
+                                    <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
+                                        Please configure a download path and Gemini API key in Settings before using AI Agent.
+                                    </p>
+                                    <button 
+                                        onClick={() => setCurrentView('settings')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            background: 'var(--accent-color)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Go to Settings
+                                    </button>
+                                </div>
+                            )}
+                            
+                            {!isGeminiApiKeySet && (
+                                <div style={{
+                                    padding: 'var(--space-lg)',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '8px',
+                                    margin: 'var(--space-lg)'
+                                }}>
+                                    <h3 style={{ color: 'rgb(239, 68, 68)', margin: '0 0 8px 0' }}>⚠️ Gemini API Key Required</h3>
+                                    <p style={{ color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
+                                        Please configure your Gemini API key in Settings to use AI Agent features.
+                                    </p>
+                                    <button 
+                                        onClick={() => setCurrentView('settings')}
+                                        style={{
+                                            padding: '8px 16px',
+                                            background: 'var(--accent-color)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Go to Settings
+                                    </button>
+                                </div>
+                            )}
+                            
+                            {isDownloadPathSet && isGeminiApiKeySet && (
+                                <AIAgent
+                                    databaseService={databaseService}
+                                    downloadPath={downloadPath}
+                                    isDownloadPathSet={isDownloadPathSet}
+                                    onPlaylistCreated={(playlist) => {
+                                        console.log('AI Agent created playlist:', playlist);
+                                        // Refresh playlists
+                                        if (databaseService) {
+                                            loadPlaylistsFromDatabase();
+                                        }
+                                    }}
+                                />
+                            )}
+                        </div>
+                    )} */}
 
                     {currentView === 'upload' && (
                         <div className="upload-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
@@ -1905,6 +2769,133 @@ const App: React.FC = () => {
                                     </div>
                                 </div>
 
+                                {/* AI Agent related settings - commented out for this version */}
+                                {/* Gemini API Settings */}
+                                {/* <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div className="section-header">
+                                            <svg className="section-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                            </svg>
+                                            <h3 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>AI Integration - Gemini API</h3>
+                                        </div>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
+                                                Configure your Google Gemini API key for AI-powered music analysis and recommendations.
+                                            </p>
+                                        </div>
+                                        
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <label style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', display: 'block', marginBottom: '8px' }}>
+                                                Gemini API Key:
+                                            </label>
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                <input 
+                                                    type="password" 
+                                                    value={geminiApiKey}
+                                                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                                                    placeholder="Enter your Gemini API key"
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px 12px',
+                                                        background: 'var(--surface-bg)',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-primary)',
+                                                        fontSize: '14px'
+                                                    }}
+                                                />
+                                                <button 
+                                                    onClick={handleSaveGeminiApiKey}
+                                                    disabled={isLoadingGeminiSettings}
+                                                    style={{
+                                                        padding: '8px 16px',
+                                                        background: isLoadingGeminiSettings ? 'var(--text-secondary)' : 'var(--accent-color)',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        cursor: isLoadingGeminiSettings ? 'not-allowed' : 'pointer',
+                                                        fontSize: '14px',
+                                                        fontWeight: '500'
+                                                    }}
+                                                >
+                                                    {isLoadingGeminiSettings ? 'Saving...' : 'Save'}
+                                                </button>
+                                                {geminiApiKey && (
+                                                    <button 
+                                                        onClick={handleClearGeminiApiKey}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: 'var(--error-color)',
+                                                            color: 'white',
+                                                            border: 'none',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '14px'
+                                                        }}
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="status-indicator" style={{ 
+                                            background: isLoadingGeminiSettings ? 'rgba(255, 193, 7, 0.1)' : (isGeminiApiKeySet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'), 
+                                            border: `1px solid ${isLoadingGeminiSettings ? 'rgba(255, 193, 7, 0.3)' : (isGeminiApiKeySet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`, 
+                                            marginBottom: '16px'
+                                        }}>
+                                            <div className="status-content">
+                                                {isLoadingGeminiSettings ? (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M12 3A9 9 0 0 1 20.4 6.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                ) : isGeminiApiKeySet ? (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                ) : (
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M15 9L9 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                        <path d="M9 9L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    </svg>
+                                                )}
+                                                <p style={{ 
+                                                    color: isLoadingGeminiSettings ? 'rgb(255, 193, 7)' : (isGeminiApiKeySet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)'), 
+                                                    margin: 0, 
+                                                    fontSize: '14px',
+                                                    fontWeight: '500'
+                                                }}>
+                                                    {isLoadingGeminiSettings ? 'Loading settings...' : (isGeminiApiKeySet ? 'Gemini API key configured' : 'Gemini API key required for AI features')}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {showGeminiSaveSuccess && (
+                                            <div style={{ 
+                                                padding: '12px', 
+                                                background: 'rgba(34, 197, 94, 0.1)', 
+                                                border: '1px solid rgba(34, 197, 94, 0.3)', 
+                                                borderRadius: '4px'
+                                            }}>
+                                                <p style={{ 
+                                                    color: 'rgb(34, 197, 94)', 
+                                                    margin: 0, 
+                                                    fontSize: '14px',
+                                                    fontWeight: '500'
+                                                }}>
+                                                    Gemini API key saved successfully!
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div> */}
+
                                 {/* Application Information */}
                                 <div className="settings-section">
                                     <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
@@ -1938,6 +2929,17 @@ const App: React.FC = () => {
                     )}
                 </main>
             </div>
+            
+            {/* USB Export Modal */}
+            {showUSBExport && (
+                <USBExport
+                    playlist={playlistToExport}
+                    onClose={() => {
+                        setShowUSBExport(false);
+                        setPlaylistToExport(null);
+                    }}
+                />
+            )}
         </div>
         </AuthGate>
     );

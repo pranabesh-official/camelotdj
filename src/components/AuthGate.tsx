@@ -1,7 +1,10 @@
 import React from 'react';
 import { useAuth } from '../services/AuthContext';
 import logoWhite from '../assets/logwhite.png';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import OnboardingScreen from './OnboardingScreen';
+import UserProfileService from '../services/UserProfileService';
+import UserProfileDisplay from './UserProfileDisplay';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { user, loading, error, signInWithGoogle, signInWithEmailLink, checkIsDesktopEnvironment, signOutUser } = useAuth();
@@ -12,11 +15,79 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [isDesktop, setIsDesktop] = useState(false);
     const [showFallbackOptions, setShowFallbackOptions] = useState(false);
     const [authMethod, setAuthMethod] = useState<'primary' | 'popup' | 'redirect'>('primary');
+    const [showOnboarding, setShowOnboarding] = useState(false);
+    const [onboardingChecked, setOnboardingChecked] = useState(false);
+    const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(false);
 
     // Check if we're in a desktop environment on component mount
     React.useEffect(() => {
         setIsDesktop(checkIsDesktopEnvironment());
     }, [checkIsDesktopEnvironment]);
+
+    // Check if user needs onboarding when user changes
+    useEffect(() => {
+        const checkOnboardingStatus = async () => {
+            if (user && !onboardingChecked && !isCheckingOnboarding) {
+                // Immediately set checking state to prevent flash
+                setIsCheckingOnboarding(true);
+                
+                try {
+                    const userProfileService = UserProfileService.getInstance();
+                    const hasCompletedOnboarding = await userProfileService.hasCompletedOnboarding(user);
+                    
+                    if (!hasCompletedOnboarding) {
+                        // Set onboarding state immediately
+                        setShowOnboarding(true);
+                    }
+                    setOnboardingChecked(true);
+                } catch (error) {
+                    console.error('Error checking onboarding status:', error);
+                    // If there's an error, show onboarding to be safe
+                    setShowOnboarding(true);
+                    setOnboardingChecked(true);
+                } finally {
+                    setIsCheckingOnboarding(false);
+                }
+            } else if (!user) {
+                setOnboardingChecked(false);
+                setShowOnboarding(false);
+                setIsCheckingOnboarding(false);
+            }
+        };
+
+        checkOnboardingStatus();
+    }, [user, onboardingChecked, isCheckingOnboarding]);
+
+    const handleOnboardingComplete = async () => {
+        console.log('🎉 Onboarding completed, triggering database cleanup...');
+        
+        // Trigger additional database cleanup after onboarding
+        try {
+            // Get API port and signing key (these should match the backend)
+            const apiPort = 5002;
+            const apiSigningKey = 'devkey';
+            
+            // Call database cleanup endpoint
+            const response = await fetch(`http://127.0.0.1:${apiPort}/database/clear-all`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signing-Key': apiSigningKey
+                },
+                body: JSON.stringify({})
+            });
+
+            if (response.ok) {
+                console.log('✅ Database cleaned successfully after onboarding completion');
+            } else {
+                console.warn('⚠️ Database cleanup failed after onboarding, but continuing');
+            }
+        } catch (error) {
+            console.warn('⚠️ Database cleanup error after onboarding (non-critical):', error);
+        }
+        
+        setShowOnboarding(false);
+    };
 
     const handleSignIn = async (method: 'primary' | 'popup' | 'redirect' = 'primary') => {
         if (isSubmitting) return;
@@ -56,7 +127,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }
     };
 
-    if (loading) {
+    if (loading || (isCheckingOnboarding && !showOnboarding)) {
         return (
             <div style={{ 
                 display: 'flex', 
@@ -140,6 +211,16 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         0% { left: -30%; width: 30%; }
                         50% { width: 30%; }
                         100% { left: 100%; width: 30%; }
+                    }
+                    @keyframes fadeIn {
+                        from { 
+                            opacity: 0; 
+                            transform: translateY(10px); 
+                        }
+                        to { 
+                            opacity: 1; 
+                            transform: translateY(0); 
+                        }
                     }
                 `}</style>
             </div>
@@ -317,7 +398,10 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                             <input
                                 type="email"
                                 value={email}
-                                onChange={(e) => setEmail(e.target.value)}
+                                onChange={(e) => {
+                                    e.persist();
+                                    setEmail(e.target?.value || '');
+                                }}
                                 placeholder="Enter your email"
                                 style={{
                                     width: '100%',
@@ -441,10 +525,34 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         );
     }
 
+    // Show onboarding screen if user needs to complete setup
+    if (showOnboarding && user) {
+        return (
+            <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 1000,
+                animation: 'fadeIn 0.5s ease-out',
+                background: 'var(--app-bg)'
+            }}>
+                <OnboardingScreen onComplete={handleOnboardingComplete} />
+            </div>
+        );
+    }
+
     return (
         <div style={{ height: '100%' }}>
             <div style={{ position: 'fixed', top: 0, right: 0, display: 'flex', alignItems: 'center', gap: 10, zIndex: 1000, height: 48, padding: '0 16px', background: 'var(--header-bg)' }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: 13, fontWeight: 500, maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.displayName || user.email}</span>
+                <div style={{ maxWidth: '150px', overflow: 'hidden' }}>
+                    <UserProfileDisplay 
+                        showStageName={true}
+                        showExperience={false}
+                        compact={true}
+                    />
+                </div>
                 <button 
                     onClick={signOutUser} 
                     style={{ 

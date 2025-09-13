@@ -24,6 +24,18 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         setIsDesktop(checkIsDesktopEnvironment());
     }, [checkIsDesktopEnvironment]);
 
+    // Listen for sign out event from settings
+    useEffect(() => {
+        const handleSignOut = () => {
+            signOutUser();
+        };
+
+        window.addEventListener('signOut', handleSignOut);
+        return () => {
+            window.removeEventListener('signOut', handleSignOut);
+        };
+    }, [signOutUser]);
+
     // Check if user needs onboarding when user changes
     useEffect(() => {
         const checkOnboardingStatus = async () => {
@@ -545,44 +557,104 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     return (
         <div style={{ height: '100%' }}>
-            <div style={{ position: 'fixed', top: 0, right: 0, display: 'flex', alignItems: 'center', gap: 10, zIndex: 1000, height: 48, padding: '0 16px', background: 'var(--header-bg)' }}>
-                <div style={{ maxWidth: '150px', overflow: 'hidden' }}>
-                    <UserProfileDisplay 
-                        showStageName={true}
-                        showExperience={false}
-                        compact={true}
-                    />
-                </div>
-                <button 
-                    onClick={signOutUser} 
-                    style={{ 
-                        padding: '6px 12px', 
-                        background: 'var(--elevated-bg)', 
-                        border: '1px solid var(--border-color)', 
-                        color: 'var(--text-primary)', 
-                        borderRadius: 6, 
-                        cursor: 'pointer',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        transition: 'all 0.2s ease',
+            <div style={{ 
+                position: 'fixed', 
+                top: 0, 
+                right: 0, 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '12px', 
+                zIndex: 1000, 
+                height: '60px', 
+                padding: '0 20px', 
+                background: 'var(--header-bg)',
+                borderBottom: '1px solid var(--border-color)',
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}>
+                {/* Simple User Profile Section */}
+                <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '12px',
+                    padding: '0 16px'
+                }}>
+                    {/* User Avatar */}
+                    <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, var(--brand-blue), var(--accent-purple))',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 6
-                    }}
-                    onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'var(--hover-bg)';
-                    }}
-                    onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'var(--elevated-bg)';
-                    }}
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                        <polyline points="16 17 21 12 16 7"></polyline>
-                        <line x1="21" y1="12" x2="9" y2="12"></line>
-                    </svg>
-                    Sign out
-                </button>
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        flexShrink: 0
+                    }}>
+                        {user?.displayName?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U'}
+                    </div>
+                    
+                    {/* User Info */}
+                    <div style={{ 
+                        flex: 1, 
+                        minWidth: 0
+                    }}>
+                        <div style={{
+                            fontSize: '14px',
+                            fontWeight: '500',
+                            color: 'var(--text-primary)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                        }}>
+                            {user?.displayName || user?.email || 'User'}
+                        </div>
+                    </div>
+
+                    {/* Settings Button */}
+                    <button
+                        onClick={() => {
+                            // This will be handled by the parent component
+                            const event = new CustomEvent('openSettings');
+                            window.dispatchEvent(event);
+                        }}
+                        style={{
+                            padding: '6px',
+                            background: 'var(--surface-bg)',
+                            color: 'var(--text-secondary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s ease',
+                            width: '28px',
+                            height: '28px',
+                            flexShrink: 0
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'var(--card-bg)';
+                            e.currentTarget.style.borderColor = 'var(--brand-blue)';
+                            e.currentTarget.style.color = 'var(--brand-blue)';
+                            e.currentTarget.style.transform = 'translateY(-1px)';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'var(--surface-bg)';
+                            e.currentTarget.style.borderColor = 'var(--border-color)';
+                            e.currentTarget.style.color = 'var(--text-secondary)';
+                            e.currentTarget.style.transform = 'translateY(0)';
+                        }}
+                        title="Settings & Configuration"
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1 1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
             {children}
         </div>

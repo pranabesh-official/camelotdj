@@ -132,6 +132,26 @@ const App: React.FC = () => {
         setCurrentView('library');
     }, []);
 
+    // Custom playlist select handler that also changes view to library if needed
+    const handlePlaylistSelect = useCallback((playlist: Playlist | null) => {
+        setSelectedPlaylist(playlist);
+        if (currentView !== 'library') {
+            setCurrentView('library');
+        }
+    }, [currentView]);
+
+    // Listen for settings open event from AuthGate
+    useEffect(() => {
+        const handleOpenSettings = () => {
+            setCurrentView('settings');
+        };
+
+        window.addEventListener('openSettings', handleOpenSettings);
+        return () => {
+            window.removeEventListener('openSettings', handleOpenSettings);
+        };
+    }, []);
+
     // Check if running in Electron and get API details
     useEffect(() => {
         const isElectron = !!(window as any).require;
@@ -309,6 +329,7 @@ const App: React.FC = () => {
                     setTimeout(() => loadLibraryFromDatabase(dbService, delay + 1500), 2000);
                     return;
                 }
+                console.error('❌ Backend connection failed after retries:', connectError);
                 throw connectError;
             }
             
@@ -561,11 +582,13 @@ const App: React.FC = () => {
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         retryCount++;
                         continue;
-                    } else {
-                        alert(`Backend server is not responding on port ${apiPort}.\n\nPlease ensure the Python backend is running by:\n1. Opening a terminal\n2. Running: ./start_backend.sh\n\nOr restart it manually with:\ncd python && python3 api.py --apiport 5002 --signingkey devkey`);
-                        setIsAnalyzing(false);
-                        return;
-                    }
+                } else {
+                    const errorMessage = `Backend server is not responding on port ${apiPort}.\n\nPlease ensure the Python backend is running by:\n1. Opening a terminal\n2. Running: ./start_backend.sh\n\nOr restart it manually with:\ncd python && python3 api.py --apiport 5002 --signingkey devkey\n\nIf the backend is running, check the console for any error messages.`;
+                    console.error('Backend connection failed:', errorMessage);
+                    alert(errorMessage);
+                    setIsAnalyzing(false);
+                    return;
+                }
                 }
                 
                 const formData = new FormData();
@@ -2215,82 +2238,13 @@ const App: React.FC = () => {
     return (
         <AuthGate>
         <div className="App">
-            <header className="App-header">
+            <header className="App-header" style={{ height: '60px' }}>
                 <div className="header-content">
                     <div className="brand">
                         <div className="logo">
                             <LogoComponent />
                         </div>
                     </div>
-                    {currentView !== 'youtube' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                            {/* Volume Display - Show when track is loaded */}
-                            {currentlyPlaying && (
-                                <div className="volume-display" style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '6px 12px',
-                                    background: 'var(--surface-bg)',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color)',
-                                    fontSize: '14px',
-                                    color: 'var(--text-secondary)'
-                                }}>
-                                    <Volume2 size={16} />
-                                    <span>{Math.round(volume * 100)}%</span>
-                                </div>
-                            )}
-                            
-                            <div className="search-box-header search-box-centered">
-                                <input 
-                                    type="text" 
-                                    placeholder="Search Music online and download to your library..." 
-                                    onClick={() => setCurrentView('youtube')}
-                                    readOnly
-                                    style={{ cursor: 'pointer' }}
-                                />
-                            </div>
-                            {/* AI Agent button - commented out for this version */}
-                            {/* <button
-                                onClick={() => setCurrentView('ai-agent')}
-                                style={{
-                                    padding: '6px',
-                                    background: 'var(--surface-bg)',
-                                    color: 'var(--text-secondary)',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.2s ease',
-                                    width: '32px',
-                                    height: '32px'
-                                }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'var(--card-bg)';
-                                    e.currentTarget.style.borderColor = 'var(--brand-blue)';
-                                    e.currentTarget.style.color = 'var(--brand-blue)';
-                                    e.currentTarget.style.transform = 'translateY(-1px)';
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = 'var(--surface-bg)';
-                                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                                    e.currentTarget.style.color = 'var(--text-secondary)';
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                }}
-                                title="AI Agent - Create Smart Playlists"
-                            >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
-                                    <path d="M2 17L12 22L22 17"/>
-                                    <path d="M2 12L12 17L22 12"/>
-                                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
-                                </svg>
-                            </button> */}
-                        </div>
-                    )}
                     
                     {currentView === 'youtube' && (
                         <nav className="nav-tabs">
@@ -2313,6 +2267,29 @@ const App: React.FC = () => {
                                 Settings
                             </button>
                         </nav>
+                    )}
+
+                    {currentView !== 'youtube' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                            {/* Volume Display - Show when track is loaded */}
+                            {currentlyPlaying && (
+                                <div className="volume-display" style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '6px 12px',
+                                    background: 'var(--surface-bg)',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    fontSize: '14px',
+                                    color: 'var(--text-secondary)'
+                                }}>
+                                    <Volume2 size={16} />
+                                    <span>{Math.round(volume * 100)}%</span>
+                                </div>
+                            )}
+                            
+                        </div>
                     )}
                 </div>
             </header>
@@ -2338,7 +2315,7 @@ const App: React.FC = () => {
                             playlists={playlists}
                             songs={songs}
                             selectedPlaylist={selectedPlaylist}
-                            onPlaylistSelect={setSelectedPlaylist}
+                            onPlaylistSelect={handlePlaylistSelect}
                             onPlaylistCreate={handlePlaylistCreate}
                             onPlaylistUpdate={handlePlaylistUpdate}
                             onPlaylistDelete={handlePlaylistDelete}
@@ -2592,249 +2569,271 @@ const App: React.FC = () => {
 
                     {currentView === 'settings' && (
                         <div className="settings-view" style={{ height: '100%', overflow: 'auto', padding: 'var(--space-xl)' }}>
-                            <div className="settings-container">
-                                <div className="settings-header">
-                                    <svg className="settings-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <div className="settings-container" style={{ maxWidth: '800px', margin: '0 auto' }}>
+                                {/* Enhanced Settings Header */}
+                                <div className="settings-header" style={{ 
+                                    marginBottom: 'var(--space-xl)',
+                                    paddingBottom: 'var(--space-lg)',
+                                    borderBottom: '2px solid var(--border-color)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '16px'
+                                }}>
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                    <svg className="settings-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: 'var(--text-primary)' }}>
                                         <path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                         <path d="M19.4 15C19.2669 15.3016 19.2272 15.6362 19.286 15.9606C19.3448 16.285 19.4995 16.5843 19.73 16.82L19.79 16.88C19.976 17.0657 20.1235 17.2863 20.2241 17.5291C20.3248 17.7719 20.3766 18.0322 20.3766 18.295C20.3766 18.5578 20.3248 18.8181 20.2241 19.0609C20.1235 19.3037 19.976 19.5243 19.79 19.71C19.6043 19.896 19.3837 20.0435 19.1409 20.1441C18.8981 20.2448 18.6378 20.2966 18.375 20.2966C18.1122 20.2966 17.8519 20.2448 17.6091 20.1441C17.3663 20.0435 17.1457 19.896 16.96 19.71L16.9 19.65C16.6643 19.4195 16.365 19.2648 16.0406 19.206C15.7162 19.1472 15.3816 19.1869 15.08 19.32C14.7842 19.4468 14.532 19.6572 14.3543 19.9255C14.1766 20.1938 14.0813 20.5082 14.08 20.83V21C14.08 21.5304 13.8693 22.0391 13.4942 22.4142C13.1191 22.7893 12.6104 23 12.08 23C11.5496 23 11.0409 22.7893 10.6658 22.4142C10.2907 22.0391 10.08 21.5304 10.08 21V20.91C10.0723 20.579 9.96512 20.2573 9.77251 19.9887C9.5799 19.7201 9.31074 19.5166 9 19.4C8.69838 19.2669 8.36381 19.2272 8.03941 19.286C7.71502 19.3448 7.41568 19.4995 7.18 19.73L7.12 19.79C6.93425 19.976 6.71368 20.1235 6.47088 20.2241C6.22808 20.3248 5.96783 20.3766 5.705 20.3766C5.44217 20.3766 5.18192 20.3248 4.93912 20.2241C4.69632 20.1235 4.47575 19.976 4.29 19.79C4.10405 19.6043 3.95653 19.3837 3.85588 19.1409C3.75523 18.8981 3.70343 18.6378 3.70343 18.375C3.70343 18.1122 3.75523 17.8519 3.85588 17.6091C3.95653 17.3663 4.10405 17.1457 4.29 16.96L4.35 16.9C4.58054 16.6643 4.73519 16.365 4.794 16.0406C4.85282 15.7162 4.81312 15.3816 4.68 15.08C4.55324 14.7842 4.34276 14.532 4.07447 14.3543C3.80618 14.1766 3.49179 14.0813 3.17 14.08H3C2.46957 14.08 1.96086 13.8693 1.58579 13.4942C1.21071 13.1191 1 12.6104 1 12.08C1 11.5496 1.21071 11.0409 1.58579 10.6658C1.96086 10.2907 2.46957 10.08 3 10.08H3.09C3.42099 10.0723 3.742 9.96512 4.01062 9.77251C4.27925 9.5799 4.48278 9.31074 4.6 9C4.73312 8.69838 4.77282 8.36381 4.714 8.03941C4.65519 7.71502 4.50054 7.41568 4.27 7.18L4.21 7.12C4.02405 6.93425 3.87653 6.71368 3.77588 6.47088C3.67523 6.22808 3.62343 5.96783 3.62343 5.705C3.62343 5.44217 3.67523 5.18192 3.77588 4.93912C3.87653 4.69632 4.02405 4.47575 4.21 4.29C4.39575 4.10405 4.61632 3.95653 4.85912 3.85588C5.10192 3.75523 5.36217 3.70343 5.625 3.70343C5.88783 3.70343 6.14808 3.75523 6.39088 3.85588C6.63368 3.95653 6.85425 4.10405 7.04 4.29L7.1 4.35C7.33568 4.58054 7.63502 4.73519 7.95941 4.794C8.28381 4.85282 8.61838 4.81312 8.92 4.68H9C9.29577 4.55324 9.54802 4.34276 9.72569 4.07447C9.90337 3.80618 9.99872 3.49179 10 3.17V3C10 2.46957 10.2107 1.96086 10.5858 1.58579C10.9609 1.21071 11.4696 1 12 1C12.5304 1 13.0391 1.21071 13.4142 1.58579C13.7893 1.96086 14 2.46957 14 3V3.09C14.0013 3.41179 14.0966 3.72618 14.2743 3.99447C14.452 4.26276 14.7042 4.47324 15 4.6C15.3016 4.73312 15.6362 4.77282 15.9606 4.714C16.285 4.65519 16.5843 4.50054 16.82 4.27L16.88 4.21C17.0657 4.02405 17.2863 3.87653 17.5291 3.77588C17.7719 3.67523 18.0322 3.62343 18.295 3.62343C18.5578 3.62343 18.8181 3.67523 19.0609 3.77588C19.3037 3.87653 19.5243 4.02405 19.71 4.21C19.896 4.39575 20.0435 4.61632 20.1441 4.85912C20.2448 5.10192 20.2966 5.36217 20.2966 5.625C20.2966 5.88783 20.2448 6.14808 20.1441 6.39088C20.0435 6.63368 19.896 6.85425 19.71 7.04L19.65 7.1C19.4195 7.33568 19.2648 7.63502 19.206 7.95941C19.1472 8.28381 19.1869 8.61838 19.32 8.92V9C19.4468 9.29577 19.6572 9.54802 19.9255 9.72569C20.1938 9.90337 20.5082 9.99872 20.83 10H21C21.5304 10 22.0391 10.2107 22.4142 10.5858C22.7893 10.9609 23 11.4696 23 12C23 12.5304 22.7893 13.0391 22.4142 13.4142C22.0391 13.7893 21.5304 14 21 14H20.91C20.5882 14.0013 20.2738 14.0966 20.0055 14.2743C19.7372 14.452 19.5268 14.7042 19.4 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                     </svg>
-                                    <h2 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>Settings & Configuration</h2>
                                 </div>
-                                
-                                {/* YouTube Music Download Settings */}
-                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
-                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <div className="section-header">
-                                            <svg className="section-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                <path d="M9 18V5L21 3V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <circle cx="18" cy="16" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                            </svg>
-                                            <h3 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>Music Downloads & Collection</h3>
-                                        </div>
-                                        
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                                Configure where music downloads will be saved. Downloads will be in 320kbps MP3 format.
-                                            </p>
-                                        </div>
-                                        
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <label style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', display: 'block', marginBottom: '8px' }}>
-                                                Download / Collection Path:
-                                            </label>
-                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                <input 
-                                                    type="text" 
-                                                    value={downloadPath}
-                                                    readOnly
-                                                    placeholder="No download path selected"
-                                                    style={{
-                                                        flex: 1,
-                                                        padding: '8px 12px',
-                                                        background: 'var(--surface-bg)',
-                                                        border: '1px solid var(--border-color)',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: '14px'
-                                                    }}
-                                                />
-                                                <button 
-                                                    onClick={handleDownloadPathSelect}
-                                                    style={{
-                                                        padding: '8px 16px',
-                                                        background: 'var(--accent-color)',
-                                                        color: 'white',
-                                                        border: 'none',
-                                                        borderRadius: '4px',
-                                                        cursor: 'pointer',
-                                                        fontSize: '14px',
-                                                        fontWeight: '500'
-                                                    }}
-                                                >
-                                                    {downloadPath ? 'Change' : 'Select'}
-                                                </button>
-                                                {downloadPath && (
-                                                    <button 
-                                                        onClick={handleClearDownloadPath}
-                                                        style={{
-                                                            padding: '8px 12px',
-                                                            background: 'var(--error-color)',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '14px'
-                                                        }}
-                                                    >
-                                                        Clear
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="status-indicator" style={{ 
-                                            background: isLoadingSettings ? 'rgba(255, 193, 7, 0.1)' : (isDownloadPathSet ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'), 
-                                            border: `1px solid ${isLoadingSettings ? 'rgba(255, 193, 7, 0.3)' : (isDownloadPathSet ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)')}`, 
-                                            marginBottom: '16px'
+                                    <div>
+                                        <h2 style={{ 
+                                            color: 'var(--text-primary)', 
+                                            margin: '0 0 4px 0', 
+                                            fontSize: '28px',
+                                            fontWeight: '700',
+                                            background: 'linear-gradient(135deg, var(--text-primary), var(--brand-blue))',
+                                            WebkitBackgroundClip: 'text',
+                                            WebkitTextFillColor: 'transparent',
+                                            backgroundClip: 'text'
                                         }}>
-                                            <div className="status-content">
-                                                {isLoadingSettings ? (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M12 3A9 9 0 0 1 20.4 6.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                ) : isDownloadPathSet ? (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                ) : (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M15 9L9 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M9 9L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                )}
-                                                <p style={{ 
-                                                    color: isLoadingSettings ? 'rgb(255, 193, 7)' : (isDownloadPathSet ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)'), 
-                                                    margin: 0, 
-                                                    fontSize: '14px',
-                                                    fontWeight: '500'
+                                            Settings
+                                        </h2>
+                                        <p style={{ 
+                                            color: 'var(--text-secondary)', 
+                                            margin: 0, 
+                                            fontSize: '16px',
+                                            fontWeight: '400'
+                                        }}>
+                                            Configure your application preferences and system settings
+                                        </p>
+                                    </div>
+                                        </div>
+                                        
+                                {/* System Status */}
+                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div style={{ 
+                                        background: 'var(--card-bg)', 
+                                        padding: 'var(--space-xl)', 
+                                        borderRadius: '16px', 
+                                                        border: '1px solid var(--border-color)',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+                                        position: 'relative',
+                                        overflow: 'hidden'
+                                    }}>
+                                        {/* Background Pattern */}
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            right: 0,
+                                            width: '120px',
+                                            height: '120px',
+                                            background: 'linear-gradient(135deg, var(--brand-blue), var(--accent-purple))',
+                                            opacity: 0.05,
+                                            borderRadius: '0 16px 0 100%',
+                                            transform: 'translate(30px, -30px)'
+                                        }}></div>
+                                        
+                                        <div className="section-header" style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            marginBottom: 'var(--space-xl)',
+                                            position: 'relative',
+                                            zIndex: 1
+                                        }}>
+                                            <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                marginRight: '16px'
+                                            }}>
+                                                <svg className="section-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: 'var(--text-primary)' }}>
+                                                    <path d="M9 12L11 14L15 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    <path d="M12 8V12L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <h3 style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    margin: '0 0 4px 0', 
+                                                    fontSize: '24px',
+                                                    fontWeight: '700'
                                                 }}>
-                                                    {isLoadingSettings ? 'Loading settings...' : (isDownloadPathSet ? 'Download path configured' : 'Download path required for YouTube Music downloads')}
+                                                    System Status
+                                                </h3>
+                                                <p style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    margin: 0, 
+                                                    fontSize: '16px',
+                                                    fontWeight: '400'
+                                                }}>
+                                                    Monitor your application's health and performance
                                                 </p>
                                             </div>
                                         </div>
 
-                                        {showSaveSuccess && (
+                                        {/* Status Grid */}
                                             <div style={{ 
-                                                padding: '12px', 
-                                                background: 'rgba(34, 197, 94, 0.1)', 
-                                                border: '1px solid rgba(34, 197, 94, 0.3)', 
-                                                borderRadius: '4px'
+                                            display: 'grid', 
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
+                                            gap: '16px',
+                                            marginBottom: 'var(--space-lg)'
+                                        }}>
+                                            {/* Database Status */}
+                                            <div className="status-card" style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px'
                                             }}>
-                                                <p style={{ 
-                                                    color: 'rgb(34, 197, 94)', 
-                                                    margin: 0, 
+                                                <div style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: databaseService ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)',
+                                                    flexShrink: 0
+                                                }}></div>
+                                                <div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-primary)', 
                                                     fontSize: '14px',
-                                                    fontWeight: '500'
+                                                        fontWeight: '500',
+                                                        marginBottom: '2px'
                                                 }}>
-                                                     Settings saved successfully!
-                                                </p>
+                                                        Database
                                             </div>
-                                        )}
+                                                    <div style={{ 
+                                                        color: 'var(--text-secondary)', 
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        {databaseService ? 'Connected' : 'Disconnected'}
                                     </div>
                                 </div>
-
-                                {/* Database Information */}
-                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
-                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <div className="section-header">
-                                            <svg className="section-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                <ellipse cx="12" cy="5" rx="9" ry="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <path d="M3 5V19C3 20.1046 6.13401 21 10 21C13.866 21 17 20.1046 17 19V5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <path d="M3 12C3 13.1046 6.13401 14 10 14C13.866 14 17 13.1046 17 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                            </svg>
-                                            <h3 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>Database & Storage</h3>
                                         </div>
                                         
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <p style={{ color: 'var(--text-secondary)', margin: '8px 0', fontSize: '14px' }}>
-                                                Database connection status and storage information.
-                                            </p>
-                                        </div>
-                                        
-                                        <div className="status-indicator" style={{ 
-                                            background: databaseService ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
-                                            border: `1px solid ${databaseService ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                                            marginBottom: '16px'
-                                        }}>
-                                            <div className="status-content">
-                                                {databaseService ? (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                ) : (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M15 9L9 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M9 9L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                )}
-                                                <p style={{ 
-                                                    color: databaseService ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)', 
-                                                    margin: 0, 
+                                            {/* Library Status */}
+                                            <div className="status-card" style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: isLibraryLoaded ? 'rgb(34, 197, 94)' : 'rgb(255, 193, 7)',
+                                                    flexShrink: 0
+                                                }}></div>
+                                                <div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-primary)', 
                                                     fontSize: '14px',
-                                                    fontWeight: '500'
-                                                }}>
-                                                    {databaseService ? 'Database connected' : 'Database not connected'}
-                                                </p>
+                                                        fontWeight: '500',
+                                                        marginBottom: '2px'
+                                                    }}>
+                                                        Music Library
+                                                    </div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-secondary)', 
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        {isLibraryLoaded ? `${songs.length} tracks loaded` : 'Loading...'}
+                                                    </div>
                                             </div>
                                         </div>
 
-                                        <div className="status-indicator" style={{ 
-                                            background: isLoadingSettings ? 'rgba(255, 193, 7, 0.1)' : 'rgba(34, 197, 94, 0.1)', 
-                                            border: `1px solid ${isLoadingSettings ? 'rgba(255, 193, 7, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`,
-                                            marginBottom: '16px'
-                                        }}>
-                                            <div className="status-content">
-                                                {isLoadingSettings ? (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M12 3A9 9 0 0 1 20.4 6.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                ) : (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                )}
-                                                <p style={{ 
-                                                    color: isLoadingSettings ? 'rgb(255, 193, 7)' : 'rgb(34, 197, 94)', 
-                                                    margin: 0, 
+                                            {/* Application Mode */}
+                                            <div className="status-card" style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: 'rgb(34, 197, 94)',
+                                                    flexShrink: 0
+                                                }}></div>
+                                                <div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-primary)', 
                                                     fontSize: '14px',
-                                                    fontWeight: '500'
-                                                }}>
-                                                    {isLoadingSettings ? 'Loading settings...' : 'Settings loaded'}
-                                                </p>
+                                                        fontWeight: '500',
+                                                        marginBottom: '2px'
+                                                    }}>
+                                                        Application Mode
+                                                    </div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-secondary)', 
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        {isElectronMode ? 'Desktop App' : 'Web Browser'}
+                                                    </div>
                                             </div>
                                         </div>
 
-                                        <div className="status-indicator" style={{ 
-                                            background: isLibraryLoaded ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 193, 7, 0.1)', 
-                                            border: `1px solid ${isLibraryLoaded ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255, 193, 7, 0.3)'}`,
-                                            marginBottom: '16px'
-                                        }}>
-                                            <div className="status-content">
-                                                {isLibraryLoaded ? (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                ) : (
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M21 12A9 9 0 1 1 3 12A9 9 0 0 1 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                        <path d="M12 3A9 9 0 0 1 20.4 6.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                    </svg>
-                                                )}
-                                                <p style={{ 
-                                                    color: isLibraryLoaded ? 'rgb(34, 197, 94)' : 'rgb(255, 193, 7)', 
-                                                    margin: 0, 
+                                            {/* API Status */}
+                                            <div className="status-card" style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px'
+                                            }}>
+                                                <div style={{
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: 'rgb(34, 197, 94)',
+                                                    flexShrink: 0
+                                                }}></div>
+                                                <div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-primary)', 
                                                     fontSize: '14px',
-                                                    fontWeight: '500'
-                                                }}>
-                                                    {isLibraryLoaded ? `Library loaded (${songs.length} tracks)` : 'Loading library...'}
-                                                </p>
+                                                        fontWeight: '500',
+                                                        marginBottom: '2px'
+                                                    }}>
+                                                        API Server
+                                                    </div>
+                                                    <div style={{ 
+                                                        color: 'var(--text-secondary)', 
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        Port {apiPort}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 
                                         {/* Database Cleanup Section */}
                                         <div style={{ 
                                             marginTop: '24px', 
-                                            padding: '16px', 
-                                            background: 'rgba(239, 68, 68, 0.05)', 
+                                            padding: '20px', 
+                                            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.05), rgba(220, 38, 38, 0.05))', 
                                             border: '1px solid rgba(239, 68, 68, 0.2)', 
-                                            borderRadius: '6px' 
+                                            borderRadius: '12px',
+                                            position: 'relative'
                                         }}>
-                                            <div style={{ marginBottom: '12px' }}>
+                                            <div style={{ marginBottom: '16px' }}>
                                                 <h4 style={{ 
                                                     color: 'var(--text-primary)', 
                                                     margin: '0 0 8px 0', 
@@ -2851,9 +2850,9 @@ const App: React.FC = () => {
                                                 </h4>
                                                 <p style={{ 
                                                     color: 'var(--text-secondary)', 
-                                                    margin: '0 0 12px 0', 
+                                                    margin: '0 0 16px 0', 
                                                     fontSize: '14px',
-                                                    lineHeight: '1.4'
+                                                    lineHeight: '1.5'
                                                 }}>
                                                     Clear all data from the database. This will permanently delete all music files, playlists, settings, and scan locations. This action cannot be undone.
                                                 </p>
@@ -2863,11 +2862,11 @@ const App: React.FC = () => {
                                                 onClick={handleDatabaseCleanup}
                                                 disabled={!databaseService}
                                                 style={{
-                                                    padding: '10px 16px',
-                                                    background: databaseService ? 'var(--error-color)' : 'var(--text-secondary)',
+                                                    padding: '12px 20px',
+                                                    background: databaseService ? 'linear-gradient(135deg, var(--error-color), #dc2626)' : 'var(--text-secondary)',
                                                     color: 'white',
                                                     border: 'none',
-                                                    borderRadius: '6px',
+                                                    borderRadius: '8px',
                                                     cursor: databaseService ? 'pointer' : 'not-allowed',
                                                     fontSize: '14px',
                                                     fontWeight: '500',
@@ -2875,18 +2874,19 @@ const App: React.FC = () => {
                                                     alignItems: 'center',
                                                     gap: '8px',
                                                     transition: 'all 0.2s ease',
-                                                    opacity: databaseService ? 1 : 0.6
+                                                    opacity: databaseService ? 1 : 0.6,
+                                                    boxShadow: databaseService ? '0 4px 12px rgba(239, 68, 68, 0.3)' : 'none'
                                                 }}
                                                 onMouseEnter={(e) => {
                                                     if (databaseService) {
-                                                        e.currentTarget.style.background = '#dc2626';
-                                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                                        e.currentTarget.style.transform = 'translateY(-2px)';
+                                                        e.currentTarget.style.boxShadow = '0 6px 20px rgba(239, 68, 68, 0.4)';
                                                     }
                                                 }}
                                                 onMouseLeave={(e) => {
                                                     if (databaseService) {
-                                                        e.currentTarget.style.background = 'var(--error-color)';
                                                         e.currentTarget.style.transform = 'translateY(0)';
+                                                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.3)';
                                                     }
                                                 }}
                                             >
@@ -3027,30 +3027,298 @@ const App: React.FC = () => {
                                 </div> */}
 
                                 {/* Application Information */}
-                                <div className="settings-section">
-                                    <div style={{ background: 'var(--card-bg)', padding: 'var(--space-lg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                        <div className="section-header">
-                                            <svg className="section-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <path d="M12 16V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                                <path d="M12 8H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                <div className="settings-section" style={{ marginBottom: 'var(--space-xl)' }}>
+                                    <div style={{ 
+                                        background: 'var(--card-bg)', 
+                                        padding: 'var(--space-xl)', 
+                                        borderRadius: '16px', 
+                                        border: '1px solid var(--border-color)',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+                                        position: 'relative',
+                                        overflow: 'hidden'
+                                    }}>
+                                        {/* Background Pattern */}
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            right: 0,
+                                            width: '100px',
+                                            height: '100px',
+                                            background: 'linear-gradient(135deg, var(--accent-purple), var(--brand-blue))',
+                                            opacity: 0.05,
+                                            borderRadius: '0 16px 0 100%',
+                                            transform: 'translate(20px, -20px)'
+                                        }}></div>
+                                        
+                                        <div className="section-header" style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            marginBottom: 'var(--space-xl)',
+                                            position: 'relative',
+                                            zIndex: 1
+                                        }}>
+                                            <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                marginRight: '16px'
+                                            }}>
+                                            <svg className="section-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: 'var(--text-primary)' }}>
+                                                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                             </svg>
-                                            <h3 style={{ color: 'var(--text-primary)', margin: '0 0 0 12px' }}>Application Info</h3>
+                                            </div>
+                                            <div>
+                                                <h3 style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    margin: '0 0 4px 0', 
+                                                    fontSize: '24px',
+                                                    fontWeight: '700'
+                                                }}>
+                                                    Application Information
+                                                </h3>
+                                                <p style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    margin: 0, 
+                                                    fontSize: '16px',
+                                                    fontWeight: '400'
+                                                }}>
+                                                    Version details and system configuration
+                                                </p>
+                                            </div>
                                         </div>
                                         
-                                        <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-                                            <p style={{ margin: '8px 0' }}>
-                                                <strong>Version:</strong> 1.0.0
+                                        {/* Info Grid */}
+                                        <div style={{ 
+                                            display: 'grid', 
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                                            gap: '16px',
+                                            position: 'relative',
+                                            zIndex: 1
+                                        }}>
+                                            <div style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)'
+                                            }}>
+                                                <div style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    fontSize: '12px',
+                                                    fontWeight: '500',
+                                                    marginBottom: '4px',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px'
+                                                }}>
+                                                    Version
+                                                </div>
+                                                <div style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    fontSize: '16px',
+                                                    fontWeight: '600'
+                                                }}>
+                                                    1.0.0
+                                                </div>
+                                            </div>
+
+                                            <div style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)'
+                                            }}>
+                                                <div style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    fontSize: '12px',
+                                                    fontWeight: '500',
+                                                    marginBottom: '4px',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px'
+                                                }}>
+                                                    Platform
+                                                </div>
+                                                <div style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    fontSize: '16px',
+                                                    fontWeight: '600'
+                                                }}>
+                                                    {isElectronMode ? 'Desktop App' : 'Web Browser'}
+                                                </div>
+                                            </div>
+
+                                            <div style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)'
+                                            }}>
+                                                <div style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    fontSize: '12px',
+                                                    fontWeight: '500',
+                                                    marginBottom: '4px',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px'
+                                                }}>
+                                                    API Port
+                                                </div>
+                                                <div style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    fontSize: '16px',
+                                                    fontWeight: '600'
+                                                }}>
+                                                    {apiPort}
+                                                </div>
+                                            </div>
+
+                                            <div style={{ 
+                                                background: 'var(--surface-bg)', 
+                                                padding: '16px', 
+                                                borderRadius: '12px', 
+                                                border: '1px solid var(--border-color)'
+                                            }}>
+                                                <div style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    fontSize: '12px',
+                                                    fontWeight: '500',
+                                                    marginBottom: '4px',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px'
+                                                }}>
+                                                    Database
+                                                </div>
+                                                <div style={{ 
+                                                    color: databaseService ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)', 
+                                                    fontSize: '16px',
+                                                    fontWeight: '600'
+                                                }}>
+                                                    {databaseService ? 'Active' : 'Inactive'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* User Account Section */}
+                                <div className="settings-section">
+                                    <div style={{ 
+                                        background: 'var(--card-bg)', 
+                                        padding: 'var(--space-xl)', 
+                                        borderRadius: '16px', 
+                                        border: '1px solid var(--border-color)',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+                                        position: 'relative',
+                                        overflow: 'hidden'
+                                    }}>
+                                        {/* Background Pattern */}
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            right: 0,
+                                            width: '120px',
+                                            height: '120px',
+                                            background: 'linear-gradient(135deg, var(--brand-blue), var(--accent-purple))',
+                                            opacity: 0.05,
+                                            borderRadius: '0 16px 0 100%',
+                                            transform: 'translate(30px, -30px)'
+                                        }}></div>
+                                        
+                                        <div className="section-header" style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            marginBottom: 'var(--space-xl)',
+                                            position: 'relative',
+                                            zIndex: 1
+                                        }}>
+                                            <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                marginRight: '16px'
+                                            }}>
+                                                <svg className="section-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: 'var(--text-primary)' }}>
+                                                    <path d="M16 7C16 9.20914 14.2091 11 12 11C9.79086 11 8 9.20914 8 7C8 4.79086 9.79086 3 12 3C14.2091 3 16 4.79086 16 7Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    <path d="M12 14C8.13401 14 5 17.134 5 21H19C19 17.134 15.866 14 12 14Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                    <path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 17.0609 15 16 15H8C6.93913 15 5.92172 15.4214 5.17157 16.1716C4.42143 16.9217 4 17.9391 4 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <h3 style={{ 
+                                                    color: 'var(--text-primary)', 
+                                                    margin: '0 0 4px 0', 
+                                                    fontSize: '24px',
+                                                    fontWeight: '700'
+                                                }}>
+                                                    User Account
+                                                </h3>
+                                                <p style={{ 
+                                                    color: 'var(--text-secondary)', 
+                                                    margin: 0, 
+                                                    fontSize: '16px',
+                                                    fontWeight: '400'
+                                                }}>
+                                                    Manage your account and authentication settings
+                                                </p>
+                                            </div>
+                                        </div>
+                                        
+                                        <div style={{ 
+                                            marginBottom: '24px',
+                                            position: 'relative',
+                                            zIndex: 1
+                                        }}>
+                                            <p style={{ 
+                                                color: 'var(--text-secondary)', 
+                                                margin: '0 0 16px 0', 
+                                                fontSize: '14px',
+                                                lineHeight: '1.5'
+                                            }}>
+                                                You are currently signed in. Use the button below to sign out of your account.
                                             </p>
-                                            <p style={{ margin: '8px 0' }}>
-                                                <strong>Mode:</strong> {isElectronMode ? 'Desktop App' : 'Web Browser'}
-                                            </p>
-                                            <p style={{ margin: '8px 0' }}>
-                                                <strong>API Port:</strong> {apiPort}
-                                            </p>
-                                            <p style={{ margin: '8px 0' }}>
-                                                <strong>Database Service:</strong> {databaseService ? 'Active' : 'Inactive'}
-                                            </p>
+                                            
+                                            <button 
+                                                onClick={() => {
+                                                    // Import signOutUser from AuthContext
+                                                    import('./services/AuthContext').then(({ useAuth }) => {
+                                                        // This will be handled by the AuthGate component
+                                                        const event = new CustomEvent('signOut');
+                                                        window.dispatchEvent(event);
+                                                    });
+                                                }}
+                                                style={{
+                                                    padding: '14px 24px',
+                                                    background: 'linear-gradient(135deg, var(--error-color), #dc2626)',
+                                                    color: 'white',
+                                                    border: 'none',
+                                                    borderRadius: '12px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '14px',
+                                                    fontWeight: '600',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '10px',
+                                                    transition: 'all 0.2s ease',
+                                                    width: '100%',
+                                                    justifyContent: 'center',
+                                                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(239, 68, 68, 0.4)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.transform = 'translateY(0)';
+                                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.3)';
+                                                }}
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                                    <polyline points="16 17 21 12 16 7"></polyline>
+                                                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                                                </svg>
+                                                Sign Out
+                                            </button>
                                         </div>
                                     </div>
                                 </div>

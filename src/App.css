@@ -98,7 +98,7 @@ body {
   border-bottom: 1px solid var(--border-color);
   padding: var(--space-md) var(--space-lg);
   flex-shrink: 0;
-  height: 48px;
+  height: 60px;
   display: flex;
   align-items: center;
 }

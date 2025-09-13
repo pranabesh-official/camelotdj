@@ -32,6 +32,8 @@ interface PlaylistManagerProps {
   onMultiFileUpload?: (files: File[]) => void;
   onFolderUpload?: (files: FileList) => void;
   isAnalyzing?: boolean;
+  downloadPath?: string;
+  onCleanupPlaylists?: () => void;
 }
 
 // Simple SVG icons for clean UI
@@ -81,7 +83,7 @@ const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
 const DeleteIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <polyline points="3,6 5,6 21,6"></polyline>
-    <path d="19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
+    <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
   </svg>
 );
 
@@ -90,6 +92,14 @@ const ExportIcon = () => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
     <polyline points="7,10 12,15 17,10"></polyline>
     <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
+
+const DownloadIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7,10 12,15 17,10"/>
+    <line x1="12" y1="3" x2="12" y2="15"/>
   </svg>
 );
 
@@ -356,7 +366,9 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   onFileUpload,
   onMultiFileUpload,
   onFolderUpload,
-  isAnalyzing = false
+  isAnalyzing = false,
+  downloadPath,
+  onCleanupPlaylists
 }) => {
   const [showAddSongs, setShowAddSongs] = useState(false);
   const [selectedSongs, setSelectedSongs] = useState<string[]>([]);
@@ -460,7 +472,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     const m3uContent = [
       '#EXTM3U',
       ...playlist.songs.map(song => 
-        `#EXTINF:${Math.floor(song.duration || 0)},${song.filename}\n${song.file_path || song.filename}`
+        `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.file_path || song.filename}`
       )
     ].join('\n');
 
@@ -495,7 +507,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
         const m3uContent = [
           '#EXTM3U',
           ...playlist.songs.map(song => 
-            `#EXTINF:${Math.floor(song.duration || 0)},${song.filename}\n${song.filename}`
+            `#EXTINF:${Math.floor(song.duration || 0)},${song.title || song.filename}\n${song.filename}`
           )
         ].join('\n');
         
@@ -617,32 +629,49 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           </div>
         </div>
 
-        {/* Genre-based playlists */}
-        {['House', 'Techno', 'Hip-Hop', 'Jazz', 'Rock', 'Pop', 'Reggae', 'Ambient'].map((genre) => {
-          const genreCount = songs.filter(song => {
-            if (!song.bpm || !song.energy_level) return false;
-            
-            switch(genre) {
-              case 'House': return song.energy_level >= 5 && song.energy_level <= 7;
-              case 'Techno': return song.energy_level > 7;
-              case 'Hip-Hop': return song.energy_level <= 4 && song.bpm >= 70 && song.bpm <= 100;
-              case 'Jazz': return song.energy_level <= 3;
-              case 'Rock': return song.energy_level >= 6;
-              case 'Pop': return song.energy_level >= 4 && song.energy_level <= 6;
-              default: return false;
-            }
-          }).length;
-          
-          return (
-            <div key={genre} className="playlist-item-row genre-item">
-              <div className="genre-indicator">●</div>
-              <div className="playlist-item-info">
-                <span className="playlist-item-name">{genre}</span>
-                <span className="playlist-item-count">({genreCount})</span>
+        {/* Downloads (virtual playlist based on downloadPath) */}
+        {downloadPath && (
+          (() => {
+            const normalizePath = (p: string) =>
+              (p || '')
+                .replace(/\\/g, '/')
+                .replace(/\/+$/g, '')
+                .toLowerCase();
+            const normalized = normalizePath(downloadPath);
+            const downloadsSongs = songs.filter(s => {
+              const fp = normalizePath(s.file_path || '');
+              if (!fp || !normalized) return false;
+              return fp.startsWith(normalized) || fp.includes(`/${normalized.split('/').filter(Boolean).join('/')}`) || fp.includes(normalized);
+            });
+            const virtualPlaylist: Playlist = {
+              id: 'virtual-downloads',
+              name: 'Downloads',
+              songs: downloadsSongs,
+              createdAt: new Date(0),
+              description: 'Songs in your downloads folder',
+              color: '#4ecdc4',
+              isQueryBased: true,
+              queryCriteria: undefined
+            };
+            return (
+              <div
+                key={virtualPlaylist.id}
+                className="playlist-item-row user-playlist"
+                onClick={() => onPlaylistSelect(virtualPlaylist)}
+              >
+                <div className="playlist-item-icon">
+                  <DownloadIcon />
+                </div>
+                <div className="playlist-item-info">
+                  <span className="playlist-item-name">Downloads</span>
+                  <span className="playlist-item-count">({downloadsSongs.length})</span>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })()
+        )}
+
+        {/* Genre-based playlists removed: Only 'All Music' remains as requested */}
 
         {/* User Playlists */}
         <div className="user-playlists">
@@ -665,52 +694,54 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 <div className="playlist-item-info">
                   <span className="playlist-item-name">
                     {playlist.name}
-                    {playlist.isQueryBased && <span className="query-indicator">🔍</span>}
                   </span>
                   <span className="playlist-item-count">({stats.tracks})</span>
                 </div>
-                <div className="playlist-actions">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleUSBExport(playlist);
-                    }}
-                    title="Export to USB"
-                    className="usb-export-btn"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M10 2v7.31"/>
-                      <path d="M15 2v7.31"/>
-                      <path d="M8 9.31V2"/>
-                      <path d="M17 9.31V2"/>
-                      <path d="M12 9.31V2"/>
-                      <path d="M2 9.31V2"/>
-                      <path d="M20 9.31V2"/>
-                      <path d="M2 9.31h20"/>
-                      <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      exportPlaylist(playlist);
-                    }}
-                    title="Export playlist"
-                  >
-                    <ExportIcon />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm(`Delete playlist "${playlist.name}"?`)) {
-                        onPlaylistDelete(playlist.id);
-                      }
-                    }}
-                    title="Delete playlist"
-                  >
-                    <DeleteIcon />
-                  </button>
-                </div>
+                {/* Only show action buttons for non-query playlists */}
+                {!playlist.isQueryBased && (
+                  <div className="playlist-actions">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUSBExport(playlist);
+                      }}
+                      title="Export to USB"
+                      className="usb-export-btn"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10 2v7.31"/>
+                        <path d="M15 2v7.31"/>
+                        <path d="M8 9.31V2"/>
+                        <path d="M17 9.31V2"/>
+                        <path d="M12 9.31V2"/>
+                        <path d="M2 9.31V2"/>
+                        <path d="M20 9.31V2"/>
+                        <path d="M2 9.31h20"/>
+                        <path d="M2 9.31v4.69a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9.31"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportPlaylist(playlist);
+                      }}
+                      title="Export playlist"
+                    >
+                      <ExportIcon />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete playlist "${playlist.name}"?`)) {
+                          onPlaylistDelete(playlist.id);
+                        }
+                      }}
+                      title="Delete playlist"
+                    >
+                      <DeleteIcon />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -726,6 +757,24 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           <FilterIcon />
           Create Playlist
         </button>
+        
+        {onCleanupPlaylists && (
+          <button 
+            className="create-playlist-btn cleanup-btn"
+            onClick={() => {
+              if (window.confirm('Clean up all playlists to remove duplicate songs? This action cannot be undone.')) {
+                onCleanupPlaylists();
+              }
+            }}
+            title="Remove duplicate songs from all playlists"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+              <path d="M10 11v6M14 11v6"/>
+            </svg>
+            Cleanup
+          </button>
+        )}
       </div>
 
 
@@ -752,8 +801,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                           }
                         }}
                       />
-                      <span className="song-name">{song.filename}</span>
-                      <span className="song-key">{song.camelot_key}</span>
+                      <span className="song-name">{song.title || song.filename}</span>
+                      <span className="song-key">{song.camelot_key || 'Unknown'}</span>
                     </label>
                   </div>
                 ))}

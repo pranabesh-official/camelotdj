@@ -5,7 +5,7 @@ import { AuthProvider } from "./services/AuthContext";
 import "./index.css";
 import * as serviceWorker from "./serviceWorker";
 
-console.log('CAMELOTDJ App starting...');
+console.log('CAMELOTDJ App starting..c.');
 const rootElement = document.getElementById("root");
 console.log('Root element:', rootElement);
 

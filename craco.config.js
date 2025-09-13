@@ -1,10 +1,56 @@
 const path = require('path');
+const webpack = require('webpack');
 require('dotenv').config();
 
 module.exports = {
     webpack: {
-        configure: {
-            target: 'web'
+        configure: (webpackConfig) => {
+            webpackConfig.target = 'web';
+
+            // Webpack 4 vs 5 compatibility for Node polyfills
+            const supportsFallback = webpackConfig.resolve && Object.prototype.hasOwnProperty.call(webpackConfig.resolve, 'fallback');
+
+            if (supportsFallback) {
+                // Webpack 5 style fallbacks
+                webpackConfig.resolve.fallback = {
+                    ...webpackConfig.resolve.fallback,
+                    "process": require.resolve("process/browser"),
+                    "util": require.resolve("util/"),
+                    "stream": require.resolve("stream-browserify"),
+                    "buffer": require.resolve("buffer/"),
+                    "path": require.resolve("path-browserify"),
+                    "fs": false,
+                    "os": false,
+                    "crypto": require.resolve("crypto-browserify")
+                };
+            } else {
+                // Webpack 4: use alias + node field
+                webpackConfig.resolve = webpackConfig.resolve || {};
+                webpackConfig.resolve.alias = {
+                    ...(webpackConfig.resolve.alias || {}),
+                    "util": require.resolve("util/"),
+                    "stream": require.resolve("stream-browserify"),
+                    "buffer": require.resolve("buffer/"),
+                    "path": require.resolve("path-browserify"),
+                    "crypto": require.resolve("crypto-browserify")
+                };
+                webpackConfig.node = {
+                    ...(webpackConfig.node || {}),
+                    fs: 'empty',
+                    os: 'empty'
+                };
+            }
+            
+            // Ensure plugins array exists and provide globals
+            webpackConfig.plugins = webpackConfig.plugins || [];
+            webpackConfig.plugins.push(
+                new webpack.ProvidePlugin({
+                    process: 'process/browser',
+                    Buffer: ['buffer', 'Buffer']
+                })
+            );
+            
+            return webpackConfig;
         }
     },
     env: {

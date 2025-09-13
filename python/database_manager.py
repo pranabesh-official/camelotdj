@@ -108,7 +108,9 @@ class DatabaseManager:
                 ('last_analysis_attempt', 'TEXT'),  # Timestamp of last analysis attempt
                 ('analysis_attempts', 'INTEGER DEFAULT 0'),  # Number of analysis attempts
                 ('file_hash', 'TEXT'),  # MD5 hash of file content for duplicate detection
-                ('prevent_reanalysis', 'BOOLEAN DEFAULT 0')  # Flag to prevent re-analysis
+                ('prevent_reanalysis', 'BOOLEAN DEFAULT 0'),  # Flag to prevent re-analysis
+                ('cover_art', 'TEXT'),  # Base64 encoded cover art
+                ('cover_art_extracted', 'BOOLEAN DEFAULT 0')  # Flag to track if cover art has been extracted
             ]
             
             for column_name, column_type in id3_columns:
@@ -220,7 +222,8 @@ class DatabaseManager:
                         genre = ?, composer = ?, tracknumber = ?, discnumber = ?, comment = ?,
                         initialkey = ?, bpm_from_tags = ?, website = ?, isrc = ?, language = ?,
                         organization = ?, copyright = ?, encodedby = ?, id3_metadata = ?,
-                        analysis_status = ?, id3_tags_written = ?, file_hash = ?, prevent_reanalysis = ?
+                        analysis_status = ?, id3_tags_written = ?, file_hash = ?, prevent_reanalysis = ?,
+                        cover_art = ?, cover_art_extracted = ?
                     WHERE id = ?
                 ''', (
                     file_data.get('filename', ''),
@@ -263,6 +266,8 @@ class DatabaseManager:
                     file_data.get('id3_tags_written', 0),
                     file_hash,
                     file_data.get('prevent_reanalysis', 0),
+                    file_data.get('cover_art', ''),
+                    file_data.get('cover_art_extracted', 0),
                     file_id
                 ))
             else:
@@ -282,8 +287,9 @@ class DatabaseManager:
                         genre, composer, tracknumber, discnumber, comment,
                         initialkey, bpm_from_tags, website, isrc, language,
                         organization, copyright, encodedby, id3_metadata,
-                        analysis_status, id3_tags_written, file_hash, prevent_reanalysis
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        analysis_status, id3_tags_written, file_hash, prevent_reanalysis,
+                        cover_art, cover_art_extracted
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     file_data.get('filename', ''),
                     file_data['file_path'],
@@ -324,7 +330,9 @@ class DatabaseManager:
                     file_data.get('analysis_status', 'pending'),
                     file_data.get('id3_tags_written', 0),
                     file_hash,
-                    file_data.get('prevent_reanalysis', 0)
+                    file_data.get('prevent_reanalysis', 0),
+                    file_data.get('cover_art', ''),
+                    file_data.get('cover_art_extracted', 0)
                 ))
                 file_id = cursor.lastrowid
                 if file_id is None:
@@ -1020,6 +1028,46 @@ class DatabaseManager:
             print(f"Error setting prevent_reanalysis flag: {str(e)}")
             return False
 
+    def update_cover_art(self, file_path: str, cover_art: str) -> bool:
+        """Update cover art for a music file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE music_files 
+                    SET cover_art = ?, cover_art_extracted = 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE file_path = ?
+                """, (cover_art, file_path))
+                
+                conn.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            print(f"Error updating cover art: {str(e)}")
+            return False
+
+    def get_cover_art(self, file_path: str) -> Optional[str]:
+        """Get cover art for a music file."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT cover_art, cover_art_extracted 
+                    FROM music_files 
+                    WHERE file_path = ?
+                """, (file_path,))
+                
+                result = cursor.fetchone()
+                if result and result[1]:  # cover_art_extracted is True
+                    return result[0]  # cover_art
+                return None
+                
+        except Exception as e:
+            print(f"Error getting cover art: {str(e)}")
+            return None
+
     def calculate_file_hash(self, file_path: str) -> str:
         """Calculate MD5 hash of file content for duplicate detection."""
         try:
@@ -1300,4 +1348,28 @@ class DatabaseManager:
                 
         except Exception as e:
             print(f"Error clearing playlist: {str(e)}")
+            return False
+
+    def clear_all_data(self) -> bool:
+        """Clear all data from the database (songs, playlists, settings)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Clear all tables in the correct order to avoid foreign key constraints
+                cursor.execute("DELETE FROM playlist_items")
+                cursor.execute("DELETE FROM playlists")
+                cursor.execute("DELETE FROM music_files")
+                cursor.execute("DELETE FROM app_settings")
+                cursor.execute("DELETE FROM scan_locations")
+                
+                # Reset auto-increment counters
+                cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('music_files', 'playlists', 'playlist_items', 'scan_locations')")
+                
+                conn.commit()
+                print("✅ All database data cleared successfully")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error clearing all database data: {str(e)}")
             return False

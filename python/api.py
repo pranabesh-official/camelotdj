@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, Response, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
+import time
 from graphene import ObjectType, String, Schema, Field, List, Mutation
 from flask_graphql import GraphQLView
 from calc import calc as real_calc
@@ -12,6 +13,7 @@ import json
 import time
 import tempfile
 import base64
+import math
 from urllib.parse import unquote
 import ytmusicapi
 from pytube import YouTube
@@ -29,6 +31,8 @@ from PIL import Image
 import io
 import platform
 import psutil
+from download_queue_manager import download_queue_manager, DownloadTask, DownloadPriority, DownloadStatus
+from automix_api import get_automix_api
 
 #
 # Notes on setting up a flask GraphQL server
@@ -141,14 +145,88 @@ if not apiSigningKey:
 # Initialize database manager
 db_manager = DatabaseManager()
 
+# Setup download queue manager callbacks
+def setup_download_queue_callbacks():
+    """Setup callbacks for the download queue manager"""
+    
+    def progress_callback(task):
+        """Handle progress updates from download queue"""
+        emit_progress(task.id, {
+            'stage': task.stage,
+            'progress': task.progress,
+            'message': task.message,
+            'quality': task.quality,
+            'format': task.format,
+            'timestamp': time.time(),
+            'percentage': task.progress
+        })
+    
+    def completion_callback(task):
+        """Handle download completion"""
+        print(f"🎵 Queue completion callback for {task.id}")
+        print(f"🎵 Task metadata keys: {list(task.metadata.keys()) if task.metadata else 'None'}")
+        
+        # Include song data from task metadata if available
+        completion_data = {
+            'stage': 'complete',
+            'progress': 100,
+            'message': 'Download complete!',
+            'quality': task.quality,
+            'format': task.format,
+            'timestamp': time.time(),
+            'percentage': 100,
+            'completed': True,
+            'file_size': task.file_size,
+            'duration': task.metadata.get('duration', 0)
+        }
+        
+        # Add song data if available in task metadata
+        if task.metadata and 'analysis_result' in task.metadata:
+            completion_data['song'] = task.metadata['analysis_result']
+            print(f"🎵 Including song data in completion callback: {task.metadata['analysis_result'].get('title', 'Unknown')}")
+        else:
+            print(f"🎵 No song data available in task metadata")
+            
+        emit_progress(task.id, completion_data)
+    
+    def error_callback(task):
+        """Handle download errors"""
+        emit_progress(task.id, {
+            'stage': 'error',
+            'progress': 0,
+            'message': task.error or 'Download failed',
+            'timestamp': time.time(),
+            'error': task.error
+        })
+    
+    # Register callbacks
+    download_queue_manager.add_progress_callback(progress_callback)
+    download_queue_manager.add_completion_callback(completion_callback)
+    download_queue_manager.add_error_callback(error_callback)
+
+# Initialize callbacks
+setup_download_queue_callbacks()
+
 app = Flask(__name__)
 app.add_url_rule("/graphql/", view_func=view_func)
 app.add_url_rule("/graphiql/", view_func=view_func) # for compatibility with other samples
 # Allow cross-origin requests from the embedded renderer with credentials and custom headers
 CORS(app, supports_credentials=True, resources={r"/*": {"origins": "*"}}, expose_headers=["X-Signing-Key"]) 
 
-# Initialize SocketIO for real-time communication
-socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+# Initialize SocketIO for real-time communication with robust configuration
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    logger=True, 
+    engineio_logger=True,
+    ping_timeout=30,
+    ping_interval=15,
+    max_http_buffer_size=1000000,
+    always_connect=True,
+    allow_upgrades=True,
+    transports=['polling', 'websocket'],  # Try polling first, then websocket
+    async_mode='threading'
+)
 # Utility: get signing key from any common location
 def get_request_signing_key():
     try:
@@ -168,19 +246,120 @@ def get_request_signing_key():
     except Exception:
         return None
 
+# Health check endpoint for monitoring database and service health
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Comprehensive health check endpoint"""
+    try:
+        start_time = time.time()
+        
+        # Check database connectivity and get stats
+        db_manager = DatabaseManager()
+        
+        # Get basic database stats
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get file count
+            cursor.execute("SELECT COUNT(*) FROM music_files")
+            file_count = cursor.fetchone()[0]
+            
+            # Get playlist count
+            cursor.execute("SELECT COUNT(*) FROM playlists")
+            playlist_count = cursor.fetchone()[0]
+            
+            # Get database size
+            cursor.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
+            db_size = cursor.fetchone()[0]
+            
+            # Check for recent errors
+            cursor.execute("SELECT COUNT(*) FROM music_files WHERE status = 'error' AND last_checked > datetime('now', '-1 hour')")
+            recent_errors = cursor.fetchone()[0]
+        
+        # Get system resources
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Calculate response time
+        response_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+        
+        # Determine overall health status
+        health_status = "healthy"
+        if recent_errors > 10:
+            health_status = "degraded"
+        if cpu_percent > 90 or memory.percent > 90 or disk.percent > 95:
+            health_status = "unhealthy"
+        if response_time > 5000:  # 5 seconds
+            health_status = "degraded"
+        
+        health_data = {
+            "status": health_status,
+            "timestamp": time.time(),
+            "response_time_ms": round(response_time, 2),
+            "database": {
+                "file_count": file_count,
+                "playlist_count": playlist_count,
+                "size_bytes": db_size,
+                "recent_errors": recent_errors,
+                "status": "connected"
+            },
+            "system": {
+                "cpu_percent": round(cpu_percent, 2),
+                "memory_percent": round(memory.percent, 2),
+                "memory_available_gb": round(memory.available / (1024**3), 2),
+                "disk_percent": round(disk.percent, 2),
+                "disk_free_gb": round(disk.free / (1024**3), 2)
+            },
+            "connection_pool": {
+                "active": 1,  # Placeholder - would need actual pool implementation
+                "idle": 0,
+                "total": 1
+            },
+            "services": {
+                "database": "healthy",
+                "music_analyzer": "healthy",
+                "download_queue": "healthy" if download_queue_manager.is_running else "stopped"
+            }
+        }
+        
+        # Return appropriate HTTP status based on health
+        if health_status == "healthy":
+            return jsonify(health_data), 200
+        elif health_status == "degraded":
+            return jsonify(health_data), 200  # Still operational
+        else:
+            return jsonify(health_data), 503  # Service unavailable
+            
+    except Exception as e:
+        error_response = {
+            "status": "unhealthy",
+            "timestamp": time.time(),
+            "error": str(e),
+            "database": {"status": "error"},
+            "system": {"status": "unknown"},
+            "services": {"status": "error"}
+        }
+        return jsonify(error_response), 503
+
 
 # Global store for active downloads
 active_downloads = {}
 
-# WebSocket event handlers
+# WebSocket event handlers with robust error handling
 @socketio.on('connect')
 def handle_connect():
     try:
         client_id = getattr(request, 'sid', 'unknown')
-        print(f"✅ Client connected: {client_id}")
-        emit('connected', {'status': 'Connected to download server'})
+        transport = getattr(request, 'transport', 'unknown')
+        print(f"✅ Client connected: {client_id} via {transport}")
+        emit('connected', {'status': 'Connected to download server', 'client_id': client_id, 'transport': transport})
     except Exception as e:
         print(f"⚠️ Connect handler error: {str(e)}")
+        try:
+            emit('error', {'message': 'Connection error occurred'})
+        except:
+            pass
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -192,6 +371,14 @@ def handle_disconnect():
             del active_downloads[client_id]
     except Exception as e:
         print(f"⚠️ Disconnect handler error: {str(e)}")
+
+@socketio.on('ping')
+def handle_ping():
+    """Handle ping from client"""
+    try:
+        emit('pong', {'timestamp': time.time()})
+    except Exception as e:
+        print(f"⚠️ Ping handler error: {str(e)}")
 
 @socketio.on('join_download')
 def handle_join_download(data):
@@ -230,15 +417,212 @@ def handle_get_usb_devices():
         print(f"⚠️ Error handling USB devices request: {e}")
         emit('usb_devices_error', {'error': str(e)})
 
+@socketio.on('pause_download')
+def handle_pause_download(data):
+    """Handle WebSocket request to pause a download"""
+    try:
+        download_id = data.get('download_id')
+        client_id = getattr(request, 'sid', 'unknown')
+        print(f"⏸️ Client {client_id} requested to pause download: {download_id}")
+        
+        if download_id in active_downloads:
+            # Update the download status to paused
+            active_downloads[download_id]['stage'] = 'paused'
+            active_downloads[download_id]['message'] = 'Download paused by user'
+            
+            emit_progress(download_id, {
+                'stage': 'paused',
+                'progress': active_downloads[download_id].get('progress', 0),
+                'message': 'Download paused by user'
+            })
+            print(f"✅ Download {download_id} paused successfully")
+        else:
+            print(f"⚠️ Download {download_id} not found in active downloads")
+            emit('download_error', {
+                'download_id': download_id,
+                'error': 'Download not found or already completed'
+            })
+    except Exception as e:
+        print(f"⚠️ Error pausing download: {e}")
+        emit('download_error', {
+            'download_id': data.get('download_id', 'unknown'),
+            'error': str(e)
+        })
+
+@socketio.on('resume_download')
+def handle_resume_download(data):
+    """Handle WebSocket request to resume a download"""
+    try:
+        download_id = data.get('download_id')
+        client_id = getattr(request, 'sid', 'unknown')
+        print(f"▶️ Client {client_id} requested to resume download: {download_id}")
+        
+        if download_id in active_downloads:
+            # Update the download status to resuming
+            active_downloads[download_id]['stage'] = 'downloading'
+            active_downloads[download_id]['message'] = 'Download resumed by user'
+            
+            emit_progress(download_id, {
+                'stage': 'downloading',
+                'progress': active_downloads[download_id].get('progress', 0),
+                'message': 'Download resumed by user'
+            })
+            print(f"✅ Download {download_id} resumed successfully")
+        else:
+            print(f"⚠️ Download {download_id} not found in active downloads")
+            emit('download_error', {
+                'download_id': download_id,
+                'error': 'Download not found or already completed'
+            })
+    except Exception as e:
+        print(f"⚠️ Error resuming download: {e}")
+        emit('download_error', {
+            'download_id': data.get('download_id', 'unknown'),
+            'error': str(e)
+        })
+
+@socketio.on('cancel_download')
+def handle_cancel_download(data):
+    """Handle WebSocket request to cancel a download"""
+    try:
+        download_id = data.get('download_id')
+        client_id = getattr(request, 'sid', 'unknown')
+        print(f"🚫 Client {client_id} requested to cancel download: {download_id}")
+        
+        if download_id in active_downloads:
+            # Remove from active downloads
+            del active_downloads[download_id]
+            
+            emit_progress(download_id, {
+                'stage': 'cancelled',
+                'progress': 0,
+                'message': 'Download cancelled by user'
+            })
+            print(f"✅ Download {download_id} cancelled successfully")
+        else:
+            print(f"⚠️ Download {download_id} not found in active downloads")
+            emit('download_error', {
+                'download_id': download_id,
+                'error': 'Download not found or already completed'
+            })
+    except Exception as e:
+        print(f"⚠️ Error cancelling download: {e}")
+        emit('download_error', {
+            'download_id': data.get('download_id', 'unknown'),
+            'error': str(e)
+        })
+
+def format_bytes(bytes_value):
+    """Format bytes into human readable format"""
+    if bytes_value == 0:
+        return "0 B"
+    k = 1024
+    sizes = ['B', 'KB', 'MB', 'GB']
+    i = int(math.floor(math.log(bytes_value) / math.log(k)))
+    return f"{bytes_value / (k ** i):.1f} {sizes[i]}"
+
 def emit_progress(download_id, progress_data):
-    """Emit download progress to all connected clients"""
-    print(f"📡 Emitting progress for {download_id}: {progress_data}")
-    active_downloads[download_id] = progress_data
-    socketio.emit('download_progress', {
-        'download_id': download_id,
-        **progress_data
-    })
-    print(f"✅ Progress emitted for {download_id}")
+    """Emit download progress to all connected clients with robust error handling"""
+    try:
+        # Validate and clean progress data
+        cleaned_data = validate_progress_data(progress_data)
+        
+        print(f"📡 Emitting progress for {download_id}: {cleaned_data}")
+        active_downloads[download_id] = cleaned_data
+        
+        # Create the message payload
+        message_payload = {
+            'download_id': download_id,
+            **cleaned_data
+        }
+        
+        # Use safe_emit for better error handling
+        if not safe_emit('download_progress', message_payload):
+            # If safe_emit fails, try sending essential data only
+            essential_data = {
+                'download_id': download_id,
+                'stage': cleaned_data.get('stage', 'unknown'),
+                'progress': cleaned_data.get('progress', 0),
+                'message': cleaned_data.get('message', ''),
+                'timestamp': cleaned_data.get('timestamp', time.time())
+            }
+            safe_emit('download_progress', essential_data)
+            
+            # Send additional completion data separately if needed
+            if cleaned_data.get('stage') == 'complete':
+                completion_data = {
+                    'download_id': download_id,
+                    'quality': cleaned_data.get('quality', ''),
+                    'format': cleaned_data.get('format', ''),
+                    'file_size': cleaned_data.get('file_size', 0),
+                    'duration': cleaned_data.get('duration', 0)
+                }
+                safe_emit('download_complete', completion_data)
+        
+        print(f"✅ Progress emitted for {download_id}")
+    except Exception as e:
+        print(f"⚠️ Error emitting progress for {download_id}: {str(e)}")
+        # Try to emit error to specific clients if possible
+        try:
+            socketio.emit('download_error', {
+                'download_id': download_id,
+                'error': f'Progress emission failed: {str(e)}'
+            })
+        except:
+            pass
+
+def validate_progress_data(data):
+    """Validate and clean progress data to prevent WebSocket issues"""
+    if not isinstance(data, dict):
+        return {}
+    
+    # Clean the data - remove any problematic values
+    cleaned = {}
+    for key, value in data.items():
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            cleaned[key] = value
+        elif isinstance(value, dict):
+            # Recursively clean nested dictionaries
+            cleaned[key] = validate_progress_data(value)
+        else:
+            # Convert other types to string
+            cleaned[key] = str(value)
+    
+    # Ensure required fields exist
+    if 'timestamp' not in cleaned:
+        cleaned['timestamp'] = time.time()
+    
+    # Validate string lengths to prevent frame issues
+    for key, value in cleaned.items():
+        if isinstance(value, str) and len(value) > 10000:  # 10KB string limit
+            cleaned[key] = value[:10000] + "..."
+            print(f"⚠️ Truncated large string field '{key}' to prevent WebSocket frame issues")
+    
+    return cleaned
+
+def safe_emit(event_name, data, room=None):
+    """Safely emit WebSocket events with error handling"""
+    try:
+        # Validate data before sending
+        if isinstance(data, dict):
+            data = validate_progress_data(data)
+        
+        # Check message size
+        message_size = len(str(data))
+        if message_size > 500000:  # 500KB limit
+            print(f"⚠️ Large message detected ({message_size} bytes), skipping emission")
+            return False
+        
+        # Emit the event
+        if room:
+            socketio.emit(event_name, data, room=room)
+        else:
+            socketio.emit(event_name, data)
+        
+        return True
+    except Exception as e:
+        print(f"⚠️ Error emitting {event_name}: {str(e)}")
+        return False
 
 # USB device detection and management
 def get_usb_devices():
@@ -882,21 +1266,37 @@ def upload_and_analyze():
             print(f"❌ Analysis failed for {file.filename}: {str(e)}")
             print(f"📋 Full error traceback:")
             traceback.print_exc()
+            
+            # Generate track_id even for error cases to prevent Firestore sync issues
+            try:
+                track_id = db_manager.generate_unique_track_id(permanent_path, file.filename)
+            except Exception as track_id_error:
+                print(f"⚠️ Failed to generate track_id for error case: {track_id_error}")
+                import time
+                track_id = f"error_{int(time.time())}"
+            
             return jsonify({
                 "error": f"Analysis failed: {str(e)}",
                 "status": "error",
                 "filename": file.filename,
-                "file_path": permanent_path
+                "file_path": permanent_path,
+                "track_id": track_id
             }), 500
             
     except Exception as e:
         import traceback
+        import time
         print(f"❌ Upload and analysis failed: {str(e)}")
         print(f"📋 Full error traceback:")
         traceback.print_exc()
+        
+        # Generate a fallback track_id for outer exception cases
+        track_id = f"error_{int(time.time())}"
+        
         return jsonify({
             "error": f"Upload and analysis failed: {str(e)}",
-            "status": "error"
+            "status": "error",
+            "track_id": track_id
         }), 500
 
 @app.route('/analyze-file', methods=['POST'])
@@ -987,7 +1387,37 @@ def get_library():
                 'file_size': file_record['file_size'],
                 'status': file_record['status'],
                 'analysis_date': file_record['analysis_date'],
-                'cue_points': json.loads(file_record['cue_points']) if file_record['cue_points'] else []
+                'cue_points': json.loads(file_record['cue_points']) if file_record['cue_points'] else [],
+                # ID3 metadata
+                'title': file_record.get('title'),
+                'artist': file_record.get('artist'),
+                'album': file_record.get('album'),
+                'albumartist': file_record.get('albumartist'),
+                'date': file_record.get('date'),
+                'year': file_record.get('year'),
+                'genre': file_record.get('genre'),
+                'composer': file_record.get('composer'),
+                'tracknumber': file_record.get('tracknumber'),
+                'discnumber': file_record.get('discnumber'),
+                'comment': file_record.get('comment'),
+                'initialkey': file_record.get('initialkey'),
+                'bpm_from_tags': file_record.get('bpm_from_tags'),
+                'website': file_record.get('website'),
+                'isrc': file_record.get('isrc'),
+                'language': file_record.get('language'),
+                'organization': file_record.get('organization'),
+                'copyright': file_record.get('copyright'),
+                'encodedby': file_record.get('encodedby'),
+                # Cover art
+                'cover_art': file_record.get('cover_art'),
+                'cover_art_extracted': bool(file_record.get('cover_art_extracted', 0)),
+                # Analysis tracking
+                'analysis_status': file_record.get('analysis_status', 'pending'),
+                'id3_tags_written': bool(file_record.get('id3_tags_written', 0)),
+                'last_analysis_attempt': file_record.get('last_analysis_attempt'),
+                'analysis_attempts': file_record.get('analysis_attempts', 0),
+                'file_hash': file_record.get('file_hash'),
+                'prevent_reanalysis': bool(file_record.get('prevent_reanalysis', 0))
             }
             songs.append(song)
         
@@ -1570,12 +2000,27 @@ def verify_audio_quality(file_path):
         print(f"❌ Quality verification failed: {str(e)}")
         return None
 
-def convert_to_320kbps_mp3(temp_path, final_path):
-    """Convert audio file to 320kbps MP3 format"""
+def convert_to_320kbps_mp3(temp_path, final_path, download_id=None):
+    """Convert audio file to 320kbps MP3 format (CBR) and verify.
+    We first try via pydub/ffmpeg; if the detected bitrate is < 320kbps
+    we force a second pass using a direct ffmpeg command with CBR flags.
+    """
     try:
         from pydub import AudioSegment
         
         print(f"🔄 Converting to guaranteed 320kbps MP3: {temp_path} -> {final_path}")
+        
+        # Emit conversion start progress
+        if download_id:
+            emit_progress(download_id, {
+                'stage': 'converting',
+                'progress': 92,
+                'message': 'Converting to 320kbps MP3...',
+                'quality': '320kbps',
+                'format': 'mp3',
+                'timestamp': time.time(),
+                'percentage': 92
+            })
         
         # Load audio file
         try:
@@ -1596,18 +2041,58 @@ def convert_to_320kbps_mp3(temp_path, final_path):
                 print(f"❌ Failed to move file: {str(move_error)}")
                 return False
         
-        # Export as MP3 with exactly 320kbps bitrate
-        print(f"🎧 Converting to 320kbps MP3 format: {final_path}")
+        # Export as MP3 with constant 320kbps using LAME
+        # Note: do NOT mix -q:a with -b:a when forcing CBR
+        print(f"🎧 Converting to 320kbps CBR MP3: {final_path}")
         audio.export(
-            final_path, 
-            format="mp3", 
+            final_path,
+            format="mp3",
             bitrate="320k",
-            parameters=["-q:a", "0"]  # Highest quality MP3 encoding
+            parameters=[
+                "-vn",  # no video
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-minrate", "320k",
+                "-maxrate", "320k",
+                "-bufsize", "64k",
+                "-ar", "44100",
+                "-ac", "2",
+                "-write_xing", "0"  # hint CBR by disabling Xing
+            ],
         )
         
         if os.path.exists(final_path):
             output_size = os.path.getsize(final_path)
-            print(f"✅ Successfully converted to 320kbps MP3 format: {final_path} ({output_size} bytes)")
+            print(f"✅ Initial MP3 conversion done: {final_path} ({output_size} bytes)")
+            # Verify bitrate; if < 320, force ffmpeg CBR encode
+            try:
+                actual = verify_audio_quality(final_path)
+            except Exception:
+                actual = None
+            if actual is None or actual < 320:
+                print(f"⚠️ Verified bitrate {actual}kbps < 320; forcing CBR re-encode via ffmpeg...")
+                try:
+                    import subprocess
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", final_path,
+                        "-vn",
+                        "-codec:a", "libmp3lame",
+                        "-b:a", "320k",
+                        "-minrate", "320k",
+                        "-maxrate", "320k",
+                        "-bufsize", "64k",
+                        "-ar", "44100",
+                        "-ac", "2",
+                        "-write_xing", "0",
+                        final_path + ".tmp.mp3"
+                    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    # atomically replace
+                    import os as _os
+                    _os.replace(final_path + ".tmp.mp3", final_path)
+                    actual2 = verify_audio_quality(final_path)
+                    print(f"🎯 Final verified bitrate after force CBR: {actual2}kbps")
+                except Exception as _e:
+                    print(f"❌ Force CBR re-encode failed: {_e}")
             return True
         else:
             print(f"❌ Conversion failed - output file not created")
@@ -1800,22 +2285,76 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
             if d['status'] == 'downloading':
                 total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
                 downloaded_bytes = d.get('downloaded_bytes', 0)
+                speed = d.get('speed', 0)
                 
                 if total_bytes > 0:
+                    # Enhanced progress calculation with more granular updates
                     progress = min(int((downloaded_bytes / total_bytes) * 90), 90)  # Cap at 90% for download
-                    emit_progress(download_id, {
+                    
+                    # Calculate ETA with better accuracy
+                    remaining_bytes = total_bytes - downloaded_bytes
+                    eta_seconds = remaining_bytes / speed if speed > 0 else 0
+                    
+                    # Format speed for display
+                    speed_mb = speed / (1024 * 1024) if speed > 0 else 0
+                    
+                    # Enhanced progress data with more details
+                    progress_data = {
                         'stage': 'downloading',
                         'progress': progress,
                         'message': f'Downloading... {progress}%',
                         'downloaded_bytes': downloaded_bytes,
                         'total_bytes': total_bytes,
-                        'speed': d.get('speed', 0)
-                    })
+                        'speed': speed,
+                        'speed_mb': speed_mb,
+                        'eta_seconds': eta_seconds,
+                        'fragment_index': d.get('fragment_index', 0),
+                        'fragment_count': d.get('fragment_count', 0),
+                        'quality': '320kbps',  # Target quality
+                        'format': 'mp3',
+                        'timestamp': time.time(),
+                        'percentage': progress,
+                        'bytes_per_second': speed,
+                        'remaining_bytes': remaining_bytes
+                    }
+                    
+                    # Emit progress with enhanced data
+                    emit_progress(download_id, progress_data)
+                else:
+                    # No total size available, show indeterminate progress
+                    progress_data = {
+                        'stage': 'downloading',
+                        'progress': 0,
+                        'message': f'Downloading... {format_bytes(downloaded_bytes)}',
+                        'downloaded_bytes': downloaded_bytes,
+                        'total_bytes': 0,
+                        'speed': speed,
+                        'speed_mb': speed / (1024 * 1024) if speed > 0 else 0,
+                        'quality': '320kbps',
+                        'format': 'mp3',
+                        'timestamp': time.time(),
+                        'percentage': 0,
+                        'bytes_per_second': speed,
+                        'remaining_bytes': 0
+                    }
+                    emit_progress(download_id, progress_data)
             elif d['status'] == 'finished':
                 emit_progress(download_id, {
-                    'stage': 'processing',
+                    'stage': 'converting',
                     'progress': 90,
-                    'message': 'Download complete, processing...'
+                    'message': 'Download complete, converting to MP3...',
+                    'quality': '320kbps',
+                    'format': 'mp3',
+                    'timestamp': time.time(),
+                    'percentage': 90
+                })
+            elif d['status'] == 'error':
+                emit_progress(download_id, {
+                    'stage': 'error',
+                    'progress': 0,
+                    'message': f'Download error: {d.get("error", "Unknown error")}',
+                    'timestamp': time.time(),
+                    'percentage': 0
                 })
         
         ydl_opts = {
@@ -1824,20 +2363,22 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
             'outtmpl': output_path,
             'noplaylist': True,
             'extractaudio': True,
-            'audioformat': 'mp3',
-            'audioquality': '320K',  # Force 320kbps
+            'audioformat': 'mp4',  # Keep as MP4 for later conversion to ensure 320kbps
+            'audioquality': '0',  # Best available quality
             'prefer_free_formats': False,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '320',
-            }],
+            'postprocessors': [],  # Don't convert yet, we'll handle it with pydub at 320kbps
             'writeinfojson': True,  # Extract metadata
             'writethumbnail': True,  # Download thumbnail for artwork
             'embedthumbnail': False,  # We'll handle artwork manually
             'quiet': False,
             'no_warnings': False,
             'progress_hooks': [progress_hook],
+            # Additional options for better compatibility
+            'extractor_retries': 3,
+            'fragment_retries': 3,
+            'retries': 3,
+            'socket_timeout': 30,
+            'http_chunk_size': 10485760,  # 10MB chunks
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1881,7 +2422,16 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
                 'message': 'Starting download...'
             })
             
-            ydl.download([url])
+            try:
+                ydl.download([url])
+            except Exception as download_exception:
+                print(f"❌ yt-dlp download exception: {str(download_exception)}")
+                emit_progress(download_id, {
+                    'stage': 'error',
+                    'progress': 0,
+                    'message': f'Download failed: {str(download_exception)}'
+                })
+                return False, metadata, None
             
             # Check for the actual downloaded file - yt-dlp might add .mp3 extension
             actual_output_path = output_path
@@ -1906,7 +2456,11 @@ def write_enhanced_metadata(file_path, metadata, download_id):
         emit_progress(download_id, {
             'stage': 'metadata',
             'progress': 95,
-            'message': 'Writing metadata and artwork...'
+            'message': 'Writing metadata and artwork...',
+            'quality': '320kbps',
+            'format': 'mp3',
+            'timestamp': time.time(),
+            'percentage': 95
         })
         
         # Load or create ID3 tags
@@ -2061,7 +2615,7 @@ def stream_youtube_audio(video_id):
         
         # Get stream URL using yt-dlp
         ydl_opts = {
-            'format': 'bestaudio',
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
             'quiet': True,
             'no_warnings': True,
         }
@@ -2081,18 +2635,44 @@ def stream_youtube_audio(video_id):
                 return jsonify({"error": "No audio stream available"}), 404
             
             # Sort by quality and get the best one
-            best_format = sorted(audio_formats, key=lambda x: x.get('abr', 0), reverse=True)[0]
+            best_format = sorted(audio_formats, key=lambda x: x.get('abr') or 0, reverse=True)[0]
             stream_url = best_format.get('url')
             
             if not stream_url:
                 return jsonify({"error": "Could not extract stream URL"}), 500
             
-            return jsonify({
-                "stream_url": stream_url,
-                "title": info.get('title', ''),
-                "duration": info.get('duration', 0),
-                "status": "success"
-            })
+            # Stream the audio directly
+            import requests
+            
+            # Get the audio stream from YouTube
+            stream_response = requests.get(stream_url, stream=True, timeout=30)
+            
+            if stream_response.status_code != 200:
+                return jsonify({"error": "Failed to fetch audio stream"}), 500
+            
+            # Set appropriate headers for audio streaming
+            def generate():
+                try:
+                    for chunk in stream_response.iter_content(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+                except Exception as e:
+                    print(f"❌ Stream generation error: {str(e)}")
+                    return
+            
+            # Return the audio stream with proper headers
+            return app.response_class(
+                generate(),
+                mimetype='audio/mpeg',
+                headers={
+                    'Content-Type': 'audio/mpeg',
+                    'Accept-Ranges': 'bytes',
+                    'Cache-Control': 'no-cache',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Range, Content-Type',
+                    'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
+                }
+            )
             
     except Exception as e:
         print(f"❌ Streaming error: {str(e)}")
@@ -2241,13 +2821,23 @@ def youtube_download():
                         "status": "error"
                     }), 500
             
-            # Export as MP3 with exactly 320kbps bitrate
-            print(f"🎧 Converting to 320kbps MP3 format: {final_path}")
+            # Export as MP3 with constant 320kbps using LAME
+            print(f"🎧 Converting to 320kbps CBR MP3: {final_path}")
             audio.export(
-                final_path, 
-                format="mp3", 
+                final_path,
+                format="mp3",
                 bitrate="320k",
-                parameters=["-q:a", "0"]  # Highest quality MP3 encoding
+                parameters=[
+                    "-vn",
+                    "-codec:a", "libmp3lame",
+                    "-b:a", "320k",
+                    "-minrate", "320k",
+                    "-maxrate", "320k",
+                    "-bufsize", "64k",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    "-write_xing", "0"
+                ],
             )
             
             # Verify the output file was created and has content
@@ -2353,6 +2943,9 @@ def youtube_download():
             analysis_result['youtube_url'] = url
             analysis_result['youtube_title'] = title
             analysis_result['youtube_artist'] = artist
+            # Add standard title and artist fields for frontend compatibility
+            analysis_result['title'] = title
+            analysis_result['artist'] = artist
             
             # Set bitrate information
             if actual_bitrate and actual_bitrate >= 300:  # Close to 320kbps
@@ -2481,8 +3074,13 @@ def youtube_download_enhanced():
         if not download_path:
             return jsonify({"error": "No download path provided"}), 400
         
+        # Create download path if it doesn't exist
         if not os.path.exists(download_path):
-            return jsonify({"error": "Download path does not exist"}), 400
+            try:
+                os.makedirs(download_path, exist_ok=True)
+                print(f"📁 Created download directory: {download_path}")
+            except Exception as e:
+                return jsonify({"error": f"Failed to create download path: {str(e)}"}), 400
             
         if not download_id:
             download_id = f"download_{int(time.time())}"
@@ -2520,9 +3118,11 @@ def youtube_download_enhanced():
         try:
             # Use enhanced yt-dlp download
             print(f"🔍 Starting enhanced download with yt-dlp...")
+            print(f"🔗 URL being processed: {url}")
             success, metadata, actual_temp_path = download_with_ytdlp_enhanced(url, temp_path, title, artist, download_id)
             
             if not success:
+                print(f"❌ Download failed for URL: {url}")
                 emit_progress(download_id, {
                     'stage': 'error',
                     'progress': 0,
@@ -2556,7 +3156,7 @@ def youtube_download_enhanced():
         
         conversion_success = False
         try:
-            conversion_success = convert_to_320kbps_mp3(temp_path, final_path)
+            conversion_success = convert_to_320kbps_mp3(temp_path, final_path, download_id)
         except Exception as conversion_error:
             print(f"❌ Conversion error: {str(conversion_error)}")
             emit_progress(download_id, {
@@ -2598,13 +3198,28 @@ def youtube_download_enhanced():
         emit_progress(download_id, {
             'stage': 'analyzing',
             'progress': 98,
-            'message': 'Analyzing music for key and BPM...'
+            'message': 'Analyzing music for key and BPM...',
+            'quality': '320kbps',
+            'format': 'mp3',
+            'timestamp': time.time(),
+            'percentage': 98
         })
         
         analysis_result = {}
         try:
             analysis_result = analyze_music_file(final_path)
             print(f"✅ Music analysis completed")
+            
+            # Emit analysis completion
+            emit_progress(download_id, {
+                'stage': 'analyzing',
+                'progress': 99,
+                'message': 'Analysis completed successfully',
+                'quality': '320kbps',
+                'format': 'mp3',
+                'timestamp': time.time(),
+                'percentage': 99
+            })
         except Exception as analysis_error:
             print(f"⚠️ Analysis failed: {str(analysis_error)}")
             # Continue without analysis
@@ -2628,6 +3243,16 @@ def youtube_download_enhanced():
         analysis_result['youtube_url'] = url
         analysis_result['youtube_title'] = title
         analysis_result['youtube_artist'] = artist
+        # Add standard title and artist fields for frontend compatibility
+        analysis_result['title'] = title
+        analysis_result['artist'] = artist
+
+        # Ensure a stable track_id for robust frontend updates/deduplication
+        try:
+            generated_track_id = db_manager.generate_unique_track_id(final_path, final_filename)
+            analysis_result['track_id'] = generated_track_id
+        except Exception as _e:
+            print(f"⚠️ Failed to generate track_id: {_e}")
         
         # Set bitrate information
         if actual_bitrate and actual_bitrate >= 300:  # Close to 320kbps
@@ -2668,11 +3293,30 @@ def youtube_download_enhanced():
                 'youtube_url': url,
                 'youtube_title': title,
                 'youtube_artist': artist,
-                'bitrate': analysis_result.get('bitrate', 320)
+                'bitrate': analysis_result.get('bitrate', 320),
+                'track_id': analysis_result.get('track_id')
             }
             db_id = db_manager.add_music_file(file_data)
             analysis_result['db_id'] = db_id
             print(f"💾 Saved to database with ID: {db_id}")
+
+            # Ensure 'Downloads' playlist exists and add this song
+            try:
+                playlists = db_manager.get_all_playlists()
+                downloads_playlist = next((p for p in playlists if p.get('name') == 'Downloads'), None)
+                if not downloads_playlist:
+                    downloads_playlist_id = db_manager.create_playlist(
+                        name='Downloads', description='Auto-added downloads', color='#4ecdc4',
+                        is_query_based=False, query_criteria=None
+                    )
+                else:
+                    downloads_playlist_id = downloads_playlist['id']
+                try:
+                    db_manager.add_song_to_playlist(downloads_playlist_id, int(db_id))
+                except Exception:
+                    pass
+            except Exception as _e:
+                print(f"⚠️ Failed to update Downloads playlist: {_e}")
         except Exception as e:
             print(f"⚠️ Failed to save to database: {str(e)}")
             # Continue without database save
@@ -2687,19 +3331,28 @@ def youtube_download_enhanced():
         
         # Final success progress
         final_bitrate = analysis_result.get('bitrate', 320)
-        emit_progress(download_id, {
-            'stage': 'complete',
-            'progress': 100,
-            'message': f'Download complete! {final_bitrate}kbps MP3 ready.',
-            'enhanced_features': {
-                'format': 'MP3',
-                'bitrate': f"{final_bitrate}kbps",
-                'metadata_enhanced': True,
-                'artwork_embedded': True,
-                'auto_analyzed': True,
-                'added_to_collection': True
-            }
-        })
+        
+        # Debug: Log the song payload being sent
+        print(f"🎵 Backend sending completion with song payload: {analysis_result.get('title')} by {analysis_result.get('artist')}")
+        print(f"🎵 Song payload keys: {list(analysis_result.keys())}")
+        
+        # Note: When using queue system, completion is handled by queue manager
+        # Only emit direct completion if not using queue (for backward compatibility)
+        if '_' not in download_id:  # Queue downloads have format "trackId_timestamp"
+            emit_progress(download_id, {
+                'stage': 'complete',
+                'progress': 100,
+                'message': f'Download complete! {final_bitrate}kbps MP3 ready.',
+                'quality': f"{final_bitrate}kbps",
+                'format': 'mp3',
+                'timestamp': time.time(),
+                'percentage': 100,
+                'completed': True,
+                'file_size': analysis_result.get('file_size', 0),
+                'duration': analysis_result.get('duration', 0),
+                'song': analysis_result,
+                'download_path': download_path
+            })
         
         print(f"🎉 Enhanced download completed successfully: {final_path}")
         
@@ -2732,6 +3385,321 @@ def youtube_download_enhanced():
         })
         return jsonify({
             "error": f"Enhanced download failed: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/download-queued', methods=['POST'])
+def youtube_download_queued():
+    """Add a download to the queue system for efficient multi-download handling."""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        url = request_json.get('url')
+        title = request_json.get('title', 'Unknown Title')
+        artist = request_json.get('artist', 'Unknown Artist')
+        album = request_json.get('album')
+        download_path = request_json.get('download_path')
+        download_id = request_json.get('download_id')
+        priority = request_json.get('priority', 'normal')
+        
+        if not url:
+            return jsonify({"error": "No URL provided"}), 400
+            
+        if not download_path:
+            return jsonify({"error": "No download path provided"}), 400
+        
+        # Create download path if it doesn't exist
+        if not os.path.exists(download_path):
+            try:
+                os.makedirs(download_path, exist_ok=True)
+                print(f"📁 Created download directory: {download_path}")
+            except Exception as e:
+                return jsonify({"error": f"Failed to create download path: {str(e)}"}), 400
+        
+        if not download_id:
+            download_id = f"download_{int(time.time())}_{hash(url) % 10000}"
+        
+        # Convert priority string to enum
+        priority_map = {
+            'low': DownloadPriority.LOW,
+            'normal': DownloadPriority.NORMAL,
+            'high': DownloadPriority.HIGH,
+            'urgent': DownloadPriority.URGENT
+        }
+        download_priority = priority_map.get(priority.lower(), DownloadPriority.NORMAL)
+        
+        # Create download task
+        task = DownloadTask(
+            id=download_id,
+            url=url,
+            title=title,
+            artist=artist,
+            album=album,
+            download_path=download_path,
+            priority=download_priority,
+            quality=request_json.get('quality', '320kbps'),
+            format=request_json.get('format', 'mp3')
+        )
+        
+        # Add to queue
+        task_id = download_queue_manager.add_download(task)
+        
+        print(f"🚀 Added download to queue: {title} by {artist} (Priority: {priority})")
+        print(f"📁 Download path: {download_path}")
+        print(f"🔗 URL: {url}")
+        print(f"🆔 Download ID: {task_id}")
+        
+        # Get queue stats
+        stats = download_queue_manager.get_queue_stats()
+        
+        return jsonify({
+            "status": "queued",
+            "message": "Download added to queue successfully",
+            "download_id": task_id,
+            "queue_stats": stats,
+            "estimated_wait_time": stats['queued'] * 30  # Rough estimate: 30 seconds per queued item
+        })
+        
+    except Exception as e:
+        print(f"❌ Queue download error: {str(e)}")
+        return jsonify({
+            "error": f"Failed to add download to queue: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/status', methods=['GET'])
+def get_queue_status():
+    """Get the current status of the download queue"""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        stats = download_queue_manager.get_queue_stats()
+        all_downloads = download_queue_manager.get_all_downloads()
+        
+        # Convert downloads to serializable format
+        downloads_list = []
+        for task_id, task in all_downloads.items():
+            downloads_list.append({
+                'id': task.id,
+                'title': task.title,
+                'artist': task.artist,
+                'album': task.album,
+                'status': task.status.value,
+                'progress': task.progress,
+                'stage': task.stage,
+                'message': task.message,
+                'priority': task.priority.value,
+                'quality': task.quality,
+                'format': task.format,
+                'file_size': task.file_size,
+                'start_time': task.start_time,
+                'end_time': task.end_time,
+                'error': task.error,
+                'retry_count': task.retry_count,
+                'can_cancel': task.can_cancel,
+                'can_retry': task.can_retry,
+                'created_at': task.created_at
+            })
+        
+        return jsonify({
+            "status": "success",
+            "queue_stats": stats,
+            "downloads": downloads_list
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to get queue status: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/cancel', methods=['POST'])
+def cancel_queued_download():
+    """Cancel a download in the queue"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        success = download_queue_manager.cancel_download(download_id)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Download cancelled successfully"
+            })
+        else:
+            return jsonify({
+                "error": "Download not found or could not be cancelled",
+                "status": "error"
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to cancel download: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/retry', methods=['POST'])
+def retry_queued_download():
+    """Retry a failed download"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        success = download_queue_manager.retry_download(download_id)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Download retry initiated successfully"
+            })
+        else:
+            return jsonify({
+                "error": "Download not found or could not be retried",
+                "status": "error"
+            }), 404
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to retry download: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/clear', methods=['POST'])
+def clear_queue():
+    """Clear completed or failed downloads from the queue"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        clear_type = request_json.get('type', 'completed')  # 'completed', 'failed', or 'all'
+        
+        if clear_type == 'completed':
+            download_queue_manager.clear_completed_downloads()
+            message = "Cleared completed downloads"
+        elif clear_type == 'failed':
+            download_queue_manager.clear_failed_downloads()
+            message = "Cleared failed downloads"
+        elif clear_type == 'all':
+            download_queue_manager.clear_completed_downloads()
+            download_queue_manager.clear_failed_downloads()
+            message = "Cleared all completed and failed downloads"
+        else:
+            return jsonify({"error": "Invalid clear type. Use 'completed', 'failed', or 'all'"}), 400
+        
+        return jsonify({
+            "status": "success",
+            "message": message
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to clear queue: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/queue/settings', methods=['POST'])
+def update_queue_settings():
+    """Update queue settings like max concurrent downloads"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        max_concurrent = request_json.get('max_concurrent_downloads')
+        
+        if max_concurrent is not None:
+            if not isinstance(max_concurrent, int) or max_concurrent < 1 or max_concurrent > 10:
+                return jsonify({"error": "max_concurrent_downloads must be an integer between 1 and 10"}), 400
+            
+            download_queue_manager.update_max_concurrent_downloads(max_concurrent)
+            
+            return jsonify({
+                "status": "success",
+                "message": f"Updated max concurrent downloads to {max_concurrent}",
+                "max_concurrent_downloads": max_concurrent
+            })
+        else:
+            return jsonify({"error": "No settings provided"}), 400
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to update queue settings: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/youtube/cancel-download', methods=['POST'])
+def youtube_cancel_download():
+    """Cancel an active download"""
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        download_id = request_json.get('download_id')
+        
+        if not download_id:
+            return jsonify({"error": "No download ID provided"}), 400
+        
+        print(f"🚫 Cancelling download: {download_id}")
+        
+        # Emit cancellation progress
+        emit_progress(download_id, {
+            'stage': 'cancelled',
+            'progress': 0,
+            'message': 'Download cancelled by user'
+        })
+        
+        # Remove from active downloads if it exists
+        if download_id in active_downloads:
+            del active_downloads[download_id]
+            print(f"✅ Removed download {download_id} from active downloads")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Download cancelled successfully",
+            "download_id": download_id
+        })
+        
+    except Exception as e:
+        print(f"❌ Cancel download error: {str(e)}")
+        return jsonify({
+            "error": f"Failed to cancel download: {str(e)}",
             "status": "error"
         }), 500
 
@@ -2781,7 +3749,29 @@ def hello():
     return jsonify({
         "status": "success",
         "message": "Backend is running",
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "websocket_status": "ready",
+        "features": {
+            'music_analysis': True,
+            'youtube_download': True,
+            'usb_export': True,
+            'websocket': True
+        }
+    })
+
+@app.route('/websocket/status', methods=['GET'])
+def websocket_status():
+    """WebSocket connection status endpoint"""
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    return jsonify({
+        'websocket_status': 'ready',
+        'active_connections': len(active_downloads),
+        'active_downloads': list(active_downloads.keys()),
+        'timestamp': time.time()
     })
 
 # Settings Management Endpoints
@@ -2867,6 +3857,371 @@ def clear_download_path():
             "error": f"Failed to clear download path: {str(e)}",
             "status": "error"
         }), 500
+
+# AI Agent related endpoints - commented out for this version
+# @app.route('/settings/gemini-api-key', methods=['GET'])
+# def get_gemini_api_key():
+#     """Get the saved Gemini API key setting."""
+#     
+#     # Check signing key
+#     signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Try to get from database settings
+#         api_key = db_manager.get_setting('gemini_api_key')
+#         
+#         return jsonify({
+#             'api_key': api_key,
+#             'status': 'success'
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({
+#             "error": f"Failed to get Gemini API key: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# AI Agent related endpoints - commented out for this version
+# @app.route('/settings/gemini-api-key', methods=['POST'])
+# def save_gemini_api_key():
+#     """Save the Gemini API key setting."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         api_key = request_json.get('api_key')
+#         
+#         if not api_key:
+#             return jsonify({"error": "No API key provided"}), 400
+#         
+#         # Basic validation - check if it looks like a valid API key
+#         if len(api_key.strip()) < 10:
+#             return jsonify({"error": "Invalid API key format"}), 400
+#             
+#         # Save to database settings
+#         db_manager.set_setting('gemini_api_key', api_key.strip())
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': 'Gemini API key saved successfully'
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({
+#             "error": f"Failed to save Gemini API key: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# AI Agent related endpoints - commented out for this version
+# @app.route('/settings/gemini-api-key', methods=['DELETE'])
+# def clear_gemini_api_key():
+#     """Clear the Gemini API key setting."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Clear from database settings
+#         db_manager.delete_setting('gemini_api_key')
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': 'Gemini API key cleared successfully'
+#         })
+#         
+#     except Exception as e:
+#         return jsonify({
+#             "error": f"Failed to clear Gemini API key: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# AI Agent endpoints - commented out for this version
+# @app.route('/ai-agent/create-playlist', methods=['POST'])
+# def ai_create_playlist():
+#     """Create an AI-generated playlist based on user request."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         data = request_json
+#         user_request = data.get('user_request')
+#         genre = data.get('genre', 'electronic')
+#         bpm_min = data.get('bpm_min', 120)
+#         bpm_max = data.get('bpm_max', 130)
+#         target_count = data.get('target_count', 10)
+#         download_path = data.get('download_path')
+#         
+#         if not user_request:
+#             return jsonify({"error": "User request is required"}), 400
+#         
+#         if not download_path:
+#             return jsonify({"error": "Download path is required"}), 400
+#         
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path=download_path,
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Start playlist creation using AI agent
+#         try:
+#             task_id = ai_agent.create_playlist(
+#                 user_request=user_request,
+#                 genre=genre,
+#                 bpm_range=(bpm_min, bpm_max),
+#                 target_count=target_count,
+#                 download_path=download_path
+#             )
+#             
+#             return jsonify({
+#                 'status': 'success',
+#                 'message': 'AI playlist creation started',
+#                 'task_id': task_id
+#             })
+#         except Exception as e:
+#             print(f"Error starting AI playlist creation: {e}")
+#             return jsonify({
+#                 'error': f'Failed to start AI playlist creation: {str(e)}',
+#                 'status': 'error'
+#             }), 500
+#         
+#     except Exception as e:
+#         print(f"Error in AI playlist creation: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to start AI playlist creation: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# @app.route('/ai-agent/task/<task_id>', methods=['GET'])
+# def ai_get_task_status(task_id):
+#     """Get status of an AI agent task."""
+#     
+#     # Check signing key
+#     signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path="/tmp",  # Dummy path for status check
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Get task progress
+#         progress = ai_agent.get_playlist_progress(task_id)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'task_progress': progress
+#         })
+#         
+#     except Exception as e:
+#         print(f"Error getting AI task status: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to get task status: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# @app.route('/ai-agent/task/<task_id>/pause', methods=['POST'])
+# def ai_pause_task(task_id):
+#     """Pause an AI agent task."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path="/tmp",  # Dummy path for pause/resume
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Pause task
+#         ai_agent.pause_playlist_creation(task_id)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': 'Task paused successfully'
+#         })
+#         
+#     except Exception as e:
+#         print(f"Error pausing AI task: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to pause task: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# @app.route('/ai-agent/task/<task_id>/resume', methods=['POST'])
+# def ai_resume_task(task_id):
+#     """Resume an AI agent task."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path="/tmp",  # Dummy path for pause/resume
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Resume task
+#         ai_agent.resume_playlist_creation(task_id)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': 'Task resumed successfully'
+#         })
+#         
+#     except Exception as e:
+#         print(f"Error resuming AI task: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to resume task: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# @app.route('/ai-agent/task/<task_id>/cancel', methods=['POST'])
+# def ai_cancel_task(task_id):
+#     """Cancel an AI agent task."""
+#     
+#     # Check signing key
+#     request_json = request.get_json() or {}
+#     signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path="/tmp",  # Dummy path for cancel
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Cancel task
+#         ai_agent.cancel_playlist_creation(task_id)
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'message': 'Task cancelled successfully'
+#         })
+#         
+#     except Exception as e:
+#         print(f"Error cancelling AI task: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to cancel task: {str(e)}",
+#             "status": "error"
+#         }), 500
+
+# @app.route('/ai-agent/active-sessions', methods=['GET'])
+# def ai_get_active_sessions():
+#     """Get all active AI agent sessions."""
+#     
+#     # Check signing key
+#     signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
+#     if signing_key != apiSigningKey:
+#         return jsonify({"error": "invalid signature"}), 401
+#     
+#     try:
+#         # Get Gemini API key
+#         gemini_api_key = db_manager.get_setting('gemini_api_key')
+#         if not gemini_api_key:
+#             return jsonify({"error": "Gemini API key not configured"}), 400
+#         
+#         # Import AI agent
+#         from ai_playlist_agent import AIPlaylistAgent
+#         
+#         # Create AI agent
+#         ai_agent = AIPlaylistAgent(
+#             api_key=gemini_api_key,
+#             download_path="/tmp",  # Dummy path
+#             api_port=args.apiport,
+#             signing_key=apiSigningKey
+#         )
+#         
+#         # Get active sessions
+#         sessions = ai_agent.get_active_sessions()
+#         
+#         return jsonify({
+#             'status': 'success',
+#             'active_sessions': sessions
+#         })
+#         
+#     except Exception as e:
+#         print(f"Error getting active AI sessions: {str(e)}")
+#         return jsonify({
+#             "error": f"Failed to get active sessions: {str(e)}",
+#             "status": "error"
+#         }), 500
 
 @app.route('/waveform/<filename>', methods=['GET'])
 def serve_waveform(filename):
@@ -3366,6 +4721,43 @@ def test_database():
         return jsonify({
             'status': 'error',
             'database_connected': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/database/clear-all', methods=['POST'])
+def clear_all_database_data():
+    """Clear all data from the database (songs, playlists, settings)."""
+    
+    # Check signing key
+    signing_key = request.headers.get('X-Signing-Key') or request.json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        print("🗑️ Clearing all database data...")
+        
+        # Clear all data using database manager
+        success = db_manager.clear_all_data()
+        
+        if success:
+            print("✅ Database cleared successfully")
+            return jsonify({
+                'status': 'success',
+                'message': 'All database data cleared successfully'
+            })
+        else:
+            print("❌ Failed to clear database")
+            return jsonify({
+                'status': 'error',
+                'error': 'Failed to clear database data'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Database clear failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
             'error': str(e)
         }), 500
 
@@ -4083,12 +5475,213 @@ def force_update_song_tags():
             "status": "error"
         }), 500
 
+@app.route('/library/extract-cover-art', methods=['POST', 'OPTIONS'])
+def extract_cover_art():
+    """Extract cover art from MP3 file and return as base64 encoded image."""
+    
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-Signing-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        file_path = data.get('file_path')
+        
+        print(f"🖼️ Extracting cover art from: {file_path}")
+        
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return jsonify({"error": "File not found"}), 404
+        
+        # Check if cover art already exists in database
+        existing_cover_art = db_manager.get_cover_art(file_path)
+        if existing_cover_art:
+            print(f"✅ Cover art already exists in database for: {file_path}")
+            return jsonify({
+                'status': 'success',
+                'cover_art': existing_cover_art,
+                'mime_type': 'image/jpeg',  # Default assumption
+                'from_cache': True
+            })
+        
+        # Extract cover art using mutagen
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3, APIC
+            import base64
+            import io
+            
+            # Load MP3 file with ID3 tags
+            audio = MP3(file_path, ID3=ID3)
+            
+            if audio.tags is None:
+                print(f"⚠️ No ID3 tags found in: {file_path}")
+                return jsonify({
+                    'status': 'no_tags',
+                    'message': 'No ID3 tags found in file',
+                    'cover_art': None
+                })
+            
+            print(f"📋 Found ID3 tags in: {file_path}")
+            print(f"📋 Available tags: {list(audio.tags.keys())}")
+            
+            # Look for cover art (APIC frames)
+            cover_art = None
+            mime_type = 'image/jpeg'  # Default
+            
+            for key in audio.tags.keys():
+                if key.startswith('APIC:'):
+                    apic = audio.tags[key]
+                    print(f"🖼️ Found APIC frame: {key}, type: {apic.type}, mime: {apic.mime}")
+                    
+                    # Prefer cover (front) but accept any image
+                    if apic.type == 3 or cover_art is None:  # Cover (front) or first image found
+                        # Convert to base64
+                        cover_art = base64.b64encode(apic.data).decode('utf-8')
+                        mime_type = apic.mime or 'image/jpeg'
+                        print(f"✅ Successfully extracted cover art ({len(apic.data)} bytes, {mime_type})")
+                        
+                        # If this is a cover (front), we're done
+                        if apic.type == 3:
+                            break
+            
+            if cover_art:
+                # Save cover art to database
+                if db_manager.update_cover_art(file_path, cover_art):
+                    print(f"✅ Cover art saved to database for: {file_path}")
+                else:
+                    print(f"⚠️ Failed to save cover art to database for: {file_path}")
+                
+                return jsonify({
+                    'status': 'success',
+                    'cover_art': cover_art,
+                    'mime_type': mime_type,
+                    'size': len(base64.b64decode(cover_art)),
+                    'from_cache': False
+                })
+            else:
+                print(f"⚠️ No cover art found in: {file_path}")
+                return jsonify({
+                    'status': 'no_cover_art',
+                    'message': 'No cover art found in file',
+                    'cover_art': None
+                })
+                
+        except ImportError:
+            print(f"❌ Mutagen library not available")
+            return jsonify({
+                'error': 'mutagen library not available',
+                'status': 'error'
+            }), 500
+        except Exception as extract_error:
+            print(f"❌ Failed to extract cover art: {str(extract_error)}")
+            return jsonify({
+                'error': f'Failed to extract cover art: {str(extract_error)}',
+                'status': 'error'
+            }), 500
+        
+    except Exception as e:
+        print(f"❌ Error extracting cover art: {str(e)}")
+        return jsonify({
+            "error": f"Failed to extract cover art: {str(e)}",
+            "status": "error"
+        }), 500
+
+@app.route('/library/update-cover-art', methods=['POST', 'OPTIONS'])
+def update_cover_art():
+    """Update cover art in database for a music file."""
+    
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-Signing-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
+    # Check signing key
+    request_json = request.get_json() or {}
+    signing_key = request.headers.get('X-Signing-Key') or request_json.get('signingkey')
+    if signing_key != apiSigningKey:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    try:
+        data = request_json
+        file_path = data.get('file_path')
+        cover_art = data.get('cover_art')
+        
+        if not file_path:
+            return jsonify({"error": "No file path provided"}), 400
+        
+        if not cover_art:
+            return jsonify({"error": "No cover art provided"}), 400
+        
+        # Update cover art in database
+        if db_manager.update_cover_art(file_path, cover_art):
+            print(f"✅ Cover art updated in database for: {file_path}")
+            return jsonify({
+                'status': 'success',
+                'message': 'Cover art updated successfully'
+            })
+        else:
+            print(f"❌ Failed to update cover art in database for: {file_path}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to update cover art in database'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error updating cover art: {str(e)}")
+        return jsonify({
+            "error": f"Failed to update cover art: {str(e)}",
+            "status": "error"
+        }), 500
+
+# Auto Mix API Endpoints
+@app.route('/automix/next-track', methods=['POST'])
+def automix_next_track():
+    """Get the next track recommendation for automix."""
+    automix_api = get_automix_api()
+    return automix_api.get_next_track(request)
+
+@app.route('/automix/analyze-playlist', methods=['POST'])
+def automix_analyze_playlist():
+    """Analyze a playlist for automix compatibility."""
+    automix_api = get_automix_api()
+    return automix_api.analyze_playlist(request)
+
+@app.route('/automix/ai-status', methods=['GET'])
+def automix_ai_status():
+    """Get the current status of the AI system."""
+    automix_api = get_automix_api()
+    return automix_api.get_ai_status(request)
+
+@app.route('/automix/transition-types', methods=['GET'])
+def automix_transition_types():
+    """Get available transition types for automix."""
+    automix_api = get_automix_api()
+    return automix_api.get_transition_types(request)
+
 if __name__ == "__main__":
     print(f"🎆 Starting Enhanced Mixed In Key API Server with WebSocket support...")
     print(f"📞 Port: {args.apiport}")
     print(f"🔐 Signing Key: {args.signingkey}")
     print(f"🔌 WebSocket: Enabled for real-time download progress")
     print(f"🎧 Enhanced Features: 320kbps MP3, metadata extraction, auto-analysis")
+    print(f"🤖 Auto Mix: AI-powered track selection with smollm2-135M")
     
     # Run with SocketIO support
     socketio.run(

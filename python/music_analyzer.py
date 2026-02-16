@@ -6,12 +6,14 @@ from mutagen.id3 import ID3, COMM, ID3NoHeaderError  # type: ignore
 import os
 
 # Try to import Essentia with proper error handling
-try:
-    import essentia.standard as es  # type: ignore
-    ESSENTIA_AVAILABLE = True
-except ImportError:
-    ESSENTIA_AVAILABLE = False
-    es = None
+# try:
+#     import essentia.standard as es  # type: ignore
+#     ESSENTIA_AVAILABLE = True
+# except ImportError:
+#     ESSENTIA_AVAILABLE = False
+#     es = None
+ESSENTIA_AVAILABLE = False
+es = None
 
 class MusicAnalyzer:
     """

@@ -61,11 +61,11 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const [filterTempo, setFilterTempo] = useState<string>('');
   const [filterGenre, setFilterGenre] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [editingCell, setEditingCell] = useState<{songId: string, field: string} | null>(null);
+  const [editingCell, setEditingCell] = useState<{ songId: string, field: string } | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
   const [deletingSongs, setDeletingSongs] = useState<Set<string>>(new Set());
   const [duplicateFilter, setDuplicateFilter] = useState<'all' | 'duplicates' | 'unique'>('all');
-  
+
   // Metadata editor state
   const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
   const [editingSong, setEditingSong] = useState<Song | null>(null);
@@ -107,7 +107,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
   } => {
     const now = Date.now();
     const cached = coverArtValidation.get(song.id);
-    
+
     // Return cached validation if it's recent (within 5 minutes)
     if (cached && (now - cached.lastValidated) < 300000) {
       return cached;
@@ -129,14 +129,14 @@ const TrackTable: React.FC<TrackTableProps> = ({
       validation.displayData = null;
     } else {
       validation.hasData = true;
-      
+
       // Ultra-permissive approach - try to show any data that looks like an image
       let displayData = song.cover_art;
-      
+
       try {
         // Check if it already has a data URL prefix
         const hasDataUrlPrefix = /^data:image\/(jpeg|jpg|png|gif|webp|bmp|tiff);base64,/.test(song.cover_art);
-        
+
         if (!hasDataUrlPrefix) {
           // Try to fix by adding data URL prefix if it looks like raw base64
           if (song.cover_art.match(/^[A-Za-z0-9+/=]+$/)) {
@@ -164,17 +164,17 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
     // Cache the validation result
     setCoverArtValidation(prev => new Map(prev.set(song.id, validation)));
-    
+
     return validation;
   };
 
   // Get cover art display data with ultra-permissive validation
   const getCoverArtDisplayData = (song: Song) => {
     const validation = validateCoverArt(song);
-    
+
     // Ultra-permissive: show any cover art data that exists
     const shouldShow = validation.hasData && validation.displayData !== null;
-    
+
     return {
       ...validation,
       shouldShow: shouldShow,
@@ -206,26 +206,26 @@ const TrackTable: React.FC<TrackTableProps> = ({
   useEffect(() => {
     const autoExtractCoverArt = async () => {
       if (isProcessing) return; // Prevent concurrent processing
-      
+
       // Use validation layer to determine which songs need processing
       const songsToProcess = songs.filter(song => {
         if (!song.file_path || extractingCoverArt.has(song.id) || processedSongs.has(song.id)) {
           return false;
         }
-        
+
         const displayData = getCoverArtDisplayData(song);
         return displayData.shouldExtract;
       });
-      
+
       if (songsToProcess.length === 0) return;
-      
+
       console.log(`🖼️ Found ${songsToProcess.length} songs needing cover art extraction`);
       setIsProcessing(true);
-      
+
       try {
         // Mark songs as being processed to prevent duplicate processing
         setProcessedSongs(prev => new Set([...prev, ...songsToProcess.slice(0, 3).map(s => s.id)]));
-        
+
         for (const song of songsToProcess.slice(0, 3)) { // Limit to 3 concurrent extractions
           // Only extract if we haven't hit the concurrent limit
           if (extractingCoverArt.size < 3) {
@@ -274,10 +274,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
           cover_art: undefined
         } as EnhancedSong;
       }
-      
+
       // Calculate accurate bitrate from multiple sources
       let displayBitrate = song.bitrate;
-      
+
       // If bitrate is already provided and seems accurate, use it
       if (displayBitrate && displayBitrate > 0) {
         // Ensure it's a reasonable value
@@ -291,7 +291,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
         // Calculate from file size and duration
         // Formula: (file_size_bytes * 8) / (duration_seconds * 1000) = kbps
         const calculatedBitrate = Math.round((song.file_size * 8) / (song.duration * 1000));
-        
+
         // Validate calculated bitrate is reasonable
         if (calculatedBitrate > 32 && calculatedBitrate < 1000) {
           displayBitrate = calculatedBitrate;
@@ -303,24 +303,24 @@ const TrackTable: React.FC<TrackTableProps> = ({
         // Default to 320kbps for downloaded/analyzed files
         displayBitrate = 320;
       }
-      
+
       // Ensure bitrate is within reasonable bounds
       if (displayBitrate < 32) displayBitrate = 128;
       if (displayBitrate > 320) displayBitrate = 320;
-      
+
       return {
         ...song,
         // Ensure we have proper artist and title from the song object first
         artist: song.artist || (song.filename && song.filename.includes(' - ') ? song.filename.split(' - ')[0] : 'Unknown Artist'),
-        title: song.title || (song.filename && song.filename.includes(' - ') ? 
-          song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
+        title: song.title || (song.filename && song.filename.includes(' - ') ?
+          song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') :
           song.filename ? song.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title'),
         tempo: song.bpm ? (song.bpm < 100 ? 'Slow' : song.bpm < 130 ? 'Medium' : 'Fast') : 'Unknown',
-        genre: song.energy_level && song.bpm ? 
+        genre: song.energy_level && song.bpm ?
           (song.energy_level > 7 ? 'Tech House' :
-           song.energy_level > 5 ? 'House' :
-           song.bpm && song.bpm > 140 ? 'Techno' :
-           'Minimal / Deep Tech') : 'Unknown',
+            song.energy_level > 5 ? 'House' :
+              song.bpm && song.bpm > 140 ? 'Techno' :
+                'Minimal / Deep Tech') : 'Unknown',
         sharp: song.key && typeof song.key === 'string' && song.key.includes('#') ? '#' : song.key && typeof song.key === 'string' && song.key.includes('m') ? 'm' : '',
         bitrate_display: displayBitrate,
         comment: `${song.camelot_key || 'Unknown'} - Energy ${song.energy_level || 'Unknown'}`,
@@ -334,11 +334,11 @@ const TrackTable: React.FC<TrackTableProps> = ({
   useEffect(() => {
     if (enhancedSongs.length > 0) {
       console.log('🎵 Songs loaded, checking cover art validation status...');
-      
+
       // Debug: Check if any songs have cover art data at all
       const songsWithCoverArt = enhancedSongs.filter(song => song.cover_art && song.cover_art.trim() !== '');
       console.log(`📊 Found ${songsWithCoverArt.length} songs with cover art data out of ${enhancedSongs.length} total songs`);
-      
+
       if (songsWithCoverArt.length > 0) {
         console.log('🔍 Sample cover art data:', {
           filename: songsWithCoverArt[0].filename,
@@ -347,7 +347,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
           hasDataUrlPrefix: songsWithCoverArt[0].cover_art?.startsWith('data:image/')
         });
       }
-      
+
       logCoverArtValidationStatus();
     }
   }, [enhancedSongs.length]); // Only log when number of songs changes
@@ -390,13 +390,13 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
     if (showCompatibleOnly && selectedSong && selectedSong.camelot_key) {
       const compatible = getCompatibleSongs(selectedSong.camelot_key);
-      filtered = filtered.filter(song => 
+      filtered = filtered.filter(song =>
         compatible.some(comp => comp.id === song.id)
       );
     }
 
     if (searchTerm) {
-      filtered = filtered.filter(song => 
+      filtered = filtered.filter(song =>
         (song.artist && song.artist.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.title && song.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (song.filename && song.filename.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -475,40 +475,40 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
   const saveEdit = async (song: Song) => {
     if (!editingCell || !onSongUpdate) return;
-    
+
     const { field } = editingCell;
     let newValue: any = editingValue;
-    
+
     // Convert value based on field type
     if (field === 'bpm' || field === 'energy_level' || field === 'bitrate') {
       newValue = Number(editingValue) || 0;
     }
-    
+
     // Update the song
     const updatedSong = {
       ...song,
       [field]: newValue
     };
-    
+
     // Update local state via parent component
     onSongUpdate(updatedSong);
-    
+
     // Also update backend API
     try {
       await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Signing-Key': apiSigningKey },
-        body: JSON.stringify({ 
-          song_id: song.id, 
-          filename: song.filename, 
-          file_path: song.file_path, 
-          metadata: { [field]: newValue } 
+        body: JSON.stringify({
+          song_id: song.id,
+          filename: song.filename,
+          file_path: song.file_path,
+          metadata: { [field]: newValue }
         })
       });
     } catch (err) {
       console.error(`Failed to persist ${field} update to backend:`, err);
     }
-    
+
     cancelEditing();
   };
 
@@ -540,9 +540,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
         />
       );
     }
-    
+
     return (
-      <span 
+      <span
         className={`editable-cell ${className || ''}`}
         onClick={() => onSongUpdate && startEditing(song.id, field, value)}
         title={onSongUpdate ? 'Click to edit' : ''}
@@ -561,12 +561,12 @@ const TrackTable: React.FC<TrackTableProps> = ({
   const extractCoverArt = async (song: Song) => {
     // Enhanced validation using validation layer
     const displayData = getCoverArtDisplayData(song);
-    
+
     if (!song.file_path || extractingCoverArt.has(song.id)) {
       console.log(`🚫 Skipping cover art extraction for ${song.filename} - no file path or already being processed`);
       return;
     }
-    
+
     // Only extract if validation indicates it's needed
     if (!displayData.shouldExtract) {
       console.log(`🚫 Skipping cover art extraction for ${song.filename} - validation indicates no extraction needed`);
@@ -589,9 +589,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
       const response = await fetch(`http://127.0.0.1:${apiPort}/library/extract-cover-art`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          'X-Signing-Key': apiSigningKey 
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Signing-Key': apiSigningKey
         },
         body: JSON.stringify({ file_path: song.file_path }),
         signal: controller.signal
@@ -602,41 +602,41 @@ const TrackTable: React.FC<TrackTableProps> = ({
       if (response.ok) {
         const data = await response.json();
         console.log(`Cover art extraction response for ${song.filename}:`, data);
-        
+
         if (data.status === 'success' && data.cover_art) {
           console.log(`✅ Successfully extracted cover art for: ${song.filename}${data.from_cache ? ' (from cache)' : ''}`);
-          
+
           // Update the song with cover art
-          const updatedSong = { 
-            ...song, 
+          const updatedSong = {
+            ...song,
             cover_art: data.cover_art,
             cover_art_extracted: true
           };
           if (onSongUpdate) {
             await onSongUpdate(updatedSong);
           }
-          
+
           // Also update the database directly to ensure persistence
           try {
             await fetch(`http://127.0.0.1:${apiPort}/library/update-cover-art`, {
               method: 'POST',
-              headers: { 
-                'Content-Type': 'application/json', 
-                'X-Signing-Key': apiSigningKey 
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Signing-Key': apiSigningKey
               },
-              body: JSON.stringify({ 
-                file_path: song.file_path, 
-                cover_art: data.cover_art 
+              body: JSON.stringify({
+                file_path: song.file_path,
+                cover_art: data.cover_art
               })
             });
             console.log('✅ Cover art saved to database for:', song.filename);
           } catch (dbError) {
             console.warn('⚠️ Failed to save cover art to database:', dbError);
           }
-          
+
           // Mark as processed since we successfully got cover art
           setProcessedSongs(prev => new Set([...prev, song.id]));
-          
+
           // Show success state briefly
           setCoverArtSuccess(prev => new Set([...prev, song.id]));
           setTimeout(() => {
@@ -646,20 +646,20 @@ const TrackTable: React.FC<TrackTableProps> = ({
               return newSet;
             });
           }, 2000);
-          
+
           // Add a small delay to ensure database update is complete
           await new Promise(resolve => setTimeout(resolve, 100));
-          
+
         } else if (data.status === 'no_cover_art') {
           console.log(`⚠️ No cover art found in: ${song.filename}`);
           // Don't mark as extracted if no cover art found - allow retry
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No cover art found in file']]));
-          
+
         } else if (data.status === 'no_tags') {
           console.log(`⚠️ No ID3 tags found in: ${song.filename}`);
           // Don't mark as extracted if no tags found - allow retry
           setCoverArtErrors(prev => new Map([...prev, [song.id, 'No ID3 tags found']]));
-          
+
         } else {
           console.error(`❌ Cover art extraction failed for: ${song.filename}`, data);
           setCoverArtErrors(prev => new Map([...prev, [song.id, data.error || 'Extraction failed']]));
@@ -700,12 +700,12 @@ const TrackTable: React.FC<TrackTableProps> = ({
       // onSongUpdate will handle both local state update and Firestore sync
       await onSongUpdate(updatedSong);
     }
-    
+
     // Update the songs array with the new data
-    const updatedSongs = songs.map(s => 
+    const updatedSongs = songs.map(s =>
       s.id === updatedSong.id ? updatedSong : s
     );
-    
+
     // Note: The parent component (App.tsx) now handles both local state update
     // and Firestore database synchronization via the onSongUpdate function
   };
@@ -713,56 +713,56 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // SVG Icon components for professional look
   const PlayIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M8 5v14l11-7z"/>
+      <path d="M8 5v14l11-7z" />
     </svg>
   );
-  
+
   const EditIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
     </svg>
   );
-  
+
   const DeleteIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
     </svg>
   );
-  
+
   const MusicIcon = () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
     </svg>
   );
-  
+
   const ResetIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+      <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
     </svg>
   );
 
   // Professional playlist action icons
   const USBExportIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M7 2C5.9 2 5 2.9 5 4v2h2V4h10v2h2V4c0-1.1-.9-2-2-2H7zm-2 4v12c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6H5zm2 2h10v8H7V8zm2 2v4h6v-4H9z"/>
-      <path d="M9 10h6v2H9v-2z"/>
-      <path d="M8 1h8v1H8V1z"/>
+      <path d="M7 2C5.9 2 5 2.9 5 4v2h2V4h10v2h2V4c0-1.1-.9-2-2-2H7zm-2 4v12c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6H5zm2 2h10v8H7V8zm2 2v4h6v-4H9z" />
+      <path d="M9 10h6v2H9v-2z" />
+      <path d="M8 1h8v1H8V1z" />
     </svg>
   );
 
   const M3UExportIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/>
-      <path d="M14 2v6h6"/>
-      <path d="M16 13H8"/>
-      <path d="M16 17H8"/>
-      <path d="M10 9H8"/>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+      <path d="M14 2v6h6" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+      <path d="M10 9H8" />
     </svg>
   );
 
   const DeletePlaylistIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
     </svg>
   );
 
@@ -816,20 +816,20 @@ const TrackTable: React.FC<TrackTableProps> = ({
   // Check if all cover art extraction is complete using validation layer
   const isCoverArtExtractionComplete = useMemo(() => {
     if (enhancedSongs.length === 0) return true;
-    
+
     // Check if any songs are still being processed
     const songsBeingProcessed = extractingCoverArt.size > 0;
-    
+
     // Check if any songs still need processing using validation layer
     const songsNeedingProcessing = enhancedSongs.filter(song => {
       if (!song.file_path || extractingCoverArt.has(song.id) || processedSongs.has(song.id)) {
         return false;
       }
-      
+
       const displayData = getCoverArtDisplayData(song);
       return displayData.shouldExtract;
     });
-    
+
     return songsNeedingProcessing.length === 0 && !songsBeingProcessed;
   }, [enhancedSongs, extractingCoverArt, processedSongs, coverArtValidation]);
 
@@ -861,7 +861,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          
+
           <div className="filters">
             <select value={filterKey} onChange={(e) => setFilterKey(e.target.value)}>
               <option value="">Key</option>
@@ -885,7 +885,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
 
             <select value={filterEnergy} onChange={(e) => setFilterEnergy(e.target.value)}>
               <option value=""> Energy</option>
-              {[1,2,3,4,5,6,7,8,9,10].map(level => (
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(level => (
                 <option key={level} value={level}>{level}</option>
               ))}
             </select>
@@ -896,8 +896,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 <option key={genre} value={genre}>{genre}</option>
               ))}
             </select>
-            
-            <button 
+
+            <button
               className="reset-btn"
               onClick={() => {
                 setFilterKey('');
@@ -917,12 +917,12 @@ const TrackTable: React.FC<TrackTableProps> = ({
             </button>
 
 
-            
+
             {/* Playlist Actions - only show when a playlist is selected */}
             {selectedPlaylist && (
               <>
                 {onUSBExport && (
-                  <button 
+                  <button
                     className="playlist-action-btn usb-export-btn"
                     onClick={() => onUSBExport(selectedPlaylist)}
                     title="Export playlist to USB"
@@ -930,9 +930,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     <USBExportIcon />
                   </button>
                 )}
-                
+
                 {onExportPlaylist && (
-                  <button 
+                  <button
                     className="playlist-action-btn export-btn"
                     onClick={() => onExportPlaylist(selectedPlaylist)}
                     title="Export playlist as M3U file"
@@ -940,9 +940,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
                     <M3UExportIcon />
                   </button>
                 )}
-                
+
                 {onPlaylistDelete && (
-                  <button 
+                  <button
                     className="playlist-action-btn delete-btn"
                     onClick={() => {
                       if (window.confirm(`Delete playlist "${selectedPlaylist.name}"?`)) {
@@ -965,7 +965,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
           <thead>
             <tr>
               <th className="cover-art-header">Cover Art</th>
-              <th className="sortable" onClick={() => handleSort('filename')}>
+              <th className="sortable artist-header" onClick={() => handleSort('filename')}>
                 Artist
                 {sortField === 'filename' && (
                   <span className={`sort-indicator ${sortDirection}`}>
@@ -973,15 +973,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th className="sortable" onClick={() => handleSort('filename')}>
-                Title
-                {sortField === 'filename' && (
-                  <span className={`sort-indicator ${sortDirection}`}>
-                    {sortDirection === 'asc' ? '↑' : '↓'}
-                  </span>
-                )}
-              </th>
-              <th className="sortable" onClick={() => handleSort('camelot_key')}>
+              <th className="title-header">Title</th>
+              <th className="sortable key-header" onClick={() => handleSort('camelot_key')}>
                 Key
                 {sortField === 'camelot_key' && (
                   <span className={`sort-indicator ${sortDirection}`}>
@@ -989,7 +982,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th className="sortable" onClick={() => handleSort('bpm')}>
+              <th className="sortable tempo-header" onClick={() => handleSort('bpm')}>
                 Tempo
                 {sortField === 'bpm' && (
                   <span className={`sort-indicator ${sortDirection}`}>
@@ -997,8 +990,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th>Standard</th>
-              <th className="sortable" onClick={() => handleSort('energy_level')}>
+              <th className="standard-header">Standard</th>
+              <th className="sortable energy-header" onClick={() => handleSort('energy_level')}>
                 Energy
                 {sortField === 'energy_level' && (
                   <span className={`sort-indicator ${sortDirection}`}>
@@ -1006,7 +999,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-              <th className="sortable" onClick={() => handleSort('bitrate_display')}>
+              <th className="sortable bitrate-header" onClick={() => handleSort('bitrate_display')}>
                 kbps
                 {sortField === 'bitrate_display' && (
                   <span className={`sort-indicator ${sortDirection}`}>
@@ -1014,20 +1007,18 @@ const TrackTable: React.FC<TrackTableProps> = ({
                   </span>
                 )}
               </th>
-                              <th>Comment</th>
-                <th>Rating</th>
-                <th className="actions-header">Actions</th>
+              <th className="comment-header">Comment</th>
+              <th className="rating-header">Rating</th>
+              <th className="actions-header">Actions</th>
             </tr>
           </thead>
           <tbody>
             {sortedAndFilteredSongs.map((song, index) => (
               <tr
                 key={song.id}
-                className={`${
-                  selectedSong && selectedSong.id === song.id ? 'selected' : ''
-                } ${
-                  currentlyPlaying && currentlyPlaying.id === song.id ? 'playing' : ''
-                }`}
+                className={`${selectedSong && selectedSong.id === song.id ? 'selected' : ''
+                  } ${currentlyPlaying && currentlyPlaying.id === song.id ? 'playing' : ''
+                  }`}
                 onClick={() => onSongSelect(song)}
                 onDoubleClick={() => handleRowDoubleClick(song)}
                 title="Double-click to edit metadata"
@@ -1071,8 +1062,8 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 <td className="title-cell">
                   <div className="title-content">
                     <span className="title-text">
-                      {song.title || (song.filename && song.filename.includes(' - ') ? 
-                        song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') : 
+                      {song.title || (song.filename && song.filename.includes(' - ') ?
+                        song.filename.split(' - ')[1]?.replace(/\.[^/.]+$/, '') || song.filename.replace(/\.[^/.]+$/, '') :
                         song.filename ? song.filename.replace(/\.[^/.]+$/, '') : 'Unknown Title')
                       }
                     </span>
@@ -1083,7 +1074,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                 </td>
                 <td className="key-cell">
                   {song.camelot_key && (
-                    <span 
+                    <span
                       className="key-badge"
                       style={{ backgroundColor: getKeyColor(song.camelot_key) }}
                     >
@@ -1103,9 +1094,9 @@ const TrackTable: React.FC<TrackTableProps> = ({
                       const bg = getEnergyColor(song.energy_level);
                       const fg = getContrastingTextColor(bg);
                       return (
-                        <span 
+                        <span
                           className="energy-indicator"
-                          style={{ 
+                          style={{
                             backgroundColor: bg,
                             color: fg,
                             boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)'
@@ -1141,10 +1132,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
                             e.stopPropagation();
                             // Create updated song with new rating
                             const optimistic = { ...song, rating: star } as any;
-                            
+
                             // Update local state via parent component (which now also updates Firestore)
                             onSongUpdate && onSongUpdate(optimistic);
-                            
+
                             // Also update backend API
                             try {
                               await fetch(`http://127.0.0.1:${apiPort}/library/update-metadata`, {
@@ -1183,29 +1174,29 @@ const TrackTable: React.FC<TrackTableProps> = ({
                       </span>
                     )}
                     {false && (
-                    <button 
-                      className="action-btn play-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSongPlay(song);
-                      }}
-                      title="Play track"
-                    >
-                      <PlayIcon />
-                    </button>
+                      <button
+                        className="action-btn play-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSongPlay(song);
+                        }}
+                        title="Play track"
+                      >
+                        <PlayIcon />
+                      </button>
                     )}
                     {false && (
-                    <button 
-                      className="action-btn edit-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingSong(song);
-                        setMetadataEditorOpen(true);
-                      }}
-                      title="Edit metadata"
-                    >
-                      <EditIcon />
-                    </button>
+                      <button
+                        className="action-btn edit-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingSong(song);
+                          setMetadataEditorOpen(true);
+                        }}
+                        title="Edit metadata"
+                      >
+                        <EditIcon />
+                      </button>
                     )}
                     {((songIdToGroupSize.get(song.id) || 1) > 1) && (
                       <button
@@ -1239,7 +1230,7 @@ const TrackTable: React.FC<TrackTableProps> = ({
                         Keep · remove dups
                       </button>
                     )}
-                    <button 
+                    <button
                       className="action-btn delete-btn"
                       disabled={deletingSongs.has(song.id)}
                       onClick={async (e) => {
@@ -1280,10 +1271,10 @@ const TrackTable: React.FC<TrackTableProps> = ({
           </tbody>
         </table>
       </div>
-      
+
       {sortedAndFilteredSongs.length === 0 && (
         <div className="empty-state">
-          
+
         </div>
       )}
 

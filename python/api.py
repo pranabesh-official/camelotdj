@@ -42,7 +42,8 @@ import time
 import tempfile
 import base64
 import math
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
+import re
 import ytmusicapi
 from pytube import YouTube
 import yt_dlp
@@ -1935,6 +1936,55 @@ def youtube_search():
         if not query:
             return jsonify({"error": "No search query provided"}), 400
         
+        # Check if query is a YouTube URL
+        video_id = extract_video_id(query)
+        
+        if video_id:
+            print(f"🔗 Detected YouTube URL, fetching metadata for ID: {video_id}")
+            try:
+                # Get song details using ytmusicapi
+                song_details = ytmusic.get_song(video_id)
+                
+                # Extract metadata from song details
+                video_details = song_details.get('videoDetails', {})
+                
+                # Format duration
+                duration_seconds = int(video_details.get('lengthSeconds', 0))
+                minutes = duration_seconds // 60
+                seconds = duration_seconds % 60
+                duration_text = f"{minutes}:{seconds:02d}"
+                
+                # Get thumbnail
+                thumbnails = video_details.get('thumbnail', {}).get('thumbnails', [])
+                thumbnail_url = thumbnails[-1]['url'] if thumbnails else ''
+                
+                # Get artist
+                artist_name = video_details.get('author', 'Unknown Artist')
+                
+                # Create track object
+                track = {
+                    'id': video_id,
+                    'title': video_details.get('title', 'Unknown Title'),
+                    'artist': artist_name,
+                    'album': '',  # Single video usually doesn't have album info readily available in this format
+                    'duration': duration_text,
+                    'thumbnail': thumbnail_url,
+                    'url': f"https://music.youtube.com/watch?v={video_id}"
+                }
+                
+                print(f"✅ Found track from URL: {track['title']}")
+                
+                return jsonify({
+                    "tracks": [track],
+                    "total": 1,
+                    "status": "success"
+                })
+                
+            except Exception as url_error:
+                print(f"⚠️ Failed to get song details for ID {video_id}: {url_error}")
+                # Fallback to search if direct lookup fails
+                pass
+
         # Search YouTube Music
         print(f"🔍 Searching YouTube Music for: {query}")
         search_results = ytmusic.search(query, filter='songs', limit=20)
@@ -1995,6 +2045,33 @@ def youtube_search():
             "error": f"Search failed: {str(e)}",
             "status": "error"
         }), 500
+
+
+def extract_video_id(url):
+    """Extract YouTube video ID from URL"""
+    if not url:
+        return None
+    
+    # Common YouTube URL patterns
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})',
+        r'(?:music\.youtube\.com\/watch\?v=)([0-9A-Za-z_-]{11})'
+    ]
+    
+    # Clean up URL
+    url = url.strip()
+    
+    # Check if it looks like a URL
+    if not ('youtube.com' in url or 'youtu.be' in url):
+        return None
+        
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+            
+    return None
 
 # YouTube Download Helper Functions
 def verify_audio_quality(file_path):

@@ -2310,7 +2310,7 @@ def download_with_ytdlp(url, output_path, title, artist):
             'user_agent': random.choice(user_agents),
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web', 'ios'],
+                    'player_client': ['android'],
                     'player_skip': ['webpage', 'configs'],
                 }
             },
@@ -2551,9 +2551,8 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id, p
             # YouTube-specific extractor arguments to bypass restrictions
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web', 'ios'],
+                    'player_client': ['android'],
                     'player_skip': ['webpage', 'configs'],
-                    'skip': ['hls', 'dash'],
                 }
             },
             # HTTP headers for better compatibility
@@ -2810,7 +2809,7 @@ def download_with_pytube(url, output_path, title, artist):
 
 @app.route('/youtube/stream/<video_id>', methods=['GET'])
 def stream_youtube_audio(video_id):
-    """Stream YouTube audio for preview without downloading."""
+    """Stream YouTube audio for preview without downloading with robust workarounds."""
     
     # Check signing key
     signing_key = request.headers.get('X-Signing-Key') or request.args.get('signingkey')
@@ -2820,17 +2819,42 @@ def stream_youtube_audio(video_id):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # Get stream URL using yt-dlp
+        # Check for cookie file
+        cookie_file = os.path.expanduser('~/youtube_cookies.txt')
+        has_cookies = os.path.exists(cookie_file)
+        
+        # Rotate user agents
+        import random
+        user_agents = [
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ]
+        
+        # Select a user agent
+        selected_user_agent = random.choice(user_agents)
+        
+        # Get stream URL using yt-dlp with enhanced options
         ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
             'quiet': True,
             'no_warnings': True,
+            'nocheckcertificate': True,
+            'user_agent': selected_user_agent,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
         }
         
+        if has_cookies:
+            ydl_opts['cookiefile'] = cookie_file
+            print(f"✅ Preview streaming using cookies from: {cookie_file}")
+            
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Check if info extraction was successful
             if not info:
                 return jsonify({"error": "Could not extract video information"}), 404
             
@@ -2848,41 +2872,54 @@ def stream_youtube_audio(video_id):
             if not stream_url:
                 return jsonify({"error": "Could not extract stream URL"}), 500
             
-            # Stream the audio directly
+            # Stream the audio directly with Range support if requested
             import requests
             
+            headers = {
+                'User-Agent': selected_user_agent,
+                'Referer': 'https://www.youtube.com/',
+            }
+            if 'Range' in request.headers:
+                headers['Range'] = request.headers.get('Range')
+                
             # Get the audio stream from YouTube
-            stream_response = requests.get(stream_url, stream=True, timeout=30)
+            stream_response = requests.get(stream_url, headers=headers, stream=True, timeout=30)
             
-            if stream_response.status_code != 200:
-                return jsonify({"error": "Failed to fetch audio stream"}), 500
+            # Use 206 for progressive download/seeking if range was requested
+            status_code = stream_response.status_code
             
-            # Set appropriate headers for audio streaming
             def generate():
                 try:
-                    for chunk in stream_response.iter_content(chunk_size=8192):
+                    for chunk in stream_response.iter_content(chunk_size=16384):
                         if chunk:
                             yield chunk
                 except Exception as e:
-                    print(f"❌ Stream generation error: {str(e)}")
+                    print(f"❌ Preview stream generation error: {str(e)}")
                     return
             
-            # Return the audio stream with proper headers
+            # Forward headers from YouTube
+            response_headers = {
+                'Content-Type': stream_response.headers.get('Content-Type', 'audio/mpeg'),
+                'Accept-Ranges': 'bytes',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Range, Content-Type',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+                'Cache-Control': 'no-cache'
+            }
+            
+            if 'Content-Length' in stream_response.headers:
+                response_headers['Content-Length'] = stream_response.headers['Content-Length']
+            if 'Content-Range' in stream_response.headers:
+                response_headers['Content-Range'] = stream_response.headers['Content-Range']
+                
             return app.response_class(
                 generate(),
-                mimetype='audio/mpeg',
-                headers={
-                    'Content-Type': 'audio/mpeg',
-                    'Accept-Ranges': 'bytes',
-                    'Cache-Control': 'no-cache',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Headers': 'Range, Content-Type',
-                    'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
-                }
+                status=status_code,
+                headers=response_headers
             )
             
     except Exception as e:
-        print(f"❌ Streaming error: {str(e)}")
+        print(f"❌ Preview streaming error: {str(e)}")
         return jsonify({
             "error": f"Failed to get stream: {str(e)}",
             "status": "error"

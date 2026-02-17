@@ -166,6 +166,19 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     // UI state
     const [error, setError] = useState<string | null>(null);
     const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
+    const [currentTrack, setCurrentTrack] = useState<YouTubeTrack | null>(null);
+
+    // Update currentTrack when currentlyPlayingId changes
+    useEffect(() => {
+        if (currentlyPlayingId) {
+            const track = searchResults.find(t => t.id === currentlyPlayingId);
+            if (track) {
+                setCurrentTrack(track);
+            }
+        } else {
+            setCurrentTrack(null);
+        }
+    }, [currentlyPlayingId, searchResults]);
     const [isProgressBarExpanded, setIsProgressBarExpanded] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
@@ -1238,949 +1251,257 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
             {/* Ultra-Elegant Global Audio Player */}
-            {currentlyPlayingId && (
+            {/* Professional Bottom-Attached Audio Player */}
+            {currentTrack && (
                 <div
-                    className="elegant-player"
+                    className="professional-player"
                     style={{
                         position: 'fixed',
-                        bottom: '32px',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        background: 'linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(30, 39, 50, 0.95))',
-                        borderRadius: '24px',
-                        padding: '24px 32px 28px 32px',
-                        boxShadow: `
-                            0 32px 80px rgba(0, 0, 0, 0.4),
-                            0 8px 32px rgba(0, 0, 0, 0.2),
-                            0 0 0 1px rgba(255, 255, 255, 0.05),
-                            inset 0 1px 0 rgba(255, 255, 255, 0.1)
-                        `,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        background: 'rgba(13, 17, 23, 0.98)',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                        boxShadow: '0 -4px 32px rgba(0, 0, 0, 0.6)',
                         backdropFilter: 'blur(24px) saturate(180%)',
-                        zIndex: 1000,
-                        minWidth: '480px',
-                        maxWidth: '720px',
-                        width: '92vw',
+                        zIndex: 2000,
+                        height: '84px',
+                        width: '100%',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '20px',
-                        transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
-                        cursor: 'grab',
+                        transition: 'all 0.3s ease',
                         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
                     }}
-                    onTouchStart={handleTouchStart}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={handleTouchEnd}
                 >
-                    {/* Elegant Swipe Indicator */}
-                    <div style={{
-                        width: '56px',
-                        height: '6px',
-                        background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.8), rgba(139, 92, 246, 0.8))',
-                        borderRadius: '6px',
-                        margin: '0 auto -6px auto',
-                        transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-                        opacity: isProgressBarExpanded ? 0 : 0.9,
-                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
-                        position: 'relative'
-                    }}>
+                    {/* Full-width Progress Bar at the top */}
+                    <div
+                        style={{
+                            width: '100%',
+                            height: '4px',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            cursor: 'pointer',
+                            position: 'relative'
+                        }}
+                        onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = e.clientX - rect.left;
+                            const progress = x / rect.width;
+                            seekTo(progress * audioState.duration);
+                        }}
+                        onMouseMove={(e) => {
+                            if (!isDragging) {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const x = e.clientX - rect.left;
+                                const hoverProgress = x / rect.width;
+                                seekTo(hoverProgress * audioState.duration, true);
+                            }
+                        }}
+                        onMouseLeave={() => !isDragging && clearSeekPreview()}
+                    >
+                        {/* Buffer progress */}
                         <div style={{
+                            width: `${audioState.bufferProgress}%`,
+                            height: '100%',
+                            background: 'rgba(255, 255, 255, 0.1)',
                             position: 'absolute',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            width: '20px',
-                            height: '2px',
-                            background: 'rgba(255, 255, 255, 0.6)',
-                            borderRadius: '1px',
-                            opacity: 0.7
+                            transition: 'width 0.3s ease'
+                        }} />
+                        {/* Playback progress */}
+                        <div style={{
+                            width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
+                            height: '100%',
+                            background: audioState.seekPreviewTime ? 'var(--accent-color, #6366f1)' : '#6366f1',
+                            position: 'absolute',
+                            transition: isDragging || audioState.seekPreviewTime ? 'none' : 'width 0.1s linear'
                         }} />
                     </div>
 
-                    {/* Main Controls Row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                        {/* Elegant Track Info Section */}
-                        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
-                            {/* Album Art Placeholder */}
+                    {/* Main Content Row */}
+                    <div style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0 24px'
+                    }}>
+                        {/* Left: Track Info */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '300px', flex: 1 }}>
                             <div style={{
-                                width: '56px',
-                                height: '56px',
-                                borderRadius: '12px',
-                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2))',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                border: '1px solid rgba(255, 255, 255, 0.1)',
-                                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.2)',
-                                position: 'relative',
-                                overflow: 'hidden'
+                                width: '48px',
+                                height: '48px',
+                                borderRadius: '8px',
+                                overflow: 'hidden',
+                                background: '#1e293b',
+                                border: '1px solid rgba(255,255,255,0.1)'
                             }}>
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="rgba(255, 255, 255, 0.7)">
-                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-                                </svg>
-                                {/* Subtle animation overlay */}
-                                <div style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    background: 'linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%)',
-                                    animation: 'shimmer 3s infinite'
-                                }} />
+                                {currentTrack.thumbnail ? (
+                                    <img src={currentTrack.thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="rgba(255,255,255,0.3)">
+                                            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                                        </svg>
+                                    </div>
+                                )}
                             </div>
-
-                            {/* Track Details */}
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ minWidth: 0 }}>
                                 <div style={{
-                                    color: '#ffffff',
-                                    fontSize: '16px',
+                                    color: 'white',
+                                    fontSize: '14px',
                                     fontWeight: '600',
-                                    lineHeight: '1.4',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
-                                    marginBottom: '4px',
-                                    letterSpacing: '-0.01em'
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
                                 }}>
-                                    {searchResults.find(track => track.id === currentlyPlayingId)?.title || 'Unknown Track'}
+                                    {currentTrack.title}
                                 </div>
                                 <div style={{
-                                    color: 'rgba(255, 255, 255, 0.7)',
-                                    fontSize: '13px',
-                                    fontWeight: '500',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
+                                    color: 'rgba(255, 255, 255, 0.6)',
+                                    fontSize: '12px',
                                     whiteSpace: 'nowrap',
-                                    marginBottom: '6px'
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
                                 }}>
-                                    {searchResults.find(track => track.id === currentlyPlayingId)?.artist || 'Unknown Artist'}
-                                </div>
-                                {/* Elegant Status Indicator */}
-                                <div style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    fontSize: '10px',
-                                    color: audioState.error ? '#ff6b6b'
-                                        : audioState.isBuffering ? '#fbbf24'
-                                            : audioState.isSeeking ? '#fbbf24'
-                                                : audioState.isLoading ? '#60a5fa'
-                                                    : audioState.isPlaying ? '#34d399'
-                                                        : 'rgba(255, 255, 255, 0.6)',
-                                    fontWeight: '600',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.5px',
-                                    background: audioState.error ? 'rgba(255, 107, 107, 0.15)'
-                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)'
-                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
-                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)'
-                                                    : 'rgba(255, 255, 255, 0.08)',
-                                    padding: '4px 10px',
-                                    borderRadius: '12px',
-                                    border: `1px solid ${audioState.error ? 'rgba(255, 107, 107, 0.2)'
-                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.2)'
-                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.2)'
-                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.2)'
-                                                    : 'rgba(255, 255, 255, 0.1)'
-                                        }`,
-                                    backdropFilter: 'blur(8px)',
-                                    boxShadow: `0 2px 8px ${audioState.error ? 'rgba(255, 107, 107, 0.15)'
-                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)'
-                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
-                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)'
-                                                    : 'rgba(0, 0, 0, 0.1)'
-                                        }`
-                                }}>
-                                    {audioState.error ? (
-                                        <>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                                            </svg>
-                                            Error
-                                        </>
-                                    ) : audioState.isBuffering ? (
-                                        <>
-                                            <div style={{
-                                                width: '10px',
-                                                height: '10px',
-                                                border: '1.5px solid currentColor',
-                                                borderTop: '1.5px solid transparent',
-                                                borderRadius: '50%',
-                                                animation: 'spin 1s linear infinite'
-                                            }} />
-                                            Buffering
-                                        </>
-                                    ) : audioState.isSeeking ? (
-                                        <>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="3" fill="currentColor" />
-                                                <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3" />
-                                            </svg>
-                                            Seeking
-                                        </>
-                                    ) : audioState.isLoading ? (
-                                        <>
-                                            <div style={{
-                                                width: '10px',
-                                                height: '10px',
-                                                border: '1.5px solid currentColor',
-                                                borderTop: '1.5px solid transparent',
-                                                borderRadius: '50%',
-                                                animation: 'spin 1s linear infinite'
-                                            }} />
-                                            Loading
-                                        </>
-                                    ) : audioState.isPlaying ? (
-                                        <>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="8" fill="currentColor" />
-                                                <polygon points="9,7 15,12 9,17" fill="white" />
-                                            </svg>
-                                            Playing
-                                        </>
-                                    ) : (
-                                        <>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="8" fill="currentColor" />
-                                                <rect x="8" y="8" width="2" height="8" fill="white" />
-                                                <rect x="14" y="8" width="2" height="8" fill="white" />
-                                            </svg>
-                                            Paused
-                                        </>
-                                    )}
+                                    {currentTrack.artist}
                                 </div>
                             </div>
                         </div>
 
-                        {/* Elegant Compact Progress Bar (when not expanded) */}
-                        {!isProgressBarExpanded && (
-                            <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                <span style={{
-                                    color: audioState.seekPreviewTime ? '#fbbf24' : 'rgba(255, 255, 255, 0.8)',
-                                    fontSize: '12px',
-                                    fontWeight: '500',
-                                    minWidth: '40px',
-                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-                                    letterSpacing: '0.025em'
-                                }}>
-                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
-                                </span>
-                                <div style={{
-                                    flex: 1,
-                                    height: '8px',
-                                    background: 'rgba(255, 255, 255, 0.1)',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    position: 'relative',
-                                    boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
-                                    border: '1px solid rgba(255, 255, 255, 0.05)',
-                                    overflow: 'hidden'
-                                }}
-                                    onClick={(e) => {
-                                        if (isDragging) return; // Prevent click during drag
-
-                                        e.preventDefault();
-                                        e.stopPropagation();
-
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const x = e.clientX - rect.left;
-                                        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
-                                        const newTime = clickProgress * audioState.duration;
-
-                                        // Use the robust seekTo function for clicks
-                                        seekTo(newTime);
-                                    }}
-                                    onMouseMove={(e) => {
-                                        if (!isDragging) {
-                                            const rect = e.currentTarget.getBoundingClientRect();
-                                            const x = e.clientX - rect.left;
-                                            const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
-                                            const hoverTime = hoverProgress * audioState.duration;
-                                            seekTo(hoverTime, true); // Show preview
-                                        }
-                                    }}
-                                    onMouseLeave={() => {
-                                        if (!isDragging) {
-                                            clearSeekPreview();
-                                        }
-                                    }}
-                                >
-                                    {/* Elegant Buffer Progress */}
-                                    <div style={{
-                                        width: `${audioState.bufferProgress}%`,
-                                        height: '100%',
-                                        background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.3))',
-                                        borderRadius: '8px',
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        transition: 'width 0.3s ease'
-                                    }} />
-
-                                    {/* Elegant Playback Progress */}
-                                    <div style={{
-                                        width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
-                                        height: '100%',
-                                        background: audioState.isSeeking || audioState.seekPreviewTime
-                                            ? 'linear-gradient(90deg, #fbbf24, #f59e0b)'
-                                            : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                                        borderRadius: '8px',
-                                        transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
-                                        position: 'relative',
-                                        boxShadow: audioState.isPlaying ? '0 0 16px rgba(99, 102, 241, 0.3)' : 'none'
-                                    }}>
-                                        {/* Elegant Progress Handle */}
-                                        <div style={{
-                                            position: 'absolute',
-                                            right: '-6px',
-                                            top: '50%',
-                                            transform: 'translateY(-50%)',
-                                            width: '16px',
-                                            height: '16px',
-                                            background: audioState.isSeeking || audioState.seekPreviewTime ? '#fbbf24' : '#ffffff',
-                                            borderRadius: '50%',
-                                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(255, 255, 255, 0.1)',
-                                            border: '2px solid rgba(255, 255, 255, 0.9)',
-                                            opacity: audioState.duration > 0 ? 1 : 0,
-                                            transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                            cursor: 'grab'
-                                        }}>
-                                            {/* Seeking pulse indicator */}
-                                            {(audioState.isSeeking || audioState.seekPreviewTime) && (
-                                                <div style={{
-                                                    position: 'absolute',
-                                                    top: '-4px',
-                                                    left: '-4px',
-                                                    right: '-4px',
-                                                    bottom: '-4px',
-                                                    borderRadius: '50%',
-                                                    border: '2px solid #fbbf24',
-                                                    animation: 'pulse 1.5s infinite'
-                                                }} />
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                <span style={{
-                                    color: 'rgba(255, 255, 255, 0.8)',
-                                    fontSize: '12px',
-                                    fontWeight: '500',
-                                    minWidth: '40px',
-                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-                                    letterSpacing: '0.025em'
-                                }}>
-                                    {formatTime(audioState.duration)}
-                                </span>
-                            </div>
-                        )}
-
-                        {/* Elegant Control Buttons */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            {/* Elegant Skip Backward Button */}
-                            <button
-                                onClick={() => skipBackward(10)}
-                                disabled={!currentlyPlayingId || audioState.isLoading}
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.08)',
-                                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                                    color: 'rgba(255, 255, 255, 0.8)',
-                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
-                                    padding: '12px',
-                                    borderRadius: '16px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                    minWidth: '48px',
-                                    minHeight: '48px',
-                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
-                                    backdropFilter: 'blur(12px)',
-                                    position: 'relative',
-                                    overflow: 'hidden'
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (currentlyPlayingId && !audioState.isLoading) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                        e.currentTarget.style.transform = 'scale(1.05)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
-                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (currentlyPlayingId && !audioState.isLoading) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                        e.currentTarget.style.transform = 'scale(1)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
-                                        e.currentTarget.style.boxShadow = 'none';
-                                    }
-                                }}
-                                title="Skip backward 10s (←)"
-                            >
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
-                                </svg>
-                            </button>
-
-                            {/* Ultra-Elegant Play/Pause Button */}
-                            <button
-                                onClick={() => {
-                                    const currentTrack = searchResults.find(track => track.id === currentlyPlayingId);
-                                    if (currentTrack) {
-                                        togglePlayPause(currentTrack);
-                                    }
-                                }}
-                                disabled={audioState.isLoading}
-                                style={{
-                                    background: audioState.isPlaying
-                                        ? 'linear-gradient(135deg, #34d399, #10b981)'
-                                        : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                                    border: 'none',
-                                    color: 'white',
-                                    cursor: audioState.isLoading ? 'not-allowed' : 'pointer',
-                                    padding: '16px',
-                                    borderRadius: '20px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-                                    minWidth: '64px',
-                                    minHeight: '64px',
-                                    boxShadow: audioState.isPlaying
-                                        ? '0 12px 32px rgba(52, 211, 153, 0.4), 0 0 0 1px rgba(52, 211, 153, 0.2)'
-                                        : '0 12px 32px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.2)',
-                                    opacity: audioState.isLoading ? 0.7 : 1,
-                                    position: 'relative',
-                                    overflow: 'hidden',
-                                    backdropFilter: 'blur(16px)'
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (!audioState.isLoading) {
-                                        e.currentTarget.style.transform = 'scale(1.08)';
-                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.6)' : 'rgba(99, 102, 241, 0.6)';
-                                        e.currentTarget.style.boxShadow = `0 16px 40px ${color}, 0 0 0 1px ${color}`;
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (!audioState.isLoading) {
-                                        e.currentTarget.style.transform = 'scale(1)';
-                                        const color = audioState.isPlaying ? 'rgba(52, 211, 153, 0.4)' : 'rgba(99, 102, 241, 0.4)';
-                                        e.currentTarget.style.boxShadow = `0 12px 32px ${color}, 0 0 0 1px ${color}`;
-                                    }
-                                }}
-                            >
-                                {/* Elegant Ripple Effect */}
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '50%',
-                                    left: '50%',
-                                    transform: 'translate(-50%, -50%)',
-                                    width: '100%',
-                                    height: '100%',
-                                    borderRadius: '20px',
-                                    background: 'radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%)',
-                                    opacity: audioState.isPlaying ? 1 : 0,
-                                    animation: audioState.isPlaying ? 'ripple 3s infinite' : 'none'
-                                }} />
-
-                                {audioState.isLoading ? (
-                                    <div style={{
-                                        width: '24px',
-                                        height: '24px',
-                                        border: '3px solid rgba(255,255,255,0.3)',
-                                        borderTop: '3px solid white',
-                                        borderRadius: '50%',
-                                        animation: 'spin 1s linear infinite',
-                                        position: 'relative',
-                                        zIndex: 1
-                                    }} />
-                                ) : audioState.isPlaying ? (
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1 }}>
-                                        <rect x="6" y="4" width="4" height="16" rx="2" />
-                                        <rect x="14" y="4" width="4" height="16" rx="2" />
-                                    </svg>
-                                ) : (
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1, marginLeft: '3px' }}>
-                                        <polygon points="5,3 19,12 5,21" />
-                                    </svg>
-                                )}
-                            </button>
-
-                            {/* Elegant Skip Forward Button */}
-                            <button
-                                onClick={() => skipForward(10)}
-                                disabled={!currentlyPlayingId || audioState.isLoading}
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.08)',
-                                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                                    color: 'rgba(255, 255, 255, 0.8)',
-                                    cursor: (!currentlyPlayingId || audioState.isLoading) ? 'not-allowed' : 'pointer',
-                                    padding: '12px',
-                                    borderRadius: '16px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                    minWidth: '48px',
-                                    minHeight: '48px',
-                                    opacity: (!currentlyPlayingId || audioState.isLoading) ? 0.4 : 1,
-                                    backdropFilter: 'blur(12px)',
-                                    position: 'relative',
-                                    overflow: 'hidden'
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (currentlyPlayingId && !audioState.isLoading) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                        e.currentTarget.style.transform = 'scale(1.05)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
-                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.2)';
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (currentlyPlayingId && !audioState.isLoading) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                        e.currentTarget.style.transform = 'scale(1)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
-                                        e.currentTarget.style.boxShadow = 'none';
-                                    }
-                                }}
-                                title="Skip forward 10s (→)"
-                            >
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
-                                </svg>
-                            </button>
-
-                            {/* Elegant Volume Control */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Center: Playback Controls */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
                                 <button
-                                    onClick={toggleMute}
+                                    onClick={() => skipBackward(10)}
+                                    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: '8px' }}
+                                    title="Backward 10s"
+                                >
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
+                                    </svg>
+                                </button>
+
+                                <button
+                                    onClick={() => togglePlayPause(currentTrack)}
+                                    disabled={audioState.isLoading}
                                     style={{
-                                        background: 'rgba(255, 255, 255, 0.08)',
-                                        border: '1px solid rgba(255, 255, 255, 0.12)',
-                                        color: 'rgba(255, 255, 255, 0.8)',
-                                        cursor: 'pointer',
-                                        padding: '8px',
-                                        borderRadius: '12px',
+                                        width: '44px',
+                                        height: '44px',
+                                        borderRadius: '50%',
+                                        background: 'white',
+                                        color: 'black',
+                                        border: 'none',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
-                                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                        minWidth: '36px',
-                                        minHeight: '36px'
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.2s ease'
                                     }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
-                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.1)'}
+                                    onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                                 >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                        {audioState.isMuted ? (
-                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
-                                        ) : (
-                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-                                        )}
+                                    {audioState.isLoading ? (
+                                        <div style={{ width: '20px', height: '20px', border: '2px solid rgba(0,0,0,0.1)', borderTop: '2px solid black', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                    ) : audioState.isPlaying ? (
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+                                    ) : (
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: '2px' }}><polygon points="5,3 19,12 5,21" /></svg>
+                                    )}
+                                </button>
+
+                                <button
+                                    onClick={() => skipForward(10)}
+                                    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: '8px' }}
+                                    title="Forward 10s"
+                                >
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
                                     </svg>
+                                </button>
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', display: 'flex', gap: '8px' }}>
+                                <span>{formatTime(audioState.currentTime)}</span>
+                                <span>/</span>
+                                <span>{formatTime(audioState.duration)}</span>
+                            </div>
+                        </div>
+
+                        {/* Right: Tools & Volume */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', minWidth: '300px', flex: 1, justifyContent: 'flex-end' }}>
+                            {/* Volume */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <button onClick={toggleMute} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer' }}>
+                                    {audioState.isMuted || audioState.volume === 0 ? (
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" /></svg>
+                                    ) : (
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" /></svg>
+                                    )}
                                 </button>
                                 <input
                                     type="range"
                                     min="0"
                                     max="1"
-                                    step="0.1"
+                                    step="0.01"
                                     value={audioState.volume}
                                     onChange={(e) => setVolume(parseFloat(e.target.value))}
-                                    style={{
-                                        width: '80px',
-                                        height: '6px',
-                                        background: 'rgba(255, 255, 255, 0.1)',
-                                        outline: 'none',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        appearance: 'none',
-                                        WebkitAppearance: 'none'
-                                    }}
+                                    style={{ width: '80px', accentColor: '#6366f1' }}
                                 />
                             </div>
 
-                            {/* Elegant Stop Button */}
-                            <button
-                                onClick={stopAudio}
-                                style={{
-                                    background: 'rgba(239, 68, 68, 0.15)',
-                                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                                    color: 'rgba(239, 68, 68, 0.9)',
-                                    cursor: 'pointer',
-                                    padding: '8px',
-                                    borderRadius: '12px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                    minWidth: '36px',
-                                    minHeight: '36px',
-                                    backdropFilter: 'blur(8px)'
-                                }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)';
-                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 1)';
-                                    e.currentTarget.style.transform = 'scale(1.05)';
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
-                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 0.9)';
-                                    e.currentTarget.style.transform = 'scale(1)';
-                                }}
-                                title="Stop playback (Esc)"
-                            >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                                </svg>
-                            </button>
-
-                            {/* Elegant Download Button for Currently Playing */}
-                            {searchResults.find(t => t.id === currentlyPlayingId) && !downloadedTracks.has(currentlyPlayingId!) && (
+                            {/* Download */}
+                            {!downloadedTracks.has(currentTrack.id) && (
                                 <button
-                                    onClick={() => startDownload(searchResults.find(t => t.id === currentlyPlayingId)!)}
+                                    onClick={() => startDownload(currentTrack)}
                                     disabled={!isDownloadPathSet}
-                                    style={{
-                                        background: 'rgba(16, 185, 129, 0.15)',
-                                        border: '1px solid rgba(16, 185, 129, 0.3)',
-                                        color: 'rgba(16, 185, 129, 0.9)',
-                                        cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
-                                        padding: '8px',
-                                        borderRadius: '12px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                        minWidth: '36px',
-                                        minHeight: '36px',
-                                        backdropFilter: 'blur(8px)',
-                                        marginLeft: '8px'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        if (isDownloadPathSet) {
-                                            e.currentTarget.style.background = 'rgba(16, 185, 129, 0.25)';
-                                            e.currentTarget.style.color = 'rgba(16, 185, 129, 1)';
-                                            e.currentTarget.style.transform = 'scale(1.05)';
-                                        }
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.background = 'rgba(16, 185, 129, 0.15)';
-                                        e.currentTarget.style.color = 'rgba(16, 185, 129, 0.9)';
-                                        e.currentTarget.style.transform = 'scale(1)';
-                                    }}
-                                    title={!isDownloadPathSet ? "Set download path in settings" : "Download song"}
+                                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
+                                    title="Download"
                                 >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                                    </svg>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
                                 </button>
                             )}
 
-                            {/* Elegant Keyboard Help Button */}
+                            {/* Stop */}
+                            <button
+                                onClick={stopAudio}
+                                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
+                                title="Stop"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                            </button>
+
+                            {/* Shortcuts */}
                             <button
                                 onClick={() => setShowKeyboardHelp(!showKeyboardHelp)}
-                                style={{
-                                    background: showKeyboardHelp ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                                    color: showKeyboardHelp ? 'rgba(99, 102, 241, 1)' : 'rgba(255, 255, 255, 0.8)',
-                                    cursor: 'pointer',
-                                    padding: '8px',
-                                    borderRadius: '12px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                    minWidth: '36px',
-                                    minHeight: '36px',
-                                    backdropFilter: 'blur(8px)'
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (!showKeyboardHelp) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 1)';
-                                        e.currentTarget.style.transform = 'scale(1.05)';
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (!showKeyboardHelp) {
-                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                        e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
-                                        e.currentTarget.style.transform = 'scale(1)';
-                                    }
-                                }}
-                                title="Keyboard shortcuts"
+                                style={{ background: showKeyboardHelp ? 'rgba(99,102,241,0.2)' : 'none', border: 'none', color: showKeyboardHelp ? '#6366f1' : 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: '8px' }}
                             >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                    <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
-                                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2" />
-                                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2" />
-                                    <rect x="6" y="7" width="2" height="2" rx="0.5" />
-                                    <rect x="10" y="7" width="2" height="2" rx="0.5" />
-                                    <rect x="14" y="7" width="2" height="2" rx="0.5" />
-                                </svg>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2" /><line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2" /><line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2" /></svg>
                             </button>
                         </div>
-
-                        {/* Elegant Keyboard Help Tooltip */}
-                        {showKeyboardHelp && (
-                            <div style={{
-                                position: 'absolute',
-                                bottom: '100%',
-                                right: '0',
-                                marginBottom: '12px',
-                                background: 'rgba(15, 20, 25, 0.95)',
-                                borderRadius: '16px',
-                                padding: '20px',
-                                boxShadow: '0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-                                border: '1px solid rgba(99, 102, 241, 0.2)',
-                                minWidth: '320px',
-                                zIndex: 1001,
-                                fontSize: '13px',
-                                lineHeight: '1.5',
-                                animation: 'fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-                                backdropFilter: 'blur(20px)'
-                            }}>
-                                <div style={{
-                                    color: 'white',
-                                    fontWeight: '600',
-                                    marginBottom: '16px',
-                                    fontSize: '14px',
-                                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-                                    paddingBottom: '12px',
-                                    letterSpacing: '0.025em'
-                                }}>
-                                    Keyboard Shortcuts
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Play/Pause</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Space</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip forward 10s</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>→ or L</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip backward 10s</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>← or J</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Skip 5s (fine control)</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Shift + ←/→</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Volume up/down</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>↑/↓</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Mute/unmute</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>M</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Stop</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>Esc</kbd>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: 'rgba(255, 255, 255, 0.9)', fontSize: '13px' }}>Go to start</span>
-                                        <kbd style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgba(99, 102, 241, 1)', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', border: '1px solid rgba(99, 102, 241, 0.3)' }}>0 or Home</kbd>
-                                    </div>
-                                </div>
-                                {/* Elegant Arrow pointing down */}
-                                <div style={{
-                                    position: 'absolute',
-                                    bottom: '-10px',
-                                    right: '24px',
-                                    width: 0,
-                                    height: 0,
-                                    borderLeft: '10px solid transparent',
-                                    borderRight: '10px solid transparent',
-                                    borderTop: '10px solid rgba(15, 20, 25, 0.95)'
-                                }} />
-                            </div>
-                        )}
                     </div>
 
-                    {/* Expanded Progress Bar (revealed on swipe up) */}
-                    {isProgressBarExpanded && (
-                        <div style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px',
-                            animation: 'slideUp 0.3s ease-out'
-                        }}>
-                            <div style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                color: 'rgba(255, 255, 255, 0.8)',
-                                fontSize: '12px'
-                            }}>
-                                <span style={{
-                                    color: audioState.seekPreviewTime ? '#f59e0b' : 'rgba(255, 255, 255, 0.8)',
-                                    fontWeight: audioState.seekPreviewTime ? '600' : '400',
-                                    transition: 'all 0.2s ease'
-                                }}>
-                                    {formatTime(audioState.seekPreviewTime || audioState.currentTime)}
-                                </span>
-                                {audioState.seekPreviewTime && (
-                                    <span style={{
-                                        color: '#f59e0b',
-                                        fontSize: '10px',
-                                        fontWeight: '500'
-                                    }}>
-                                        PREVIEW
-                                    </span>
-                                )}
-                                <span>{formatTime(audioState.duration)}</span>
-                            </div>
-
-                            {/* Enhanced Draggable Progress Bar with Buffer Visualization */}
-                            <div
-                                ref={progressBarRef}
-                                style={{
-                                    width: '100%',
-                                    height: '8px',
-                                    background: 'rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '4px',
-                                    cursor: isDragging ? 'grabbing' : 'grab',
-                                    position: 'relative',
-                                    overflow: 'hidden'
-                                }}
-                                onMouseDown={handleProgressMouseDown}
-                                onTouchStart={handleProgressTouchStart}
-                                onMouseMove={(e) => {
-                                    if (!isDragging) {
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const x = e.clientX - rect.left;
-                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
-                                        const hoverTime = hoverProgress * audioState.duration;
-                                        seekTo(hoverTime, true); // Show preview
-                                    }
-                                }}
-                                onMouseLeave={() => {
-                                    if (!isDragging) {
-                                        clearSeekPreview();
-                                    }
-                                }}
-                            >
-                                {/* Buffer Progress */}
-                                <div style={{
-                                    width: `${audioState.bufferProgress}%`,
-                                    height: '100%',
-                                    background: 'rgba(255, 255, 255, 0.4)',
-                                    borderRadius: '4px',
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    transition: 'width 0.3s ease'
-                                }} />
-
-                                {/* Progress Fill */}
-                                <div style={{
-                                    width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
-                                    height: '100%',
-                                    background: audioState.isSeeking || audioState.seekPreviewTime
-                                        ? 'linear-gradient(90deg, #f59e0b, #d97706)'
-                                        : 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
-                                    borderRadius: '4px',
-                                    transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
-                                    position: 'relative'
-                                }}>
-                                    {/* Draggable Handle */}
-                                    <div style={{
-                                        position: 'absolute',
-                                        right: '-6px',
-                                        top: '50%',
-                                        transform: 'translateY(-50%)',
-                                        width: '12px',
-                                        height: '12px',
-                                        background: audioState.isSeeking || audioState.seekPreviewTime ? '#f59e0b' : 'white',
-                                        borderRadius: '50%',
-                                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
-                                        cursor: isDragging ? 'grabbing' : 'grab',
-                                        transition: isDragging ? 'none' : 'all 0.2s ease',
-                                        opacity: isDragging || audioState.isSeeking ? 1 : 0.8,
-                                        border: '2px solid rgba(255, 255, 255, 0.3)'
-                                    }}>
-                                        {/* Seeking indicator */}
-                                        {(audioState.isSeeking || audioState.seekPreviewTime) && (
-                                            <div style={{
-                                                position: 'absolute',
-                                                top: '-2px',
-                                                left: '-2px',
-                                                right: '-2px',
-                                                bottom: '-2px',
-                                                borderRadius: '50%',
-                                                border: '2px solid #f59e0b',
-                                                animation: 'pulse 1s infinite'
-                                            }} />
-                                        )}
+                    {/* Keyboard Help Popover */}
+                    {showKeyboardHelp && (
+                        <div style={{ position: 'absolute', bottom: '100%', right: '24px', marginBottom: '16px', background: 'rgba(15, 20, 25, 0.98)', borderRadius: '16px', padding: '24px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.1)', minWidth: '300px', zIndex: 2001 }}>
+                            <div style={{ color: 'white', fontWeight: '700', marginBottom: '16px', fontSize: '16px' }}>Keyboard Shortcuts</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {[
+                                    { label: 'Play/Pause', key: 'Space' },
+                                    { label: 'Skip 10s', key: '← / →' },
+                                    { label: 'Volume', key: '↑ / ↓' },
+                                    { label: 'Mute', key: 'M' },
+                                    { label: 'Stop', key: 'Esc' }
+                                ].map(item => (
+                                    <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                                        <span style={{ color: 'rgba(255,255,255,0.7)' }}>{item.label}</span>
+                                        <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '4px 8px', borderRadius: '6px', color: '#6366f1', fontWeight: '600' }}>{item.key}</kbd>
                                     </div>
-                                </div>
-
-                                {/* Buffering Progress Indicator */}
-                                {audioState.isBuffering && (
-                                    <div style={{
-                                        position: 'absolute',
-                                        top: '50%',
-                                        left: `${audioState.bufferProgress}%`,
-                                        transform: 'translateY(-50%)',
-                                        width: '4px',
-                                        height: '12px',
-                                        background: '#3b82f6',
-                                        borderRadius: '2px',
-                                        animation: 'pulse 1s infinite'
-                                    }} />
-                                )}
-
-                                {/* Hover Effect Overlay */}
-                                <div style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    background: 'rgba(255, 255, 255, 0.1)',
-                                    opacity: 0,
-                                    transition: 'opacity 0.2s ease',
-                                    pointerEvents: 'none'
-                                }}
-                                    className="progress-hover-overlay"
-                                />
+                                ))}
                             </div>
-
-                            {/* Close Button */}
-                            <button
-                                onClick={() => setIsProgressBarExpanded(false)}
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.1)',
-                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                    color: 'white',
-                                    cursor: 'pointer',
-                                    padding: '6px 12px',
-                                    borderRadius: '6px',
-                                    fontSize: '11px',
-                                    alignSelf: 'center',
-                                    transition: 'all 0.2s ease'
-                                }}
-                                onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
-                                }}
-                                onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-                                }}
-                            >
-                                Close
-                            </button>
                         </div>
                     )}
                 </div>
             )}
+
+
 
             {/* Search Section */}
             <div className="search-section" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -3240,7 +2561,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 onDownloadComplete={onDownloadComplete}
                 maxConcurrentDownloads={3}
             />
-        </div>
+        </div >
     );
 };
 

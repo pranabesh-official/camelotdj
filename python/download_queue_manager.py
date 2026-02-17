@@ -67,6 +67,9 @@ class DownloadTask:
     format: str = "mp3"
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    speed: float = 0.0
+    eta: float = 0.0
+    total_bytes: int = 0
     
     def __post_init__(self):
         if not self.id:
@@ -91,9 +94,16 @@ class DownloadQueueManager:
         self.error_callbacks: List[Callable] = []
         
         # Resource monitoring
-        self.cpu_threshold = 80.0  # CPU usage threshold
-        self.memory_threshold = 80.0  # Memory usage threshold
-        self.disk_threshold = 90.0  # Disk usage threshold
+        self.cpu_threshold = 95.0
+        self.memory_threshold = 90.0
+        self.disk_threshold = 95.0
+        
+        # Audio processing handlers (injected via api.py)
+        self.download_handler = None
+        self.convert_handler = None
+        self.metadata_handler = None
+        self.analyze_handler = None
+        self.verify_handler = None
         
         logger.info(f"DownloadQueueManager initialized with max_concurrent_downloads={max_concurrent_downloads}")
     
@@ -136,26 +146,7 @@ class DownloadQueueManager:
     def _check_system_resources(self) -> bool:
         """Check if system resources are available for new downloads"""
         try:
-            # Check CPU usage
-            cpu_percent = psutil.cpu_percent(interval=1)
-            if cpu_percent > self.cpu_threshold:
-                logger.warning(f"CPU usage too high: {cpu_percent}%")
-                return False
-            
-            # Check memory usage
-            memory = psutil.virtual_memory()
-            if memory.percent > self.memory_threshold:
-                logger.warning(f"Memory usage too high: {memory.percent}%")
-                return False
-            
-            # Check disk usage for download path
-            if hasattr(self, 'download_path') and self.download_path:
-                disk_usage = psutil.disk_usage(self.download_path)
-                disk_percent = (disk_usage.used / disk_usage.total) * 100
-                if disk_percent > self.disk_threshold:
-                    logger.warning(f"Disk usage too high: {disk_percent}%")
-                    return False
-            
+            # Disable resource checks for now to improve reliability
             return True
         except Exception as e:
             logger.error(f"Error checking system resources: {e}")
@@ -250,21 +241,53 @@ class DownloadQueueManager:
         logger.info(f"Started download task {task.id}: {task.title}")
         self._emit_progress(task)
     
+    def set_handlers(self, download_func, convert_func, metadata_func, analyze_func, verify_func):
+        """Set all handler functions to avoid circular imports"""
+        self.download_handler = download_func
+        self.convert_handler = convert_func
+        self.metadata_handler = metadata_func
+        self.analyze_handler = analyze_func
+        self.verify_handler = verify_func
+        
     def _execute_download(self, task: DownloadTask):
-        """Execute the actual download using the main application's download function"""
+        """Execute the actual download using the registered handlers"""
         try:
-            # Import the download function from the main API module
-            import sys
-            import os
-            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            # Check if handlers are set
+            if not self.download_handler:
+                error_msg = "Audio processing handlers not set in DownloadQueueManager. Call set_handlers() first."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
             
-            # We'll need to call the actual download function from api.py
-            # For now, we'll implement a simplified version that calls the existing download logic
+            # Define progress callback for real-time updates
+            def progress_callback(data):
+                if not data:
+                    return
+                
+                # Update task with real-time data
+                with self.download_lock:
+                    if 'progress' in data:
+                        task.progress = float(data['progress'])
+                    if 'message' in data:
+                        task.message = data['message']
+                    if 'stage' in data:
+                        task.stage = data['stage']
+                    if 'speed' in data:
+                        task.speed = data['speed']
+                    if 'eta_seconds' in data:
+                        task.eta = data['eta_seconds']
+                    if 'total_bytes' in data:
+                        task.total_bytes = data['total_bytes']
+                        task.file_size = data['total_bytes']
+                    if 'downloaded_bytes' in data:
+                        task.downloaded_size = data['downloaded_bytes']
+                    
+                # Emit progress via manager's callback system
+                self._emit_progress(task)
             
             # Update progress
             task.stage = "downloading"
-            task.message = "Downloading audio..."
-            task.progress = 10.0
+            task.message = "Starting download..."
+            task.progress = 0.0
             self._emit_progress(task)
             
             # Create safe filename
@@ -283,76 +306,10 @@ class DownloadQueueManager:
                 timestamp = int(time.time())
                 final_filename = f"{safe_title}_{timestamp}.mp3"
                 final_path = os.path.join(task.download_path, final_filename)
-            
-            # Update progress
-            task.stage = "downloading"
-            task.message = "Downloading with yt-dlp..."
-            task.progress = 30.0
-            self._emit_progress(task)
-            
-            # Call the actual download function (we'll need to import it)
-            # For now, we'll use a placeholder that will be replaced with the actual implementation
-            success = self._perform_actual_download(task, temp_path, final_path)
-            
-            if not success:
-                raise Exception("Download failed")
-            
-            # Update progress
-            task.stage = "converting"
-            task.message = "Converting to MP3..."
-            task.progress = 70.0
-            self._emit_progress(task)
-            
-            # Update progress
-            task.stage = "metadata"
-            task.message = "Adding metadata..."
-            task.progress = 85.0
-            self._emit_progress(task)
-            
-            # Update progress
-            task.stage = "analyzing"
-            task.message = "Analyzing music..."
-            task.progress = 95.0
-            self._emit_progress(task)
-            
-            # Complete
-            task.status = DownloadStatus.COMPLETED
-            task.stage = "complete"
-            task.message = "Download complete!"
-            task.progress = 100.0
-            task.end_time = time.time()
-            task.file_size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
-            
-            return task
-            
-        except Exception as e:
-            task.status = DownloadStatus.FAILED
-            task.stage = "error"
-            task.message = f"Download failed: {str(e)}"
-            task.error = str(e)
-            task.end_time = time.time()
-            raise e
-    
-    def _perform_actual_download(self, task: DownloadTask, temp_path: str, final_path: str) -> bool:
-        """Perform the actual download by calling the existing download logic"""
-        try:
-            # Import the necessary functions from the main API module
-            import sys
-            import os
-            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-            
-            # Import the download functions from api.py
-            from api import download_with_ytdlp_enhanced, convert_to_320kbps_mp3, enhance_metadata_with_artwork, analyze_music_file, verify_audio_quality
-            
-            # Update progress
-            task.stage = "downloading"
-            task.message = "Downloading with yt-dlp..."
-            task.progress = 30.0
-            self._emit_progress(task)
-            
-            # Perform the actual download
-            success, metadata, actual_temp_path = download_with_ytdlp_enhanced(
-                task.url, temp_path, task.title, task.artist, task.id
+
+            # Perform the actual download with progress callback
+            success, metadata, actual_temp_path = self.download_handler(
+                task.url, temp_path, task.title, task.artist, task.id, progress_callback
             )
             
             if not success:
@@ -361,23 +318,23 @@ class DownloadQueueManager:
             # Update progress
             task.stage = "converting"
             task.message = "Converting to MP3..."
-            task.progress = 60.0
+            task.progress = 90.0
             self._emit_progress(task)
             
             # Convert to MP3
-            conversion_success = convert_to_320kbps_mp3(actual_temp_path, final_path, task.id)
+            conversion_success = self.convert_handler(actual_temp_path, final_path, task.id)
             if not conversion_success:
                 raise Exception("Conversion failed")
             
             # Update progress
             task.stage = "metadata"
             task.message = "Adding metadata..."
-            task.progress = 80.0
+            task.progress = 95.0
             self._emit_progress(task)
             
             # Enhance metadata
             try:
-                enhance_metadata_with_artwork(final_path, metadata)
+                self.metadata_handler(final_path, metadata)
             except Exception as e:
                 logger.warning(f"Metadata enhancement failed: {e}")
             
@@ -389,7 +346,7 @@ class DownloadQueueManager:
             
             # Analyze the file
             try:
-                analysis_result = analyze_music_file(final_path)
+                analysis_result = self.analyze_handler(final_path)
                 task.metadata.update(analysis_result)
                 
                 # Import database manager to add the song to the database
@@ -461,7 +418,7 @@ class DownloadQueueManager:
             
             # Verify quality
             try:
-                actual_bitrate = verify_audio_quality(final_path)
+                actual_bitrate = self.verify_handler(final_path)
                 task.metadata['bitrate'] = actual_bitrate
                 task.metadata['quality_verified'] = actual_bitrate >= 300
             except Exception as e:

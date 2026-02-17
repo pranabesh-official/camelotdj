@@ -79,12 +79,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
-    
+
     // Table sorting and filtering state
     const [sortField, setSortField] = useState<'title' | 'artist' | 'album' | 'duration'>('title');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [searchTerm, setSearchTerm] = useState<string>('');
-    
+
     // Sorting function
     const handleSort = (field: 'title' | 'artist' | 'album' | 'duration') => {
         if (sortField === field) {
@@ -94,28 +94,28 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             setSortDirection('asc');
         }
     };
-    
+
     // Filter and sort search results
     const filteredAndSortedResults = useMemo(() => {
         let filtered = searchResults;
-        
+
         // Apply search filter
         if (searchTerm) {
-            filtered = filtered.filter(track => 
+            filtered = filtered.filter(track =>
                 track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 track.artist.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (track.album && track.album.toLowerCase().includes(searchTerm.toLowerCase()))
             );
         }
-        
+
         // Apply sorting
         return filtered.sort((a, b) => {
             let aValue: any = a[sortField];
             let bValue: any = b[sortField];
-            
+
             if (aValue === undefined) aValue = '';
             if (bValue === undefined) bValue = '';
-            
+
             // Handle duration sorting (convert to seconds)
             if (sortField === 'duration') {
                 const parseDuration = (duration: string) => {
@@ -126,7 +126,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 aValue = parseDuration(aValue);
                 bValue = parseDuration(bValue);
             }
-            
+
             if (sortDirection === 'asc') {
                 return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
             } else {
@@ -134,16 +134,16 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             }
         });
     }, [searchResults, searchTerm, sortField, sortDirection]);
-    
+
     // Music Icon component for cover art placeholder
     const MusicIcon = () => (
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
         </svg>
     );
-    
+
     const [autocompleteError, setAutocompleteError] = useState<string | null>(null);
-    
+
     // Audio state - centralized and robust
     const [audioState, setAudioState] = useState<AudioState>({
         isPlaying: false,
@@ -159,17 +159,17 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         isSeeking: false,
         seekPreviewTime: null
     });
-    
+
     // Download state - simplified (handled by DownloadManager)
     const [downloadedTracks, setDownloadedTracks] = useState<Set<string>>(new Set());
-    
+
     // UI state
     const [error, setError] = useState<string | null>(null);
     const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
     const [isProgressBarExpanded, setIsProgressBarExpanded] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
-    
+
     // Refs
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -182,7 +182,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const touchStartY = useRef<number>(0);
     const touchStartTime = useRef<number>(0);
     const isSwipeGesture = useRef<boolean>(false);
-    
+
     // Load recent searches from localStorage and initialize WebSocket
     useEffect(() => {
         const saved = localStorage.getItem('youtube_recent_searches');
@@ -193,12 +193,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 console.error('Failed to load recent searches:', e);
             }
         }
-        
+
         // Initialize WebSocket connection for real-time progress
         const initializeWebSocket = () => {
             try {
                 console.log('🔌 Initializing WebSocket connection for download progress...');
-                
+
                 // First check if backend is accessible
                 fetch(`http://127.0.0.1:${apiPort}/hello?signingkey=${apiSigningKey}`)
                     .then(response => {
@@ -214,7 +214,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         console.log('⚠️ Backend not accessible, retrying in 3 seconds...', error);
                         setTimeout(createWebSocket, 3000);
                     });
-                
+
             } catch (error) {
                 console.error('❌ Failed to check backend accessibility:', error);
                 setTimeout(createWebSocket, 3000);
@@ -232,44 +232,44 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     reconnectionAttempts: 5,
                     reconnectionDelay: 1000
                 });
-                
+
                 socket.on('connect', () => {
                     console.log('✅ WebSocket connected for real-time download progress');
                 });
-                
+
                 socket.on('disconnect', () => {
                     console.log('❌ WebSocket disconnected');
                 });
-                
+
                 socket.on('connect_error', (error) => {
                     console.error('❌ WebSocket connection error:', error);
                 });
-                
+
                 socket.on('reconnect', (attemptNumber) => {
                     console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
                 });
-                
+
                 socket.on('connected', (data) => {
                     console.log('📡 WebSocket server confirmed:', data.status);
                 });
-                
+
                 socket.on('test_response', (data) => {
                     console.log('🧪 Test response received:', data);
                 });
-                
+
                 // Download progress is now handled by DownloadManager
                 // Keep this for any other WebSocket events if needed
-                
+
                 socketRef.current = socket;
-                
+
             } catch (error) {
                 console.error('❌ Failed to initialize WebSocket:', error);
             }
         };
-        
+
         // Initialize WebSocket after a short delay to ensure API is ready
         setTimeout(initializeWebSocket, 1000);
-        
+
         // Load initial trending suggestions
         const loadTrending = async () => {
             try {
@@ -279,7 +279,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         'X-Signing-Key': apiSigningKey
                     }
                 });
-                
+
                 if (response.ok) {
                     const result = await response.json();
                     if (result.status === 'success') {
@@ -290,9 +290,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 console.error('Failed to fetch trending suggestions:', error);
             }
         };
-        
+
         loadTrending();
-        
+
         // Cleanup WebSocket on unmount
         return () => {
             if (socketRef.current) {
@@ -302,7 +302,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             }
         };
     }, [apiPort, apiSigningKey, onDownloadComplete]);
-    
+
     // Fetch trending suggestions
     const fetchTrendingSuggestions = useCallback(async () => {
         try {
@@ -312,7 +312,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     'X-Signing-Key': apiSigningKey
                 }
             });
-            
+
             if (response.ok) {
                 const result = await response.json();
                 if (result.status === 'success') {
@@ -323,21 +323,21 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             console.error('Failed to fetch trending suggestions:', error);
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Fetch autocomplete suggestions from API
     const fetchAutocompleteSuggestions = useCallback(async (query: string) => {
         if (!query || query.length < 2) {
             fetchTrendingSuggestions();
             return;
         }
-        
+
         setIsLoadingSuggestions(true);
         setAutocompleteError(null);
-        
+
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-            
+
             const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/autocomplete`, {
                 method: 'POST',
                 headers: {
@@ -351,9 +351,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 }),
                 signal: controller.signal
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (response.ok) {
                 const result: AutocompleteResponse = await response.json();
                 if (result.status === 'success') {
@@ -373,22 +373,22 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             setIsLoadingSuggestions(false);
         }
     }, [apiPort, apiSigningKey, fetchTrendingSuggestions]);
-    
+
     // Debounced autocomplete
     const debouncedAutocomplete = useCallback((query: string) => {
         if (debounceTimeoutRef.current) {
             clearTimeout(debounceTimeoutRef.current);
         }
-        
+
         debounceTimeoutRef.current = setTimeout(() => {
             fetchAutocompleteSuggestions(query);
         }, 300); // 300ms debounce
     }, [fetchAutocompleteSuggestions]);
-    
+
     // Update suggestions based on input with debouncing
     useEffect(() => {
         debouncedAutocomplete(searchQuery);
-        
+
         // Cleanup timeout on unmount
         return () => {
             if (debounceTimeoutRef.current) {
@@ -397,12 +397,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         };
     }, [searchQuery, debouncedAutocomplete]);
 
-    
+
     // Save search to recent searches
     const saveRecentSearch = useCallback((query: string) => {
         const trimmedQuery = query.trim();
         if (!trimmedQuery || recentSearches.includes(trimmedQuery)) return;
-        
+
         const newRecent = [trimmedQuery, ...recentSearches.slice(0, 9)]; // Keep last 10
         setRecentSearches(newRecent);
         localStorage.setItem('youtube_recent_searches', JSON.stringify(newRecent));
@@ -412,23 +412,23 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const handleSearch = useCallback(async (queryOverride?: string) => {
         const query = queryOverride || searchQuery;
         if (!query.trim()) return;
-        
+
         setIsSearching(true);
         setError(null);
         setShowSuggestions(false);
-        
+
         // Save to recent searches
         saveRecentSearch(query);
-        
+
         // Update search query if using override
         if (queryOverride) {
             setSearchQuery(queryOverride);
         }
-        
+
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-            
+
             const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/search`, {
                 method: 'POST',
                 headers: {
@@ -440,15 +440,15 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 }),
                 signal: controller.signal
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
                 throw new Error(`Search failed: ${response.status} ${response.statusText}`);
             }
-            
+
             const result = await response.json();
-            
+
             if (result.status === 'success') {
                 setSearchResults(result.tracks || []);
                 if (result.tracks?.length === 0) {
@@ -471,19 +471,19 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
 
 
-    
+
     // Handle suggestion selection
     const handleSuggestionSelect = useCallback((suggestion: string) => {
         setSearchQuery(suggestion);
         setShowSuggestions(false);
         handleSearch(suggestion);
     }, [handleSearch]);
-    
+
     // Handle input focus
     const handleInputFocus = useCallback(() => {
         setShowSuggestions(true);
     }, []);
-    
+
     // Handle input blur with delay to allow suggestion clicks
     const handleInputBlur = useCallback(() => {
         setTimeout(() => setShowSuggestions(false), 200);
@@ -504,50 +504,50 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         audio.volume = audioState.volume;
         audio.preload = 'auto';
         audio.crossOrigin = 'anonymous';
-        
+
         // Enhanced event handlers
         audio.onloadstart = () => {
             console.log('🎵 Audio loading started...');
             setAudioState(prev => ({ ...prev, isLoading: true, error: null }));
         };
-        
+
         audio.oncanplay = () => {
             console.log('🎵 Audio can play');
-            setAudioState(prev => ({ 
-                ...prev, 
-                isLoading: false, 
+            setAudioState(prev => ({
+                ...prev,
+                isLoading: false,
                 duration: audio.duration || 0,
-                error: null 
+                error: null
             }));
         };
-        
+
         audio.onplay = () => {
             console.log('🎵 Audio started playing');
             setAudioState(prev => ({ ...prev, isPlaying: true, isLoading: false }));
         };
-        
+
         audio.onpause = () => {
             console.log('🎵 Audio paused');
             setAudioState(prev => ({ ...prev, isPlaying: false }));
         };
-        
+
         audio.onended = () => {
             console.log('🎵 Audio ended');
             setAudioState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
             setCurrentlyPlayingId(null);
         };
-        
+
         audio.onerror = (error) => {
             console.error('❌ Audio error:', error);
             if (!isStoppingRef.current) {
-                setAudioState(prev => ({ 
-                    ...prev, 
+                setAudioState(prev => ({
+                    ...prev,
                     error: 'Stream failed. Retrying...',
                     isLoading: true,
                     isPlaying: false,
                     isBuffering: false
                 }));
-                
+
                 // Auto-retry mechanism
                 setTimeout(() => {
                     if (audioRef.current && currentlyPlayingId) {
@@ -555,8 +555,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         audio.load(); // Reload the audio
                         audio.play().catch((retryError) => {
                             console.error('❌ Retry failed:', retryError);
-                            setAudioState(prev => ({ 
-                                ...prev, 
+                            setAudioState(prev => ({
+                                ...prev,
                                 error: 'Failed to load audio. Please try again.',
                                 isLoading: false,
                                 isPlaying: false
@@ -566,34 +566,34 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 }, 2000); // Retry after 2 seconds
             }
         };
-        
+
         audio.ontimeupdate = () => {
             // Only update if not dragging to prevent conflicts
             if (!isDragging) {
-                setAudioState(prev => ({ 
-                    ...prev, 
-                    currentTime: audio.currentTime 
+                setAudioState(prev => ({
+                    ...prev,
+                    currentTime: audio.currentTime
                 }));
             }
         };
-        
+
         audio.onvolumechange = () => {
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 volume: audio.volume,
                 isMuted: audio.muted
             }));
         };
-        
+
         audio.onstalled = () => {
             console.log('⚠️ Audio stream stalled');
         };
-        
+
         audio.onwaiting = () => {
             console.log('⏳ Audio buffering...');
             setAudioState(prev => ({ ...prev, isLoading: true, isBuffering: true }));
         };
-        
+
         audio.oncanplaythrough = () => {
             setAudioState(prev => ({ ...prev, isLoading: false, isBuffering: false }));
         };
@@ -609,9 +609,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
         audio.onseeked = () => {
             console.log(`🎯 Audio seek completed at ${audio.currentTime.toFixed(2)}s`);
-            setAudioState(prev => ({ 
-                ...prev, 
-                isSeeking: false, 
+            setAudioState(prev => ({
+                ...prev,
+                isSeeking: false,
                 seekPreviewTime: null,
                 isBuffering: false,
                 currentTime: audio.currentTime // Update with actual seek position
@@ -620,36 +620,36 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
         audio.onseeking = () => {
             console.log(`🔍 Audio seeking to ${audio.currentTime.toFixed(2)}s...`);
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 isSeeking: true,
                 currentTime: audio.currentTime // Update current time during seeking
             }));
         };
-        
+
         return audio;
     }, [audioState.volume, isDragging]);
 
     const stopAudio = useCallback(() => {
         isStoppingRef.current = true;
-        
+
         if (audioRef.current) {
             audioRef.current.pause();
             audioRef.current.currentTime = 0;
             audioRef.current.src = '';
             audioRef.current = null;
         }
-        
+
         if (autoStopTimerRef.current) {
             clearTimeout(autoStopTimerRef.current);
             autoStopTimerRef.current = null;
         }
-        
+
         if (progressUpdateRef.current) {
             clearInterval(progressUpdateRef.current);
             progressUpdateRef.current = null;
         }
-        
+
         setAudioState(prev => ({
             ...prev,
             isPlaying: false,
@@ -658,9 +658,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             error: null
         }));
         setCurrentlyPlayingId(null);
-        
+
         console.log('⏹️ Audio stopped');
-        
+
         setTimeout(() => {
             isStoppingRef.current = false;
         }, 100);
@@ -687,9 +687,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     await audioRef.current.play();
                 } catch (error) {
                     console.error('❌ Failed to resume audio:', error);
-                    setAudioState(prev => ({ 
-                        ...prev, 
-                        error: 'Failed to resume playback. Please try again.' 
+                    setAudioState(prev => ({
+                        ...prev,
+                        error: 'Failed to resume playback. Please try again.'
                     }));
                 }
             }
@@ -700,17 +700,17 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         console.log(`🎵 Starting playback for: ${track.title} by ${track.artist}`);
         setAudioState(prev => ({ ...prev, isLoading: true, error: null }));
         setCurrentlyPlayingId(track.id);
-        
+
         const audio = createAudioElement();
         audioRef.current = audio;
-        
+
         try {
             const streamUrl = `http://127.0.0.1:${apiPort}/youtube/stream/${track.id}?signingkey=${apiSigningKey}`;
             console.log('🔗 Stream URL:', streamUrl);
             audio.src = streamUrl;
-            
+
             await audio.play();
-            
+
             // Auto-stop after 30 seconds (configurable)
             autoStopTimerRef.current = setTimeout(() => {
                 if (currentlyPlayingId === track.id) {
@@ -718,11 +718,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     console.log(`⏰ Auto-stopped: ${track.title}`);
                 }
             }, 30000);
-            
+
         } catch (error) {
             console.error('❌ Failed to start audio:', error);
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 error: 'Failed to start playback. Please try again.',
                 isLoading: false
             }));
@@ -733,7 +733,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const setVolume = useCallback((volume: number) => {
         const clampedVolume = Math.max(0, Math.min(1, volume));
         setAudioState(prev => ({ ...prev, volume: clampedVolume }));
-        
+
         if (audioRef.current) {
             audioRef.current.volume = clampedVolume;
         }
@@ -741,7 +741,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
     const toggleMute = useCallback(() => {
         setAudioState(prev => ({ ...prev, isMuted: !prev.isMuted }));
-        
+
         if (audioRef.current) {
             audioRef.current.muted = !audioRef.current.muted;
         }
@@ -749,40 +749,40 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
     const seekTo = useCallback((time: number, showPreview = false) => {
         if (!audioRef.current || audioState.duration <= 0) return;
-        
+
         const clampedTime = Math.max(0, Math.min(audioState.duration, time));
-        
+
         if (showPreview) {
             // Show seek preview without actually seeking
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 seekPreviewTime: clampedTime,
-                isSeeking: true 
+                isSeeking: true
             }));
             return;
         }
-        
+
         console.log(`🎯 Seeking to ${clampedTime.toFixed(2)}s (was ${audioState.currentTime.toFixed(2)}s)`);
-        
+
         try {
             // Set seeking state immediately for UI feedback
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 seekPreviewTime: null,
                 isSeeking: true
             }));
-            
+
             // For streaming audio, we should NOT pause/resume as it can cause restart
             // Simply set the currentTime - the audio element will handle seeking internally
             audioRef.current.currentTime = clampedTime;
-            
+
             // The 'onseeked' event handler will clear the seeking state
             // and update currentTime when seek is complete
-            
+
         } catch (error) {
             console.error('❌ Seek failed:', error);
-            setAudioState(prev => ({ 
-                ...prev, 
+            setAudioState(prev => ({
+                ...prev,
                 isSeeking: false,
                 seekPreviewTime: null,
                 error: 'Seek failed. Please try again.'
@@ -795,7 +795,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         if (audioRef.current && audioState.duration > 0) {
             const newTime = Math.min(audioState.duration, audioState.currentTime + seconds);
             seekTo(newTime);
-            
+
             console.log(`⏭️ Skipped forward ${seconds}s to ${Math.floor(newTime)}s`);
         }
     }, [audioState.duration, audioState.currentTime, seekTo]);
@@ -804,16 +804,16 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         if (audioRef.current && audioState.duration > 0) {
             const newTime = Math.max(0, audioState.currentTime - seconds);
             seekTo(newTime);
-            
+
             console.log(`⏮️ Skipped backward ${seconds}s to ${Math.floor(newTime)}s`);
         }
     }, [audioState.currentTime, seekTo]);
 
     const clearSeekPreview = useCallback(() => {
-        setAudioState(prev => ({ 
-            ...prev, 
+        setAudioState(prev => ({
+            ...prev,
             seekPreviewTime: null,
-            isSeeking: false 
+            isSeeking: false
         }));
     }, []);
 
@@ -826,11 +826,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
 
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
         if (!currentlyPlayingId) return;
-        
+
         const currentY = e.touches[0].clientY;
         const deltaY = touchStartY.current - currentY;
         const deltaTime = Date.now() - touchStartTime.current;
-        
+
         // Detect upward swipe gesture
         if (deltaY > 30 && deltaTime < 300) {
             isSwipeGesture.current = true;
@@ -850,30 +850,30 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     // Progress bar dragging functionality
     const handleProgressMouseDown = useCallback((e: React.MouseEvent) => {
         if (!progressBarRef.current || !audioState.duration) return;
-        
+
         e.preventDefault();
         e.stopPropagation();
         setIsDragging(true);
-        
+
         const rect = progressBarRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
-        
+
         // Use the proper seekTo function
         seekTo(newTime);
     }, [audioState.duration, seekTo]);
 
     const handleProgressMouseMove = useCallback((e: MouseEvent) => {
         if (!isDragging || !progressBarRef.current || !audioState.duration) return;
-        
+
         e.preventDefault();
         e.stopPropagation();
         const rect = progressBarRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
-        
+
         // While dragging, show preview instead of continuous seeking
         // This prevents performance issues with streaming audio
         seekTo(newTime, true); // Show preview only during drag
@@ -882,42 +882,42 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const handleProgressMouseUp = useCallback((e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         // If we have a seek preview time, seek to it when drag ends
         if (audioState.seekPreviewTime !== null) {
             seekTo(audioState.seekPreviewTime); // Actually seek to the final position
         }
-        
+
         setIsDragging(false);
     }, [audioState.seekPreviewTime, seekTo]);
 
     // Touch handling for progress bar
     const handleProgressTouchStart = useCallback((e: React.TouchEvent) => {
         if (!progressBarRef.current || !audioState.duration) return;
-        
+
         e.preventDefault();
         e.stopPropagation();
         setIsDragging(true);
-        
+
         const rect = progressBarRef.current.getBoundingClientRect();
         const x = e.touches[0].clientX - rect.left;
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
-        
+
         // Use the proper seekTo function
         seekTo(newTime);
     }, [audioState.duration, seekTo]);
 
     const handleProgressTouchMove = useCallback((e: TouchEvent) => {
         if (!isDragging || !progressBarRef.current || !audioState.duration) return;
-        
+
         e.preventDefault();
         e.stopPropagation();
         const rect = progressBarRef.current.getBoundingClientRect();
         const x = e.touches[0].clientX - rect.left;
         const clickProgress = Math.max(0, Math.min(1, x / rect.width));
         const newTime = clickProgress * audioState.duration;
-        
+
         // While dragging, show preview instead of continuous seeking
         seekTo(newTime, true); // Show preview only during drag
     }, [isDragging, audioState.duration, seekTo]);
@@ -925,12 +925,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
     const handleProgressTouchEnd = useCallback((e: TouchEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         // If we have a seek preview time, seek to it when touch ends
         if (audioState.seekPreviewTime !== null) {
             seekTo(audioState.seekPreviewTime); // Actually seek to the final position
         }
-        
+
         setIsDragging(false);
     }, [audioState.seekPreviewTime, seekTo]);
 
@@ -964,7 +964,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             error: { bg: '#ef4444', border: '#dc2626' },
             warning: { bg: '#f59e0b', border: '#d97706' }
         };
-        
+
         const notification = document.createElement('div');
         notification.style.cssText = `
             position: fixed;
@@ -982,13 +982,13 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             line-height: 1.4;
             animation: slideInRight 0.3s ease-out;
         `;
-        
+
         notification.innerHTML = `
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    ${type === 'success' ? '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>' : 
-                      type === 'error' ? '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' :
-                      '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>'}
+                    ${type === 'success' ? '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>' :
+                type === 'error' ? '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>' :
+                    '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>'}
                 </svg>
                 <strong>${title}</strong>
             </div>
@@ -996,9 +996,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 ${message}
             </div>
         `;
-        
+
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             notification.style.animation = 'slideInRight 0.3s ease-out reverse';
             setTimeout(() => {
@@ -1008,14 +1008,14 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
             }, 300);
         }, 5000);
     }, []);
-    
+
     // Enhanced keyboard shortcuts
     useEffect(() => {
         const handleKeyPress = (e: KeyboardEvent) => {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
                 return; // Don't interfere with input fields
             }
-            
+
             switch (e.key) {
                 case ' ':
                     e.preventDefault();
@@ -1097,7 +1097,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                     break;
             }
         };
-        
+
         document.addEventListener('keydown', handleKeyPress);
         return () => document.removeEventListener('keydown', handleKeyPress);
     }, [currentlyPlayingId, searchResults, togglePlayPause, stopAudio, audioState.volume, audioState.duration, setVolume, toggleMute, skipForward, skipBackward, seekTo]);
@@ -1116,12 +1116,69 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
         return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     }, []);
 
-    // Memoized track actions component (download only)
+    // Memoized track actions component
     const TrackActions = useMemo(() => ({ track }: { track: YouTubeTrack }) => {
         const isDownloaded = downloadedTracks.has(track.id);
-        
+        const isCurrentTrack = currentlyPlayingId === track.id;
+        const isPlaying = isCurrentTrack && audioState.isPlaying;
+
         return (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'center' }}>
+                {/* Preview Button */}
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        togglePlayPause(track);
+                    }}
+                    style={{
+                        padding: '6px 10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        background: isCurrentTrack
+                            ? 'rgba(59, 130, 246, 0.15)'
+                            : 'rgba(255, 255, 255, 0.05)',
+                        color: isCurrentTrack ? '#60a5fa' : 'var(--text-secondary)',
+                        border: isCurrentTrack ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.2s ease',
+                        minWidth: '70px',
+                        justifyContent: 'center'
+                    }}
+                    onMouseEnter={(e) => {
+                        if (!isCurrentTrack) {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                            e.currentTarget.style.color = 'var(--text-primary)';
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (!isCurrentTrack) {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                            e.currentTarget.style.color = 'var(--text-secondary)';
+                        }
+                    }}
+                >
+                    {isPlaying ? (
+                        <>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="6" y="4" width="4" height="16" rx="1" />
+                                <rect x="14" y="4" width="4" height="16" rx="1" />
+                            </svg>
+                            Pause
+                        </>
+                    ) : (
+                        <>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                <polygon points="5,3 19,12 5,21" />
+                            </svg>
+                            Preview
+                        </>
+                    )}
+                </button>
+
                 {isDownloaded ? (
                     <div style={{
                         display: 'flex',
@@ -1133,23 +1190,29 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         padding: '4px 8px',
                         background: 'rgba(16, 185, 129, 0.1)',
                         borderRadius: '4px',
-                        border: '1px solid rgba(16, 185, 129, 0.3)'
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        cursor: 'default',
+                        userSelect: 'none'
                     }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                         </svg>
                         Downloaded
                     </div>
                 ) : (
                     <button
-                        onClick={() => startDownload(track)}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            startDownload(track);
+                        }}
                         disabled={!isDownloadPathSet}
+                        title={!isDownloadPathSet ? "Set download path in settings first" : "Download song"}
                         style={{
                             padding: '6px 12px',
                             fontSize: '11px',
                             fontWeight: '600',
-                            background: isDownloadPathSet 
-                                ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' 
+                            background: isDownloadPathSet
+                                ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
                                 : 'var(--surface-bg)',
                             color: isDownloadPathSet ? 'white' : 'var(--text-disabled)',
                             border: 'none',
@@ -1158,24 +1221,25 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             transition: 'all 0.2s ease',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '4px'
+                            gap: '4px',
+                            opacity: isDownloadPathSet ? 1 : 0.6
                         }}
                     >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                         </svg>
                         Download
                     </button>
                 )}
             </div>
         );
-    }, [downloadedTracks, startDownload, isDownloadPathSet]);
+    }, [downloadedTracks, startDownload, isDownloadPathSet, currentlyPlayingId, audioState.isPlaying, togglePlayPause]);
 
     return (
         <div className="youtube-music-container" style={{ padding: 'var(--space-lg)' }}>
             {/* Ultra-Elegant Global Audio Player */}
             {currentlyPlayingId && (
-                <div 
+                <div
                     className="elegant-player"
                     style={{
                         position: 'fixed',
@@ -1251,7 +1315,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 overflow: 'hidden'
                             }}>
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="rgba(255, 255, 255, 0.7)">
-                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
                                 </svg>
                                 {/* Subtle animation overlay */}
                                 <div style={{
@@ -1264,7 +1328,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     animation: 'shimmer 3s infinite'
                                 }} />
                             </div>
-                            
+
                             {/* Track Details */}
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{
@@ -1297,42 +1361,40 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     alignItems: 'center',
                                     gap: '6px',
                                     fontSize: '10px',
-                                    color: audioState.error ? '#ff6b6b' 
-                                         : audioState.isBuffering ? '#fbbf24' 
-                                         : audioState.isSeeking ? '#fbbf24'
-                                         : audioState.isLoading ? '#60a5fa'
-                                         : audioState.isPlaying ? '#34d399' 
-                                         : 'rgba(255, 255, 255, 0.6)',
+                                    color: audioState.error ? '#ff6b6b'
+                                        : audioState.isBuffering ? '#fbbf24'
+                                            : audioState.isSeeking ? '#fbbf24'
+                                                : audioState.isLoading ? '#60a5fa'
+                                                    : audioState.isPlaying ? '#34d399'
+                                                        : 'rgba(255, 255, 255, 0.6)',
                                     fontWeight: '600',
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.5px',
-                                    background: audioState.error ? 'rgba(255, 107, 107, 0.15)' 
-                                              : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
-                                              : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
-                                              : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
-                                              : 'rgba(255, 255, 255, 0.08)',
+                                    background: audioState.error ? 'rgba(255, 107, 107, 0.15)'
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)'
+                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)'
+                                                    : 'rgba(255, 255, 255, 0.08)',
                                     padding: '4px 10px',
                                     borderRadius: '12px',
-                                    border: `1px solid ${
-                                        audioState.error ? 'rgba(255, 107, 107, 0.2)' 
-                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.2)' 
-                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.2)'
-                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.2)' 
-                                        : 'rgba(255, 255, 255, 0.1)'
-                                    }`,
+                                    border: `1px solid ${audioState.error ? 'rgba(255, 107, 107, 0.2)'
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.2)'
+                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.2)'
+                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.2)'
+                                                    : 'rgba(255, 255, 255, 0.1)'
+                                        }`,
                                     backdropFilter: 'blur(8px)',
-                                    boxShadow: `0 2px 8px ${
-                                        audioState.error ? 'rgba(255, 107, 107, 0.15)' 
-                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)' 
-                                        : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
-                                        : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)' 
-                                        : 'rgba(0, 0, 0, 0.1)'
-                                    }`
+                                    boxShadow: `0 2px 8px ${audioState.error ? 'rgba(255, 107, 107, 0.15)'
+                                        : audioState.isBuffering || audioState.isSeeking ? 'rgba(251, 191, 36, 0.15)'
+                                            : audioState.isLoading ? 'rgba(96, 165, 250, 0.15)'
+                                                : audioState.isPlaying ? 'rgba(52, 211, 153, 0.15)'
+                                                    : 'rgba(0, 0, 0, 0.1)'
+                                        }`
                                 }}>
                                     {audioState.error ? (
                                         <>
                                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
                                             </svg>
                                             Error
                                         </>
@@ -1351,8 +1413,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     ) : audioState.isSeeking ? (
                                         <>
                                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="3" fill="currentColor"/>
-                                                <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3"/>
+                                                <circle cx="12" cy="12" r="3" fill="currentColor" />
+                                                <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 3" />
                                             </svg>
                                             Seeking
                                         </>
@@ -1371,17 +1433,17 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     ) : audioState.isPlaying ? (
                                         <>
                                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
-                                                <polygon points="9,7 15,12 9,17" fill="white"/>
+                                                <circle cx="12" cy="12" r="8" fill="currentColor" />
+                                                <polygon points="9,7 15,12 9,17" fill="white" />
                                             </svg>
                                             Playing
                                         </>
                                     ) : (
                                         <>
                                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                                <circle cx="12" cy="12" r="8" fill="currentColor"/>
-                                                <rect x="8" y="8" width="2" height="8" fill="white"/>
-                                                <rect x="14" y="8" width="2" height="8" fill="white"/>
+                                                <circle cx="12" cy="12" r="8" fill="currentColor" />
+                                                <rect x="8" y="8" width="2" height="8" fill="white" />
+                                                <rect x="14" y="8" width="2" height="8" fill="white" />
                                             </svg>
                                             Paused
                                         </>
@@ -1393,9 +1455,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         {/* Elegant Compact Progress Bar (when not expanded) */}
                         {!isProgressBarExpanded && (
                             <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                <span style={{ 
-                                    color: audioState.seekPreviewTime ? '#fbbf24' : 'rgba(255, 255, 255, 0.8)', 
-                                    fontSize: '12px', 
+                                <span style={{
+                                    color: audioState.seekPreviewTime ? '#fbbf24' : 'rgba(255, 255, 255, 0.8)',
+                                    fontSize: '12px',
                                     fontWeight: '500',
                                     minWidth: '40px',
                                     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
@@ -1413,35 +1475,35 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.2)',
                                     border: '1px solid rgba(255, 255, 255, 0.05)',
                                     overflow: 'hidden'
-                                }} 
-                                onClick={(e) => {
-                                    if (isDragging) return; // Prevent click during drag
-                                    
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const x = e.clientX - rect.left;
-                                    const clickProgress = Math.max(0, Math.min(1, x / rect.width));
-                                    const newTime = clickProgress * audioState.duration;
-                                    
-                                    // Use the robust seekTo function for clicks
-                                    seekTo(newTime);
                                 }}
-                                onMouseMove={(e) => {
-                                    if (!isDragging) {
+                                    onClick={(e) => {
+                                        if (isDragging) return; // Prevent click during drag
+
+                                        e.preventDefault();
+                                        e.stopPropagation();
+
                                         const rect = e.currentTarget.getBoundingClientRect();
                                         const x = e.clientX - rect.left;
-                                        const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
-                                        const hoverTime = hoverProgress * audioState.duration;
-                                        seekTo(hoverTime, true); // Show preview
-                                    }
-                                }}
-                                onMouseLeave={() => {
-                                    if (!isDragging) {
-                                        clearSeekPreview();
-                                    }
-                                }}
+                                        const clickProgress = Math.max(0, Math.min(1, x / rect.width));
+                                        const newTime = clickProgress * audioState.duration;
+
+                                        // Use the robust seekTo function for clicks
+                                        seekTo(newTime);
+                                    }}
+                                    onMouseMove={(e) => {
+                                        if (!isDragging) {
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const x = e.clientX - rect.left;
+                                            const hoverProgress = Math.max(0, Math.min(1, x / rect.width));
+                                            const hoverTime = hoverProgress * audioState.duration;
+                                            seekTo(hoverTime, true); // Show preview
+                                        }
+                                    }}
+                                    onMouseLeave={() => {
+                                        if (!isDragging) {
+                                            clearSeekPreview();
+                                        }
+                                    }}
                                 >
                                     {/* Elegant Buffer Progress */}
                                     <div style={{
@@ -1454,13 +1516,13 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         left: 0,
                                         transition: 'width 0.3s ease'
                                     }} />
-                                    
+
                                     {/* Elegant Playback Progress */}
                                     <div style={{
                                         width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
                                         height: '100%',
                                         background: audioState.isSeeking || audioState.seekPreviewTime
-                                            ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' 
+                                            ? 'linear-gradient(90deg, #fbbf24, #f59e0b)'
                                             : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
                                         borderRadius: '8px',
                                         transition: isDragging || audioState.isSeeking || audioState.seekPreviewTime ? 'none' : 'width 0.1s ease',
@@ -1499,9 +1561,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         </div>
                                     </div>
                                 </div>
-                                <span style={{ 
-                                    color: 'rgba(255, 255, 255, 0.8)', 
-                                    fontSize: '12px', 
+                                <span style={{
+                                    color: 'rgba(255, 255, 255, 0.8)',
+                                    fontSize: '12px',
                                     fontWeight: '500',
                                     minWidth: '40px',
                                     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
@@ -1555,10 +1617,10 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 title="Skip backward 10s (←)"
                             >
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
                                 </svg>
                             </button>
-                            
+
                             {/* Ultra-Elegant Play/Pause Button */}
                             <button
                                 onClick={() => {
@@ -1569,8 +1631,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }}
                                 disabled={audioState.isLoading}
                                 style={{
-                                    background: audioState.isPlaying 
-                                        ? 'linear-gradient(135deg, #34d399, #10b981)' 
+                                    background: audioState.isPlaying
+                                        ? 'linear-gradient(135deg, #34d399, #10b981)'
                                         : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                                     border: 'none',
                                     color: 'white',
@@ -1583,8 +1645,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
                                     minWidth: '64px',
                                     minHeight: '64px',
-                                    boxShadow: audioState.isPlaying 
-                                        ? '0 12px 32px rgba(52, 211, 153, 0.4), 0 0 0 1px rgba(52, 211, 153, 0.2)' 
+                                    boxShadow: audioState.isPlaying
+                                        ? '0 12px 32px rgba(52, 211, 153, 0.4), 0 0 0 1px rgba(52, 211, 153, 0.2)'
                                         : '0 12px 32px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.2)',
                                     opacity: audioState.isLoading ? 0.7 : 1,
                                     position: 'relative',
@@ -1619,7 +1681,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     opacity: audioState.isPlaying ? 1 : 0,
                                     animation: audioState.isPlaying ? 'ripple 3s infinite' : 'none'
                                 }} />
-                                
+
                                 {audioState.isLoading ? (
                                     <div style={{
                                         width: '24px',
@@ -1633,12 +1695,12 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     }} />
                                 ) : audioState.isPlaying ? (
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1 }}>
-                                        <rect x="6" y="4" width="4" height="16" rx="2"/>
-                                        <rect x="14" y="4" width="4" height="16" rx="2"/>
+                                        <rect x="6" y="4" width="4" height="16" rx="2" />
+                                        <rect x="14" y="4" width="4" height="16" rx="2" />
                                     </svg>
                                 ) : (
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style={{ position: 'relative', zIndex: 1, marginLeft: '3px' }}>
-                                        <polygon points="5,3 19,12 5,21"/>
+                                        <polygon points="5,3 19,12 5,21" />
                                     </svg>
                                 )}
                             </button>
@@ -1684,7 +1746,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 title="Skip forward 10s (→)"
                             >
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                                    <path d="m4 18 8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
                                 </svg>
                             </button>
 
@@ -1717,9 +1779,9 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 >
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                         {audioState.isMuted ? (
-                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+                                            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
                                         ) : (
-                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                                         )}
                                     </svg>
                                 </button>
@@ -1774,9 +1836,50 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 title="Stop playback (Esc)"
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                    <rect x="6" y="6" width="12" height="12" rx="2" />
                                 </svg>
                             </button>
+
+                            {/* Elegant Download Button for Currently Playing */}
+                            {searchResults.find(t => t.id === currentlyPlayingId) && !downloadedTracks.has(currentlyPlayingId!) && (
+                                <button
+                                    onClick={() => startDownload(searchResults.find(t => t.id === currentlyPlayingId)!)}
+                                    disabled={!isDownloadPathSet}
+                                    style={{
+                                        background: 'rgba(16, 185, 129, 0.15)',
+                                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                                        color: 'rgba(16, 185, 129, 0.9)',
+                                        cursor: isDownloadPathSet ? 'pointer' : 'not-allowed',
+                                        padding: '8px',
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                                        minWidth: '36px',
+                                        minHeight: '36px',
+                                        backdropFilter: 'blur(8px)',
+                                        marginLeft: '8px'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        if (isDownloadPathSet) {
+                                            e.currentTarget.style.background = 'rgba(16, 185, 129, 0.25)';
+                                            e.currentTarget.style.color = 'rgba(16, 185, 129, 1)';
+                                            e.currentTarget.style.transform = 'scale(1.05)';
+                                        }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'rgba(16, 185, 129, 0.15)';
+                                        e.currentTarget.style.color = 'rgba(16, 185, 129, 0.9)';
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                    }}
+                                    title={!isDownloadPathSet ? "Set download path in settings" : "Download song"}
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                                    </svg>
+                                </button>
+                            )}
 
                             {/* Elegant Keyboard Help Button */}
                             <button
@@ -1813,16 +1916,16 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 title="Keyboard shortcuts"
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                    <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2"/>
-                                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2"/>
-                                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2"/>
-                                    <rect x="6" y="7" width="2" height="2" rx="0.5"/>
-                                    <rect x="10" y="7" width="2" height="2" rx="0.5"/>
-                                    <rect x="14" y="7" width="2" height="2" rx="0.5"/>
+                                    <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+                                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2" />
+                                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2" />
+                                    <rect x="6" y="7" width="2" height="2" rx="0.5" />
+                                    <rect x="10" y="7" width="2" height="2" rx="0.5" />
+                                    <rect x="14" y="7" width="2" height="2" rx="0.5" />
                                 </svg>
                             </button>
                         </div>
-                        
+
                         {/* Elegant Keyboard Help Tooltip */}
                         {showKeyboardHelp && (
                             <div style={{
@@ -1917,7 +2020,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 color: 'rgba(255, 255, 255, 0.8)',
                                 fontSize: '12px'
                             }}>
-                                <span style={{ 
+                                <span style={{
                                     color: audioState.seekPreviewTime ? '#f59e0b' : 'rgba(255, 255, 255, 0.8)',
                                     fontWeight: audioState.seekPreviewTime ? '600' : '400',
                                     transition: 'all 0.2s ease'
@@ -1935,7 +2038,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 )}
                                 <span>{formatTime(audioState.duration)}</span>
                             </div>
-                            
+
                             {/* Enhanced Draggable Progress Bar with Buffer Visualization */}
                             <div
                                 ref={progressBarRef}
@@ -1976,7 +2079,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     left: 0,
                                     transition: 'width 0.3s ease'
                                 }} />
-                                
+
                                 {/* Progress Fill */}
                                 <div style={{
                                     width: `${audioState.duration > 0 ? ((audioState.seekPreviewTime || audioState.currentTime) / audioState.duration) * 100 : 0}%`,
@@ -2019,7 +2122,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         )}
                                     </div>
                                 </div>
-                                
+
                                 {/* Buffering Progress Indicator */}
                                 {audioState.isBuffering && (
                                     <div style={{
@@ -2034,7 +2137,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                         animation: 'pulse 1s infinite'
                                     }} />
                                 )}
-                                
+
                                 {/* Hover Effect Overlay */}
                                 <div style={{
                                     position: 'absolute',
@@ -2046,11 +2149,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     opacity: 0,
                                     transition: 'opacity 0.2s ease',
                                     pointerEvents: 'none'
-                                }} 
-                                className="progress-hover-overlay"
+                                }}
+                                    className="progress-hover-overlay"
                                 />
                             </div>
-                            
+
                             {/* Close Button */}
                             <button
                                 onClick={() => setIsProgressBarExpanded(false)}
@@ -2108,15 +2211,15 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }}
                                 disabled={isSearching}
                             />
-                            <div id="search-help" style={{ 
-                                fontSize: '12px', 
-                                color: 'var(--text-tertiary)', 
+                            <div id="search-help" style={{
+                                fontSize: '12px',
+                                color: 'var(--text-tertiary)',
                                 marginTop: '4px',
-                                display: 'none' 
+                                display: 'none'
                             }}>
                                 Press Enter to search, Escape to close suggestions
                             </div>
-                            
+
                             {/* Suggestions Dropdown */}
                             {showSuggestions && suggestions.length > 0 && (
                                 <div style={{
@@ -2144,7 +2247,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             Loading suggestions...
                                         </div>
                                     )}
-                                    
+
                                     {autocompleteError && (
                                         <div style={{
                                             padding: '12px 16px',
@@ -2155,7 +2258,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                             {autocompleteError}
                                         </div>
                                     )}
-                                    
+
                                     {!isLoadingSuggestions && !autocompleteError && suggestions.map((suggestion, index) => {
                                         const getLabel = (type: string) => {
                                             switch (type) {
@@ -2175,7 +2278,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                     return '';
                                             }
                                         };
-                                        
+
                                         return (
                                             <div
                                                 key={`${suggestion.type}-${index}-${suggestion.text}`}
@@ -2226,7 +2329,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         </div>
                                                     )}
                                                 </div>
-                                                
+
                                                 <span style={{
                                                     marginLeft: 'auto',
                                                     fontSize: '11px',
@@ -2244,7 +2347,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 </div>
                             )}
                         </div>
-                        
+
                         <button
                             onClick={() => handleSearch()}
                             disabled={isSearching || !searchQuery.trim()}
@@ -2253,14 +2356,14 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 padding: '12px 16px',
                                 fontSize: '14px',
                                 fontWeight: '500',
-                                background: isSearching 
-                                    ? 'var(--surface-bg)' 
+                                background: isSearching
+                                    ? 'var(--surface-bg)'
                                     : !searchQuery.trim()
                                         ? 'var(--surface-bg)'
                                         : 'var(--brand-blue)',
                                 color: isSearching || !searchQuery.trim() ? 'var(--text-disabled)' : 'white',
-                                border: isSearching 
-                                    ? '1px solid var(--brand-blue)' 
+                                border: isSearching
+                                    ? '1px solid var(--brand-blue)'
                                     : !searchQuery.trim()
                                         ? '1px solid var(--border-color)'
                                         : '1px solid var(--brand-blue)',
@@ -2303,11 +2406,11 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             {/* Search Icon */}
                             {!isSearching && (
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-                                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                    <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
                             )}
-                            
+
                             {/* Loading animation backdrop */}
                             {isSearching && (
                                 <div style={{
@@ -2321,7 +2424,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                     borderRadius: '8px'
                                 }} />
                             )}
-                            
+
                             {/* Button text */}
                             <span style={{
                                 position: 'relative',
@@ -2330,7 +2433,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }}>
                                 {isSearching ? 'Searching...' : 'Search'}
                             </span>
-                            
+
                             {/* Pulse effect for searching state */}
                             {isSearching && (
                                 <div style={{
@@ -2347,7 +2450,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                 }} />
                             )}
                         </button>
-                        
+
                         {/* Enhanced CSS animations and table styles */}
                         <style>{`
                             @keyframes shimmer {
@@ -2768,7 +2871,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                         gap: '8px'
                     }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
                         </svg>
                         {error}
                         <button
@@ -2793,7 +2896,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                             }}
                         >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
                             </svg>
                         </button>
                     </div>
@@ -2821,7 +2924,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                 )}
 
                 <div className="table-wrapper">
-                    <table 
+                    <table
                         className="songs-table youtube-tracks-table"
                         role="table"
                         aria-label="YouTube Music search results"
@@ -2928,7 +3031,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         }}
                                                     />
                                                 ) : null}
-                                                
+
                                                 {/* Cover Art Placeholder */}
                                                 <div
                                                     className="cover-art-placeholder"
@@ -2946,7 +3049,7 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                 >
                                                     <MusicIcon />
                                                 </div>
-                                                
+
                                                 {/* Enhanced Play/Pause/Loading Button Overlay */}
                                                 <div
                                                     style={{
@@ -2956,8 +3059,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         transform: 'translate(-50%, -50%)',
                                                         width: '24px',
                                                         height: '24px',
-                                                        background: isCurrentlyPlaying 
-                                                            ? 'rgba(59, 130, 246, 0.9)' 
+                                                        background: isCurrentlyPlaying
+                                                            ? 'rgba(59, 130, 246, 0.9)'
                                                             : 'rgba(0, 0, 0, 0.8)',
                                                         borderRadius: '50%',
                                                         display: 'flex',
@@ -2967,8 +3070,8 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                         transition: 'all 0.2s ease',
                                                         pointerEvents: 'none',
                                                         border: '2px solid rgba(255, 255, 255, 0.3)',
-                                                        boxShadow: isCurrentlyPlaying 
-                                                            ? '0 0 12px rgba(59, 130, 246, 0.6)' 
+                                                        boxShadow: isCurrentlyPlaying
+                                                            ? '0 0 12px rgba(59, 130, 246, 0.6)'
                                                             : 'none'
                                                     }}
                                                 >
@@ -2985,17 +3088,17 @@ const YouTubeMusic: React.FC<YouTubeMusicProps> = ({
                                                     ) : isCurrentlyPlaying ? (
                                                         // Pause icon when playing
                                                         <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
-                                                            <rect x="6" y="4" width="4" height="16" rx="1"/>
-                                                            <rect x="14" y="4" width="4" height="16" rx="1"/>
+                                                            <rect x="6" y="4" width="4" height="16" rx="1" />
+                                                            <rect x="14" y="4" width="4" height="16" rx="1" />
                                                         </svg>
                                                     ) : (
                                                         // Play icon when not playing
                                                         <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
-                                                            <polygon points="5,3 19,12 5,21"/>
+                                                            <polygon points="5,3 19,12 5,21" />
                                                         </svg>
                                                     )}
                                                 </div>
-                                                
+
                                                 {/* Hover overlay for better visibility */}
                                                 <div
                                                     style={{

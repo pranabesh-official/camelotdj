@@ -1,3 +1,31 @@
+import argparse
+import sys
+import os
+import subprocess
+import shutil
+
+# Global check for ffmpeg
+def check_ffmpeg():
+    """Check if ffmpeg is available in the system PATH or common Mac paths"""
+    try:
+        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return 'ffmpeg'  # Already in PATH
+    except (FileNotFoundError, Exception):
+        # Also check common Mac paths
+        common_paths = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        return None
+
+FFMPEG_PATH = check_ffmpeg()
+HAS_FFMPEG = FFMPEG_PATH is not None
+if not HAS_FFMPEG:
+    print("⚠️ WARNING: FFmpeg not found! High-quality conversion and analysis features will be limited.")
+    print("💡 Suggestion: Run 'brew install ffmpeg' to enable full functionality.")
+else:
+    print(f"✅ FFmpeg found at: {FFMPEG_PATH}")
+
 from flask import Flask, request, jsonify, send_file, Response, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -158,7 +186,11 @@ def setup_download_queue_callbacks():
             'quality': task.quality,
             'format': task.format,
             'timestamp': time.time(),
-            'percentage': task.progress
+            'percentage': task.progress,
+            'speed': getattr(task, 'speed', 0),
+            'eta_seconds': getattr(task, 'eta', 0),
+            'total_bytes': getattr(task, 'total_bytes', 0),
+            'downloaded_bytes': getattr(task, 'downloaded_size', 0)
         })
     
     def completion_callback(task):
@@ -206,6 +238,21 @@ def setup_download_queue_callbacks():
 
 # Initialize callbacks
 setup_download_queue_callbacks()
+
+# Setup download queue handlers with dependency injection
+def setup_download_queue_handlers():
+    """Setup handlers for the download queue manager"""
+    from download_queue_manager import download_queue_manager
+    download_queue_manager.set_handlers(
+        download_with_ytdlp_enhanced,
+        convert_to_320kbps_mp3,
+        enhance_metadata_with_artwork,
+        analyze_music_file,
+        verify_audio_quality
+    )
+
+# Initialize handlers early? No, they need to be defined first.
+# Moving the call further down the file.
 
 app = Flask(__name__)
 app.add_url_rule("/graphql/", view_func=view_func)
@@ -297,6 +344,8 @@ def health_check():
             "status": health_status,
             "timestamp": time.time(),
             "response_time_ms": round(response_time, 2),
+            "ffmpeg_available": HAS_FFMPEG,
+            "ffmpeg_path": FFMPEG_PATH if HAS_FFMPEG else None,
             "database": {
                 "file_count": file_count,
                 "playlist_count": playlist_count,
@@ -320,7 +369,9 @@ def health_check():
                 "database": "healthy",
                 "music_analyzer": "healthy",
                 "download_queue": "healthy" if download_queue_manager.is_running else "stopped"
-            }
+            },
+            "queue_manager_status": "running" if download_queue_manager.is_running else "stopped",
+            "database_status": "connected"
         }
         
         # Return appropriate HTTP status based on health
@@ -2008,6 +2059,10 @@ def convert_to_320kbps_mp3(temp_path, final_path, download_id=None):
     try:
         from pydub import AudioSegment
         
+        # Robust FFmpeg path for pydub
+        if HAS_FFMPEG:
+            AudioSegment.converter = FFMPEG_PATH
+            
         print(f"🔄 Converting to guaranteed 320kbps MP3: {temp_path} -> {final_path}")
         
         # Emit conversion start progress
@@ -2230,6 +2285,16 @@ def enhance_metadata_with_artwork(file_path, metadata):
 def download_with_ytdlp(url, output_path, title, artist):
     """Download using yt-dlp (more reliable) - ensures highest quality available for 320kbps output"""
     try:
+        # Check for cookie file
+        cookie_file = os.path.expanduser('~/youtube_cookies.txt')
+        has_cookies = os.path.exists(cookie_file)
+        
+        import random
+        user_agents = [
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ]
+        
         ydl_opts = {
             # Prioritize high-quality audio formats, prefer 320kbps+ when available
             'format': 'bestaudio[abr>=320]/bestaudio[abr>=256]/bestaudio[abr>=192]/bestaudio/best[height<=720]',
@@ -2242,7 +2307,18 @@ def download_with_ytdlp(url, output_path, title, artist):
             'postprocessors': [],  # Don't convert yet, we'll handle it with pydub at 320kbps
             'quiet': False,
             'no_warnings': False,
+            'user_agent': random.choice(user_agents),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'ios'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
         }
+        
+        # Add cookies if available
+        if has_cookies:
+            ydl_opts['cookiefile'] = cookie_file
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             print(f"🎵 yt-dlp downloading with high-quality settings for 320kbps output: {url}")
@@ -2271,15 +2347,26 @@ def download_with_ytdlp(url, output_path, title, artist):
         print(f"❌ yt-dlp download failed: {str(e)}")
         return False
 
-def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
+def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id, progress_callback=None):
     """Enhanced download using yt-dlp with real-time progress and metadata extraction"""
+    import traceback
+    
+    def log_error(msg):
+        with open('download_debug.log', 'a') as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {msg}\n")
+            
     try:
         # Emit initial progress
-        emit_progress(download_id, {
+        initial_data = {
             'stage': 'initializing',
             'progress': 0,
             'message': 'Initializing download...'
-        })
+        }
+        
+        if progress_callback:
+            progress_callback(initial_data)
+        else:
+            emit_progress(download_id, initial_data)
         
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -2318,8 +2405,11 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
                         'remaining_bytes': remaining_bytes
                     }
                     
-                    # Emit progress with enhanced data
-                    emit_progress(download_id, progress_data)
+                    # Emit progress
+                    if progress_callback:
+                        progress_callback(progress_data)
+                    else:
+                        emit_progress(download_id, progress_data)
                 else:
                     # No total size available, show indeterminate progress
                     progress_data = {
@@ -2337,9 +2427,12 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
                         'bytes_per_second': speed,
                         'remaining_bytes': 0
                     }
-                    emit_progress(download_id, progress_data)
+                    if progress_callback:
+                        progress_callback(progress_data)
+                    else:
+                        emit_progress(download_id, progress_data)
             elif d['status'] == 'finished':
-                emit_progress(download_id, {
+                finished_data = {
                     'stage': 'converting',
                     'progress': 90,
                     'message': 'Download complete, converting to MP3...',
@@ -2347,19 +2440,89 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
                     'format': 'mp3',
                     'timestamp': time.time(),
                     'percentage': 90
-                })
+                }
+                if progress_callback:
+                    progress_callback(finished_data)
+                else:
+                    emit_progress(download_id, finished_data)
+            elif d['status'] == 'downloading':
+                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                downloaded_bytes = d.get('downloaded_bytes', 0)
+                speed = d.get('speed', 0)
+                
+                if total_bytes > 0:
+                    progress = min(int((downloaded_bytes / total_bytes) * 90), 90)
+                    remaining_bytes = total_bytes - downloaded_bytes
+                    eta_seconds = remaining_bytes / speed if speed > 0 else 0
+                    
+                    progress_data = {
+                        'stage': 'downloading',
+                        'progress': progress,
+                        'message': f'Downloading... {progress}%',
+                        'downloaded_bytes': downloaded_bytes,
+                        'total_bytes': total_bytes,
+                        'speed': speed,
+                        'speed_mb': speed / (1024 * 1024) if speed > 0 else 0,
+                        'eta_seconds': eta_seconds,
+                        'timestamp': time.time(),
+                        'percentage': progress
+                    }
+                    if progress_callback:
+                        progress_callback(progress_data)
+                    else:
+                        emit_progress(download_id, progress_data)
+                else:
+                    # Indeterminate progress
+                    progress_data = {
+                        'stage': 'downloading',
+                        'progress': 0,
+                        'message': f'Downloading... {format_bytes(downloaded_bytes)}',
+                        'downloaded_bytes': downloaded_bytes,
+                        'total_bytes': 0,
+                        'speed': speed,
+                        'timestamp': time.time(),
+                        'percentage': 0
+                    }
+                    if progress_callback:
+                        progress_callback(progress_data)
+                    else:
+                        emit_progress(download_id, progress_data)
             elif d['status'] == 'error':
-                emit_progress(download_id, {
+                error_data = {
                     'stage': 'error',
                     'progress': 0,
                     'message': f'Download error: {d.get("error", "Unknown error")}',
                     'timestamp': time.time(),
-                    'percentage': 0
-                })
+                    'percentage': 0,
+                    'error': d.get('error', 'Unknown error')
+                }
+                if progress_callback:
+                    progress_callback(error_data)
+                else:
+                    emit_progress(download_id, error_data)
+
+        
+        # Check for cookie file
+        cookie_file = os.path.expanduser('~/youtube_cookies.txt')
+        has_cookies = os.path.exists(cookie_file)
+        
+        if has_cookies:
+            print(f"✅ Using cookies from: {cookie_file}")
+        else:
+            print(f"⚠️ No cookies file found at: {cookie_file}")
+            print(f"💡 For better reliability, export YouTube cookies from your browser")
+        
+        # Rotate user agents for better success rate
+        import random
+        user_agents = [
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ]
         
         ydl_opts = {
-            # Enhanced format selection for maximum quality
-            'format': 'bestaudio[abr>=320]/bestaudio[abr>=256]/bestaudio[abr>=192]/bestaudio/best[height<=720]',
+            # Use safest audio formats for reliability
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
             'outtmpl': output_path,
             'noplaylist': True,
             'extractaudio': True,
@@ -2372,14 +2535,38 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
             'embedthumbnail': False,  # We'll handle artwork manually
             'quiet': False,
             'no_warnings': False,
+            'nocheckcertificate': True,
+            'ignoreerrors': True,
+            'no_color': True,
             'progress_hooks': [progress_hook],
+            'ffmpeg_location': FFMPEG_PATH if HAS_FFMPEG else None,
+            'prefer_ffmpeg': True,
             # Additional options for better compatibility
-            'extractor_retries': 3,
-            'fragment_retries': 3,
-            'retries': 3,
+            'extractor_retries': 5,
+            'fragment_retries': 5,
+            'retries': 5,
             'socket_timeout': 30,
             'http_chunk_size': 10485760,  # 10MB chunks
+            'user_agent': random.choice(user_agents),
+            # YouTube-specific extractor arguments to bypass restrictions
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'ios'],
+                    'player_skip': ['webpage', 'configs'],
+                    'skip': ['hls', 'dash'],
+                }
+            },
+            # HTTP headers for better compatibility
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
         }
+        
+        # Add cookies if available
+        if has_cookies:
+            ydl_opts['cookiefile'] = cookie_file
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             print(f"🎵 Enhanced yt-dlp downloading with 320kbps and metadata: {url}")
@@ -2433,16 +2620,36 @@ def download_with_ytdlp_enhanced(url, output_path, title, artist, download_id):
                 })
                 return False, metadata, None
             
-            # Check for the actual downloaded file - yt-dlp might add .mp3 extension
+            # Robustly find the actual downloaded file
             actual_output_path = output_path
-            if not os.path.exists(output_path) and os.path.exists(output_path + '.mp3'):
-                actual_output_path = output_path + '.mp3'
-                print(f"🔄 Downloaded file found at: {actual_output_path}")
+            if not os.path.exists(output_path):
+                # Check for common extensions yt-dlp might have added
+                base_path = os.path.splitext(output_path)[0]
+                ext_to_check = ['.m4a', '.webm', '.mp3', '.m4p', '.opus', '.wav', '.flac']
+                found = False
+                for ext in ext_to_check:
+                    if os.path.exists(base_path + ext):
+                        actual_output_path = base_path + ext
+                        found = True
+                        print(f"🔄 Downloaded file found with extension: {actual_output_path}")
+                        break
+                    if os.path.exists(output_path + ext):
+                        actual_output_path = output_path + ext
+                        found = True
+                        print(f"🔄 Downloaded file found by appending extension: {actual_output_path}")
+                        break
+                
+                if not found:
+                    print(f"❌ Could not find downloaded file at {output_path} or related paths")
+                    return False, metadata, None
             
-            return os.path.exists(actual_output_path), metadata, actual_output_path
+            return True, metadata, actual_output_path
             
     except Exception as e:
+        error_trace = traceback.format_exc()
         print(f"❌ Enhanced yt-dlp download failed: {str(e)}")
+        log_error(f"Download failed for {url}: {str(e)}\n{error_trace}")
+        
         emit_progress(download_id, {
             'stage': 'error',
             'progress': 0,
@@ -5674,6 +5881,13 @@ def automix_transition_types():
     """Get available transition types for automix."""
     automix_api = get_automix_api()
     return automix_api.get_transition_types(request)
+
+# Setup handlers at the end once all functions are defined
+try:
+    setup_download_queue_handlers()
+    print("✅ Download queue handlers initialized successfully")
+except Exception as e:
+    print(f"❌ Failed to initialize download queue handlers: {e}")
 
 if __name__ == "__main__":
     print(f"🎆 Starting Enhanced Mixed In Key API Server with WebSocket support...")

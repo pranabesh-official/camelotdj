@@ -1,17 +1,18 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { 
-    Download, 
-    X, 
-    Square, 
-    RotateCcw, 
-    CheckCircle, 
-    XCircle, 
-    Clock, 
+import {
+    Download,
+    X,
+    Square,
+    RotateCcw,
+    CheckCircle,
+    XCircle,
+    Clock,
     AlertCircle,
     Trash2,
     Music,
-    Settings
+    Settings,
+    Activity
 } from 'lucide-react';
 
 interface DownloadTask {
@@ -37,6 +38,9 @@ interface DownloadTask {
     canRetry: boolean;
     quality?: string;
     format?: string;
+    speed?: number;
+    eta?: number;
+    totalSize?: number;
 }
 
 interface DownloadStats {
@@ -82,15 +86,140 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
         activeDownloads: 0,
         queuedDownloads: 0
     });
-    
+
+    // Enhanced features state
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+    const [autoRetryEnabled, setAutoRetryEnabled] = useState(true);
+    const [maxRetries, setMaxRetries] = useState(3);
+
     // Refs
     const socketRef = useRef<Socket | null>(null);
     const isMountedRef = useRef(true);
-    
+    const retryTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+    // Enhanced error message mapping
+    const getErrorMessage = useCallback((error: string): string => {
+        const errorLower = error.toLowerCase();
+
+        if (errorLower.includes('403') || errorLower.includes('forbidden')) {
+            return '🚫 YouTube blocked the request. Please add browser cookies for better success rate.';
+        }
+        if (errorLower.includes('404') || errorLower.includes('not found')) {
+            return '❌ Video not found or has been removed.';
+        }
+        if (errorLower.includes('private') || errorLower.includes('unavailable')) {
+            return '🔒 Video is private or unavailable.';
+        }
+        if (errorLower.includes('age') || errorLower.includes('restricted')) {
+            return '🔞 Age-restricted video. Browser cookies required.';
+        }
+        if (errorLower.includes('network') || errorLower.includes('connection')) {
+            return '📡 Network error. Check your internet connection.';
+        }
+        if (errorLower.includes('disk') || errorLower.includes('space')) {
+            return '💾 Insufficient disk space. Free up some space and try again.';
+        }
+        if (errorLower.includes('timeout')) {
+            return '⏱️ Request timed out. Please try again.';
+        }
+        if (errorLower.includes('ffmpeg')) {
+            return '🎵 Audio conversion error. FFmpeg may not be installed.';
+        }
+
+        return `❌ ${error}`;
+    }, []);
+
+    // Desktop notification function
+    const showDesktopNotification = useCallback((title: string, body: string, icon?: string) => {
+        if ('Notification' in window && notificationPermission === 'granted') {
+            try {
+                new Notification(title, {
+                    body,
+                    icon: icon || '/icon.png',
+                    badge: '/badge.png',
+                    tag: 'camelotdj-download',
+                    requireInteraction: false
+                });
+            } catch (error) {
+                console.error('Failed to show desktop notification:', error);
+            }
+        }
+    }, [notificationPermission]);
+
+    // Request notification permission on mount
+    useEffect(() => {
+        if ('Notification' in window) {
+            if (Notification.permission === 'default') {
+                Notification.requestPermission().then(permission => {
+                    setNotificationPermission(permission);
+                });
+            } else {
+                setNotificationPermission(Notification.permission);
+            }
+        }
+    }, []);
+
+    // Network status monitoring
+    useEffect(() => {
+        const handleOnline = () => {
+            setIsOnline(true);
+            showNotification('Back Online', 'Internet connection restored', 'success');
+            // Retry failed downloads due to network errors
+            const networkFailedDownloads = Array.from(downloads.values())
+                .filter(d => d.status === 'failed' && d.error?.toLowerCase().includes('network'));
+
+            networkFailedDownloads.forEach(download => {
+                if (download.retryCount < maxRetries) {
+                    setTimeout(() => retryDownload(download.id), 2000);
+                }
+            });
+        };
+
+        const handleOffline = () => {
+            setIsOnline(false);
+            showNotification('Offline', 'Internet connection lost. Downloads paused.', 'warning');
+        };
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, [downloads, maxRetries]);
+
+    // Update browser title with download progress
+    useEffect(() => {
+        const activeCount = stats.activeDownloads;
+        const queuedCount = stats.queuedDownloads;
+
+        if (activeCount > 0) {
+            const activeDownloads = Array.from(downloads.values())
+                .filter(d => d.status === 'downloading' || d.status === 'converting');
+
+            if (activeDownloads.length > 0) {
+                const avgProgress = activeDownloads.reduce((sum, d) => sum + d.progress, 0) / activeDownloads.length;
+                document.title = `(${Math.round(avgProgress)}%) ${activeCount} Downloading - CamelotDJ`;
+            } else {
+                document.title = `(${activeCount}) Downloading - CamelotDJ`;
+            }
+        } else if (queuedCount > 0) {
+            document.title = `(${queuedCount} queued) CamelotDJ`;
+        } else {
+            document.title = 'CamelotDJ';
+        }
+
+        return () => {
+            document.title = 'CamelotDJ';
+        };
+    }, [stats.activeDownloads, stats.queuedDownloads, downloads]);
+
     // Enhanced WebSocket connection with queue sync
     useEffect(() => {
         if (!isMountedRef.current) return;
-        
+
         const socket = io(`http://127.0.0.1:${apiPort}`, {
             transports: ['polling', 'websocket'],
             timeout: 10000,
@@ -98,72 +227,100 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             reconnectionAttempts: 5,
             reconnectionDelay: 2000
         });
-        
+
         socket.on('connect', () => {
             console.log('✅ DownloadManager WebSocket connected');
             // Sync with backend queue on connection
             syncWithBackendQueue();
         });
-        
+
         socket.on('download_progress', (data) => {
             if (isMountedRef.current && data.download_id) {
                 handleDownloadProgress(data);
             }
         });
-        
+
         socket.on('download_complete', (data) => {
             if (isMountedRef.current && data.download_id) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
                     const download = newMap.get(data.download_id);
                     if (download) {
-                        const updated = { 
-                            ...download, 
+                        const updated = {
+                            ...download,
                             fileSize: data.file_size || download.fileSize,
                             quality: data.quality || download.quality,
                             format: data.format || download.format
                         };
                         newMap.set(data.download_id, updated);
+
+                        // Show desktop notification for completion
+                        showDesktopNotification(
+                            '✅ Download Complete',
+                            `${download.title} by ${download.artist}`,
+                            download.thumbnail
+                        );
                     }
                     return newMap;
                 });
-        // Push completed song to parent for All Music and virtual Downloads
-        try {
-            if (onDownloadComplete && data.song) {
-                console.log('🎵 DownloadManager calling onDownloadComplete with song:', data.song);
-                onDownloadComplete(data.song);
-            } else {
-                console.log('🎵 DownloadManager - no callback or song:', { hasCallback: !!onDownloadComplete, hasSong: !!data.song });
-            }
-        } catch (error) {
-            console.error('🎵 Error in onDownloadComplete:', error);
-        }
+                // Push completed song to parent for All Music and virtual Downloads
+                try {
+                    if (onDownloadComplete && data.song) {
+                        console.log('🎵 DownloadManager calling onDownloadComplete with song:', data.song);
+                        onDownloadComplete(data.song);
+                    } else {
+                        console.log('🎵 DownloadManager - no callback or song:', { hasCallback: !!onDownloadComplete, hasSong: !!data.song });
+                    }
+                } catch (error) {
+                    console.error('🎵 Error in onDownloadComplete:', error);
+                }
             }
         });
-        
+
         socket.on('download_error', (data) => {
             if (isMountedRef.current && data.download_id) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
                     const download = newMap.get(data.download_id);
                     if (download) {
-                        const updated = { 
-                            ...download, 
-                            status: 'failed' as const, 
+                        const errorMessage = getErrorMessage(data.error || 'Download failed');
+                        const updated = {
+                            ...download,
+                            status: 'failed' as const,
                             stage: 'error',
-                            message: data.error || 'Download failed',
-                            error: data.error,
+                            message: errorMessage,
+                            error: errorMessage,
                             endTime: Date.now()
                         };
                         newMap.set(data.download_id, updated);
+
+                        // Show desktop notification for error
+                        showDesktopNotification(
+                            '❌ Download Failed',
+                            `${download.title}: ${errorMessage}`,
+                            download.thumbnail
+                        );
+
+                        // Auto-retry if enabled and not exceeded max retries
+                        if (autoRetryEnabled && download.retryCount < maxRetries) {
+                            const retryDelay = Math.min(5000 * Math.pow(2, download.retryCount), 60000); // Exponential backoff, max 60s
+                            console.log(`⏳ Auto-retry scheduled in ${retryDelay / 1000}s (attempt ${download.retryCount + 1}/${maxRetries})`);
+
+                            const timeoutId = setTimeout(() => {
+                                retryDownload(data.download_id);
+                                retryTimeoutsRef.current.delete(data.download_id);
+                            }, retryDelay);
+
+                            retryTimeoutsRef.current.set(data.download_id, timeoutId);
+                        }
                     }
                     return newMap;
                 });
             }
         });
-        
+
         socketRef.current = socket;
-        
+
         return () => {
             if (socketRef.current) {
                 socketRef.current.removeAllListeners();
@@ -172,7 +329,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             }
         };
     }, [apiPort]);
-    
+
     // Sync with backend queue
     const syncWithBackendQueue = useCallback(async () => {
         try {
@@ -182,7 +339,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     'X-Signing-Key': apiSigningKey
                 }
             });
-            
+
             if (response.ok) {
                 const result = await response.json();
                 if (result.status === 'success' && result.downloads) {
@@ -215,21 +372,21 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             console.error('Failed to sync with backend queue:', error);
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Simplified progress handler
     const handleDownloadProgress = useCallback((data: any) => {
         if (!data.download_id) return;
-        
+
         setDownloads(prev => {
             const newMap = new Map(prev);
             const current = newMap.get(data.download_id);
             if (!current) return newMap;
-            
+
             let progress = data.progress || 0;
             if (data.downloaded_bytes && data.total_bytes && data.total_bytes > 0) {
                 progress = (data.downloaded_bytes / data.total_bytes) * 100;
             }
-            
+
             const updated: DownloadTask = {
                 ...current,
                 progress: Math.min(progress, 100),
@@ -238,12 +395,15 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 fileSize: data.total_bytes || current.fileSize,
                 downloadedSize: data.downloaded_bytes || current.downloadedSize,
                 status: getStatusFromStage(data.stage),
-                canCancel: data.stage !== 'completed' && data.stage !== 'error',
-                canRetry: data.stage === 'error',
+                canCancel: data.stage !== 'completed' && data.stage !== 'error' && data.stage !== 'cancelled',
+                canRetry: data.stage === 'error' || data.stage === 'cancelled',
                 quality: data.quality || current.quality,
-                format: data.format || current.format
+                format: data.format || current.format,
+                speed: data.speed,
+                eta: data.eta_seconds,
+                totalSize: data.total_bytes
             };
-            
+
             if (data.stage === 'complete') {
                 updated.endTime = Date.now();
                 updated.status = 'completed';
@@ -251,9 +411,10 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             } else if (data.stage === 'error') {
                 updated.endTime = Date.now();
                 updated.status = 'failed';
-                updated.error = data.message;
+                updated.error = getErrorMessage(data.message || 'Download failed');
+                updated.message = updated.error;
             }
-            
+
             newMap.set(data.download_id, updated);
             return newMap;
         });
@@ -270,13 +431,16 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             console.error('🎵 Error in progress complete onDownloadComplete:', error);
         }
     }, [onDownloadComplete]);
-    
+
     useEffect(() => {
         return () => {
             isMountedRef.current = false;
+            // Clear all retry timeouts
+            retryTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+            retryTimeoutsRef.current.clear();
         };
     }, []);
-    
+
     // Periodic sync with backend queue
     useEffect(() => {
         const syncInterval = setInterval(() => {
@@ -284,10 +448,10 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 syncWithBackendQueue();
             }
         }, 5000); // Sync every 5 seconds
-        
+
         return () => clearInterval(syncInterval);
     }, [syncWithBackendQueue]);
-    
+
     // Get status from stage
     const getStatusFromStage = (stage: string): DownloadTask['status'] => {
         switch (stage) {
@@ -313,29 +477,29 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 return 'queued';
         }
     };
-    
+
     // Add download to queue
     const addDownload = useCallback((track: any) => {
         if (!track || !track.id || !track.url) {
             showNotification('Invalid Track', 'Track information is missing or invalid.', 'error');
             return;
         }
-        
+
         // Use default download path if none is set
         const safeProcessEnv = (typeof process !== 'undefined' && process.env) ? process.env : {};
         const homeDir = (safeProcessEnv as any).HOME || (safeProcessEnv as any).USERPROFILE || '';
         const effectiveDownloadPath = downloadPath || `${homeDir}/Downloads/CAMELOTDJ`;
-        
+
         // Check if track is already downloading
-        const existingDownload = Array.from(downloads.values()).find(d => 
+        const existingDownload = Array.from(downloads.values()).find(d =>
             d.trackId === track.id && (d.status === 'queued' || d.status === 'downloading' || d.status === 'converting' || d.status === 'metadata' || d.status === 'analyzing')
         );
-        
+
         if (existingDownload) {
             showNotification('Already Downloading', `${track.title} is already in the download queue.`, 'warning');
             return;
         }
-        
+
         const downloadId = `${track.id}_${Date.now()}`;
         const newDownload: DownloadTask = {
             id: downloadId,
@@ -359,63 +523,63 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             quality: track.quality || 'Unknown',
             format: track.format || 'mp3'
         };
-        
+
         setDownloads(prev => {
             const newMap = new Map(prev);
             newMap.set(downloadId, newDownload);
-            
+
             // Process queue after adding new download
-            const activeDownloads = Array.from(newMap.values()).filter(d => 
+            const activeDownloads = Array.from(newMap.values()).filter(d =>
                 d.status === 'downloading' || d.status === 'converting' || d.status === 'metadata' || d.status === 'analyzing'
             );
-            
+
             if (activeDownloads.length < maxConcurrentDownloads) {
                 const queuedDownloads = Array.from(newMap.values()).filter(d => d.status === 'queued');
                 const toStart = queuedDownloads.slice(0, maxConcurrentDownloads - activeDownloads.length);
-                
+
                 toStart.forEach(download => {
                     startDownload(download);
                 });
             }
-            
+
             return newMap;
         });
-        
+
         // Background processing - no notification needed
         console.log(`✅ ${track.title} added to download queue`);
     }, [downloadPath, maxConcurrentDownloads, downloads]);
-    
+
     // Expose methods to parent component
     React.useImperativeHandle(ref, () => ({
         addDownload: addDownload
     }), [addDownload]);
-    
-    
+
+
     // Enhanced download function using queue system
     const startDownload = useCallback(async (download: DownloadTask) => {
         try {
             if (!download.url || !download.downloadPath) {
                 throw new Error('Missing required download parameters');
             }
-            
+
             // Update status to queued
             setDownloads(prev => {
                 const newMap = new Map(prev);
-                const updated = { 
-                    ...download, 
-                    status: 'queued' as const, 
-                    stage: 'queued', 
+                const updated = {
+                    ...download,
+                    status: 'queued' as const,
+                    stage: 'queued',
                     message: 'Added to download queue...'
                 };
                 newMap.set(download.id, updated);
                 return newMap;
             });
-            
+
             // Join WebSocket room
             if (socketRef.current && socketRef.current.connected) {
                 socketRef.current.emit('join_download', { download_id: download.id });
             }
-            
+
             // Clean filename
             const cleanTitle = (download.title?.trim() || 'Unknown Title')
                 .replace(/[<>:"/\\|?*]/g, '_')
@@ -425,7 +589,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 .replace(/[<>:"/\\|?*]/g, '_')
                 .replace(/\s+/g, ' ')
                 .substring(0, 100);
-            
+
             const requestBody = {
                 url: download.url,
                 title: cleanTitle,
@@ -438,7 +602,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 quality: '320kbps',
                 format: 'mp3'
             };
-            
+
             const response = await fetch(`http://127.0.0.1:${apiPort}/youtube/download-queued`, {
                 method: 'POST',
                 headers: {
@@ -447,20 +611,20 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 },
                 body: JSON.stringify(requestBody)
             });
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
                 throw new Error(`Server Error: ${response.status} - ${errorText}`);
             }
-            
+
             const result = await response.json();
-            
+
             if (result.status === 'queued') {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
-                    const updated = { 
-                        ...download, 
-                        status: 'queued' as const, 
+                    const updated = {
+                        ...download,
+                        status: 'queued' as const,
                         stage: 'queued',
                         message: `Queued (position ${result.queue_stats?.queued || 0})`,
                         progress: 0
@@ -468,20 +632,20 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     newMap.set(download.id, updated);
                     return newMap;
                 });
-                
+
                 console.log(`✅ ${download.title} queued successfully`);
             } else {
                 throw new Error(result.error || 'Failed to queue download');
             }
-            
+
         } catch (error: any) {
             console.error('Download queue error:', error);
-            
+
             setDownloads(prev => {
                 const newMap = new Map(prev);
-                const updated = { 
-                    ...download, 
-                    status: 'failed' as const, 
+                const updated = {
+                    ...download,
+                    status: 'failed' as const,
                     stage: 'error',
                     message: error.message,
                     error: error.message,
@@ -490,12 +654,12 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 newMap.set(download.id, updated);
                 return newMap;
             });
-            
+
             showNotification('Download Failed', `${download.title}: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey, onDownloadComplete]);
-    
-    
+
+
     // Cancel download using queue system
     const cancelDownload = useCallback(async (downloadId: string) => {
         try {
@@ -510,15 +674,15 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
                     const download = newMap.get(downloadId);
                     if (download) {
-                        const updated = { 
-                            ...download, 
-                            status: 'cancelled' as const, 
+                        const updated = {
+                            ...download,
+                            status: 'cancelled' as const,
                             message: 'Cancelled',
                             endTime: Date.now(),
                             canCancel: false,
@@ -528,7 +692,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     }
                     return newMap;
                 });
-                
+
                 showNotification('Download Cancelled', 'Download has been cancelled', 'warning');
             } else {
                 throw new Error('Failed to cancel download');
@@ -538,7 +702,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Cancel Failed', `Failed to cancel download: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Retry download using queue system
     const retryDownload = useCallback(async (downloadId: string) => {
         try {
@@ -553,15 +717,15 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
                     const download = newMap.get(downloadId);
                     if (download) {
-                        const updated = { 
-                            ...download, 
-                            status: 'queued' as const, 
+                        const updated = {
+                            ...download,
+                            status: 'queued' as const,
                             stage: 'queued',
                             message: 'Retrying...',
                             progress: 0,
@@ -575,7 +739,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     }
                     return newMap;
                 });
-                
+
                 console.log('✅ Download retry initiated');
             } else {
                 throw new Error('Failed to retry download');
@@ -585,7 +749,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Retry Failed', `Failed to retry download: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Clear completed downloads using queue system
     const clearCompleted = useCallback(async () => {
         try {
@@ -600,7 +764,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
@@ -620,7 +784,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Clear Failed', `Failed to clear completed downloads: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Clear failed downloads using queue system
     const clearFailed = useCallback(async () => {
         try {
@@ -635,7 +799,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
@@ -655,7 +819,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Clear Failed', `Failed to clear failed downloads: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Update max concurrent downloads
     const updateMaxConcurrentDownloads = useCallback(async (newMax: number) => {
         try {
@@ -670,7 +834,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 console.log(`✅ Max concurrent downloads set to ${newMax}`);
             } else {
@@ -681,15 +845,15 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Update Failed', `Failed to update settings: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Update stats
     useEffect(() => {
         const downloadList = Array.from(downloads.values());
-        const activeDownloads = downloadList.filter(d => 
+        const activeDownloads = downloadList.filter(d =>
             d.status === 'downloading' || d.status === 'converting' || d.status === 'metadata' || d.status === 'analyzing'
         );
         const queuedDownloads = downloadList.filter(d => d.status === 'queued');
-        
+
         const newStats: DownloadStats = {
             totalDownloads: downloadList.length,
             completedDownloads: downloadList.filter(d => d.status === 'completed').length,
@@ -700,7 +864,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
         };
         setStats(newStats);
     }, [downloads]);
-    
+
     // Format file size
     const formatFileSize = useCallback((bytes: number) => {
         if (bytes === 0) return '0 B';
@@ -709,7 +873,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }, []);
-    
+
     // Clear all completed downloads using queue system
     const clearAllCompleted = useCallback(async () => {
         try {
@@ -724,7 +888,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     signingkey: apiSigningKey
                 })
             });
-            
+
             if (response.ok) {
                 setDownloads(prev => {
                     const newMap = new Map(prev);
@@ -744,14 +908,14 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             showNotification('Clear Failed', `Failed to clear completed downloads: ${error.message}`, 'error');
         }
     }, [apiPort, apiSigningKey]);
-    
+
     // Get filtered downloads based on active tab
     const filteredDownloads = useMemo(() => {
         const downloadList = Array.from(downloads.values());
         switch (activeTab) {
             case 'active':
-                return downloadList.filter(d => 
-                    d.status === 'queued' || d.status === 'downloading' || d.status === 'converting' || 
+                return downloadList.filter(d =>
+                    d.status === 'queued' || d.status === 'downloading' || d.status === 'converting' ||
                     d.status === 'metadata' || d.status === 'analyzing'
                 );
             case 'completed':
@@ -762,17 +926,17 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                 return downloadList;
         }
     }, [downloads, activeTab]);
-    
+
     // Show notification
     const showNotification = useCallback((title: string, message: string, type: 'success' | 'error' | 'warning' = 'success') => {
         if (!isMountedRef.current) return;
-        
+
         const colors = {
             success: '#10b981',
             error: '#ef4444',
             warning: '#f59e0b'
         };
-        
+
         const notification = document.createElement('div');
         notification.style.cssText = `
             position: fixed;
@@ -788,21 +952,21 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-size: 14px;
         `;
-        
+
         notification.innerHTML = `
             <div style="font-weight: 600; margin-bottom: 4px;">${title}</div>
             <div style="font-size: 12px; opacity: 0.9;">${message}</div>
         `;
-        
+
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             if (notification.parentNode) {
                 notification.parentNode.removeChild(notification);
             }
         }, 3000);
     }, []);
-    
+
     return (
         <div className="download-manager">
             {/* Download Manager Toggle Button */}
@@ -858,7 +1022,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     </div>
                 )}
             </button>
-            
+
             {/* Download Manager Panel */}
             {showManager && (
                 <div style={{
@@ -954,7 +1118,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                             </button>
                         </div>
                     </div>
-                    
+
                     {/* Simple Stats Bar */}
                     <div style={{
                         padding: '12px 20px',
@@ -979,7 +1143,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                             <span>{stats.queuedDownloads} queued</span>
                         </div>
                     </div>
-                    
+
                     {/* Tabs */}
                     <div style={{
                         display: 'flex',
@@ -1037,7 +1201,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                             </button>
                         ))}
                     </div>
-                    
+
                     {/* Bulk Actions */}
                     {filteredDownloads.length > 0 && (
                         <div style={{
@@ -1115,7 +1279,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                             ))
                         )}
                     </div>
-                    
+
                     {/* Footer */}
                     <div style={{
                         padding: '12px 20px',
@@ -1163,7 +1327,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                     </div>
                 </div>
             )}
-            
+
             {/* Settings Modal */}
             {showSettings && (
                 <div style={{
@@ -1221,7 +1385,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                             <X size={16} />
                         </button>
                     </div>
-                    
+
                     {/* Settings Content */}
                     <div style={{
                         padding: '20px',
@@ -1269,7 +1433,7 @@ const DownloadManager = React.forwardRef<DownloadManagerRef, DownloadManagerProp
                                 Higher values may impact system performance
                             </div>
                         </div>
-                        
+
                         <div style={{
                             padding: '12px',
                             background: '#111827',
@@ -1331,7 +1495,7 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
             default: return '#6b7280';
         }
     };
-    
+
     const getStatusIcon = (status: DownloadTask['status']) => {
         switch (status) {
             case 'completed': return <CheckCircle size={16} color="#10b981" />;
@@ -1340,12 +1504,12 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
             case 'downloading': return <Download size={16} color="#3b82f6" />;
             case 'converting': return <Music size={16} color="#8b5cf6" />;
             case 'metadata': return <Music size={16} color="#f59e0b" />;
-            case 'analyzing': return <Music size={16} color="#06b6d4" />;
+            case 'analyzing': return <Activity size={16} color="#06b6d4" />;
             case 'queued': return <Clock size={16} color="#6b7280" />;
             default: return <AlertCircle size={16} color="#6b7280" />;
         }
     };
-    
+
     return (
         <div style={{
             padding: '12px',
@@ -1408,7 +1572,7 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
                     <span style={{ textTransform: 'capitalize' }}>{download.status}</span>
                 </div>
             </div>
-            
+
             {/* Progress Bar */}
             {download.status !== 'completed' && download.status !== 'cancelled' && (
                 <div style={{
@@ -1430,6 +1594,7 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
                             transition: 'width 0.2s ease-out'
                         }} />
                     </div>
+
                     <div style={{
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -1437,27 +1602,61 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
                         fontSize: '11px',
                         color: '#9ca3af'
                     }}>
-                        <span>{download.message}</span>
-                        <span>{download.progress.toFixed(1)}%</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span>{download.message}</span>
+                            {(download.status === 'downloading' && download.speed && download.speed > 0) && (
+                                <>
+                                    <span style={{ color: '#4b5563' }}>•</span>
+                                    <span style={{ color: '#60a5fa' }}>
+                                        {download.speed > 1024 * 1024
+                                            ? `${(download.speed / (1024 * 1024)).toFixed(1)} MB/s`
+                                            : `${(download.speed / 1024).toFixed(1)} KB/s`}
+                                    </span>
+                                </>
+                            )}
+                            {(download.status === 'downloading' && download.eta && download.eta > 0 && download.eta !== Infinity) && (
+                                <>
+                                    <span style={{ color: '#4b5563' }}>•</span>
+                                    <span>
+                                        ETA: {download.eta < 60
+                                            ? `${Math.ceil(download.eta)}s`
+                                            : `${Math.floor(download.eta / 60)}m ${Math.ceil(download.eta % 60)}s`}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {download.fileSize > 0 && (
+                                <span style={{ color: '#6b7280' }}>
+                                    {formatFileSize(download.downloadedSize)} / {formatFileSize(download.fileSize)}
+                                </span>
+                            )}
+                            <span style={{ fontWeight: '500', color: '#f3f4f6' }}>
+                                {download.progress.toFixed(1)}%
+                            </span>
+                        </div>
                     </div>
                 </div>
-            )}
-            
+            )
+            }
+
             {/* Error Message */}
-            {download.error && (
-                <div style={{
-                    fontSize: '12px',
-                    color: '#fca5a5',
-                    marginBottom: '8px',
-                    padding: '6px 8px',
-                    background: '#7f1d1d',
-                    borderRadius: '4px',
-                    border: '1px solid #991b1b'
-                }}>
-                    {download.error}
-                </div>
-            )}
-            
+            {
+                download.error && (
+                    <div style={{
+                        fontSize: '12px',
+                        color: '#fca5a5',
+                        marginBottom: '8px',
+                        padding: '6px 8px',
+                        background: '#7f1d1d',
+                        borderRadius: '4px',
+                        border: '1px solid #991b1b'
+                    }}>
+                        {download.error}
+                    </div>
+                )
+            }
+
             {/* Action Buttons */}
             <div style={{
                 display: 'flex',
@@ -1519,7 +1718,7 @@ const SimpleDownloadItem: React.FC<SimpleDownloadItemProps> = ({
                     </button>
                 )}
             </div>
-        </div>
+        </div >
     );
 };
 

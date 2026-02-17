@@ -24,6 +24,10 @@ class DatabaseManager:
         self.db_path = db_path
         self.init_database()
         
+    def get_connection(self):
+        """Get a SQLite connection with reasonable timeout"""
+        return sqlite3.connect(self.db_path, timeout=30.0)
+        
     def init_database(self):
         """Initialize database tables if they don't exist."""
         with sqlite3.connect(self.db_path) as conn:
@@ -194,7 +198,8 @@ class DatabaseManager:
             
     def add_music_file(self, file_data: Dict) -> int:
         """Add or update a music file in the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self.get_connection()
+        try:
             cursor = conn.cursor()
             
             # Check if file already exists
@@ -340,6 +345,8 @@ class DatabaseManager:
             
             conn.commit()
             return file_id
+        finally:
+            conn.close()
     
     def get_all_music_files(self, status_filter: Optional[str] = None) -> List[Dict]:
         """Get all music files from database."""

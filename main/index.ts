@@ -49,7 +49,7 @@ function handleAuthCallback(url: string) {
         const urlObj = new URL(url);
         const code = urlObj.searchParams.get('code');
         const error = urlObj.searchParams.get('error');
-        
+
         if (error) {
             console.error('❌ OAuth error:', error);
             // Notify renderer of error
@@ -59,7 +59,7 @@ function handleAuthCallback(url: string) {
             }
             return;
         }
-        
+
         if (code) {
             console.log('✅ OAuth code received, exchanging for tokens...');
             exchangeAuthCodeForTokens(code);
@@ -73,7 +73,7 @@ async function exchangeAuthCodeForTokens(code: string) {
     try {
         const https = require('https');
         const querystring = require('querystring');
-        
+
         // Prepare token exchange data with PKCE
         const tokenData = querystring.stringify({
             code: code,
@@ -84,7 +84,7 @@ async function exchangeAuthCodeForTokens(code: string) {
             // Include PKCE code verifier if available
             ...(global.oauthCodeVerifier && { code_verifier: global.oauthCodeVerifier })
         });
-        
+
         const options = {
             hostname: 'oauth2.googleapis.com',
             port: 443,
@@ -95,7 +95,7 @@ async function exchangeAuthCodeForTokens(code: string) {
                 'Content-Length': Buffer.byteLength(tokenData)
             }
         };
-        
+
         const req = https.request(options, (res: any) => {
             let data = '';
             res.on('data', (chunk: any) => {
@@ -105,12 +105,12 @@ async function exchangeAuthCodeForTokens(code: string) {
                 try {
                     const tokens = JSON.parse(data);
                     console.log('✅ Tokens received, signing into Firebase...');
-                    
+
                     // Clean up code verifier
                     if (global.oauthCodeVerifier) {
                         delete global.oauthCodeVerifier;
                     }
-                    
+
                     // Send tokens to renderer for Firebase sign-in
                     const windows = BrowserWindow.getAllWindows();
                     if (windows.length > 0) {
@@ -125,11 +125,11 @@ async function exchangeAuthCodeForTokens(code: string) {
                 }
             });
         });
-        
+
         req.on('error', (err: any) => {
             console.error('❌ Error exchanging auth code:', err);
         });
-        
+
         req.write(tokenData);
         req.end();
     } catch (err) {
@@ -140,15 +140,15 @@ async function exchangeAuthCodeForTokens(code: string) {
 // IPC handler for starting external OAuth flow
 ipcMain.handle('start-external-oauth', async () => {
     const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || 'YOUR_CLIENT_ID_HERE';
-    
+
     // Generate PKCE parameters for better security (OAuth 2.0 PKCE)
     const crypto = require('crypto');
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    
+
     // Store code verifier for later use in token exchange
     global.oauthCodeVerifier = codeVerifier;
-    
+
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${clientId}&` +
         `redirect_uri=${encodeURIComponent(`${AUTH_PROTOCOL}://auth-callback`)}&` +
@@ -159,7 +159,7 @@ ipcMain.handle('start-external-oauth', async () => {
         `access_type=offline&` +
         `prompt=select_account&` +
         `include_granted_scopes=true`;
-    
+
     console.log('🌐 Opening external browser for OAuth with PKCE:', googleAuthUrl);
     await shell.openExternal(googleAuthUrl);
 });
@@ -167,12 +167,12 @@ ipcMain.handle('start-external-oauth', async () => {
 app.on("ready", async () => {
     // Set app name explicitly for better branding
     app.setName("CAMELOTDJ");
-    
+
     if (isDev) {
         const sourceMapSupport = require("source-map-support"); // tslint:disable-line
         sourceMapSupport.install();
     }
-    
+
     // Initialize Python backend immediately when app is ready
     try {
         // Import the initializeApi function from with-python
@@ -183,26 +183,26 @@ app.on("ready", async () => {
         console.error("❌ Failed to initialize Python backend:", error);
         dialog.showErrorBox("Backend Error", "Failed to start Python backend server. Please restart the application.");
     }
-    
+
     createWindow();
 });
 
 function createWindow() {
     // Multiple icon path options for robust icon loading
     const possibleIconPaths = [
-        // macOS prefers .icns files
-        path.resolve(__dirname, "../applogo.icns"),
-        path.resolve(__dirname, "../../applogo.icns"),
-        path.resolve(process.cwd(), "applogo.icns"),
-        // Fallback to PNG
+        // Prioritize PNG as requested
         path.resolve(__dirname, "../applogo.png"),
         path.resolve(__dirname, "../../applogo.png"),
         path.resolve(process.cwd(), "applogo.png"),
-        path.resolve(process.cwd(), "public/applogo.png")
+        path.resolve(process.cwd(), "public/applogo.png"),
+        // macOS fallback to .icns
+        path.resolve(__dirname, "../applogo.icns"),
+        path.resolve(__dirname, "../../applogo.icns"),
+        path.resolve(process.cwd(), "applogo.icns")
     ];
-    
+
     let iconPath = possibleIconPaths[0]; // Default fallback
-    
+
     // Find the first existing icon path
     for (const testPath of possibleIconPaths) {
         if (fs.existsSync(testPath)) {
@@ -211,11 +211,11 @@ function createWindow() {
             break;
         }
     }
-    
+
     if (!fs.existsSync(iconPath)) {
         console.warn('Icon not found at any expected location, using default');
     }
-    
+
     const win = new BrowserWindow({
         width: 1440,
         height: 900,
@@ -228,13 +228,13 @@ function createWindow() {
         },
         show: false // Don't show until content is ready
     });
-    
+
     // Show window when ready
     win.once('ready-to-show', () => {
         console.log('🖼️ Window ready to show');
         win.show();
     });
-    
+
     // Fallback: show window after 5 seconds even if not ready
     setTimeout(() => {
         if (!win.isVisible()) {
@@ -242,20 +242,20 @@ function createWindow() {
             win.show();
         }
     }, 5000);
-    
+
     if (isDev) {
         console.log('🌐 Loading React dev server at http://localhost:3001/');
         win.loadURL("http://localhost:3001/");
-        
+
         // Add event listeners to debug loading issues
         win.webContents.on('did-finish-load', () => {
             console.log('✅ Page loaded successfully');
         });
-        
+
         win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
             console.error('❌ Page failed to load:', errorCode, errorDescription);
         });
-        
+
         // Open DevTools to debug any issues
         win.webContents.openDevTools();
         return;
@@ -269,12 +269,12 @@ function createWindow() {
 
     // Fix the build directory path for production builds
     let buildDir = path.join(__dirname, '/../build');
-    
+
     // Check if we're in a packaged app and adjust the path accordingly
     if (__dirname.includes('.asar')) {
         // We're in a packaged app, the build directory is in the app.asar.unpacked or resources
         buildDir = path.join(__dirname, '/../../build');
-        
+
         // Alternative paths to try
         const possibleBuildPaths = [
             buildDir,
@@ -284,23 +284,23 @@ function createWindow() {
             path.join(process.resourcesPath, 'app.asar.unpacked/build'),
             path.join(__dirname, '/../app.asar.unpacked/build')
         ];
-        
+
         console.log('🔍 Searching for build directory in packaged app...');
         console.log('Current __dirname:', __dirname);
         console.log('Process resources path:', process.resourcesPath);
-        
+
         // Find the first existing build directory
         for (const testPath of possibleBuildPaths) {
             console.log('Testing path:', testPath, 'exists:', fs.existsSync(testPath));
             if (fs.existsSync(testPath)) {
                 buildDir = testPath;
                 console.log('✅ Found build directory at:', buildDir);
-                
+
                 // List contents of the build directory
                 try {
                     const buildContents = fs.readdirSync(buildDir);
                     console.log('📁 Build directory contents:', buildContents);
-                    
+
                     // Check if index.html exists
                     const indexPath = path.join(buildDir, 'index.html');
                     if (fs.existsSync(indexPath)) {
@@ -314,7 +314,7 @@ function createWindow() {
                 break;
             }
         }
-        
+
         if (!fs.existsSync(buildDir)) {
             console.error('❌ Build directory not found at any expected location');
             console.log('Searched paths:', possibleBuildPaths);
@@ -330,7 +330,7 @@ function createWindow() {
             console.log('❌ Build directory not found in development mode');
         }
     }
-    
+
     console.log('📁 Using build directory:', buildDir);
     const serve = serveStatic(buildDir, { index: ['index.html'] });
 

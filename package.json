@@ -95,7 +95,7 @@
             "pythondist/api/api",
             "python/**"
         ],
-        "icon": "applogo.icns",
+        "icon": "applogo.png",
         "directories": {
             "buildResources": "build",
             "output": "dist"
@@ -108,7 +108,8 @@
             "buildMain/**",
             "pythondist/**",
             "python/**",
-            "build/**"
+            "build/**",
+            "applogo.png"
         ],
         "extraResources": [],
         "extraFiles": [],

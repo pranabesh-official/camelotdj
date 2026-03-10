@@ -144,11 +144,14 @@ body {
 .App-header {
   background: var(--header-bg);
   border-bottom: 1px solid var(--border-color);
-  padding: 0 var(--space-lg);
+  padding: 0;
   flex-shrink: 0;
   height: 64px;
   display: flex;
   align-items: center;
+  position: relative;
+  z-index: 100;
+  overflow: visible;
 }
 
 .header-content {
@@ -156,7 +159,7 @@ body {
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  padding: 0 var(--space-lg);
+  padding: 0 var(--space-sm);
   gap: var(--space-md);
   min-height: 48px;
 }
@@ -179,10 +182,12 @@ body {
 }
 
 .brand .logo .logo-image {
-  height: 48px;
+  height: 80px;
   width: auto;
-  max-width: 250px;
+  max-width: 350px;
   object-fit: contain;
+  position: relative;
+  top: 10px;
 }
 
 .logo-text {
